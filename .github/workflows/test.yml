@@ -18,6 +18,10 @@ jobs:
           node-version: '24'
           cache: 'npm'
       - run: npm ci
+      # Real type-check. Tests execute via tsx (no type-checking), so without
+      # this step a breaking devDep bump (e.g. typescript 6 vs @types/node 22)
+      # sails through CI green.
+      - run: npm run build
       - run: npm run test:all
       - name: Documentation coverage (non-blocking until llms.txt exists)
         run: npm run test:docs

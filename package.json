@@ -34,9 +34,9 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/pg": "^8.20.0",
-    "esbuild": "^0.27.7",
+    "esbuild": "^0.28.1",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.9.3"
   },
   "dependencies": {
     "@noble/hashes": "^2.2.0",
@@ -48,7 +48,7 @@
     "disposable-email-domains": "^1.0.62",
     "mailauth": "^4.13.3",
     "pdf-lib": "^1.17.1",
-    "pg": "^8.20.0",
+    "pg": "^8.22.0",
     "pkijs": "^3.4.0",
     "qrcode": "^1.5.4"
   }
