@@ -8,6 +8,7 @@
  */
 
 import { execSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 
 export function buildSuiteList(baseUrl) {
   const suites = [
@@ -24,8 +25,10 @@ export function buildSuiteList(baseUrl) {
   return suites;
 }
 
-// Only run when executed directly (not imported by tests)
-const isMainModule = import.meta.url === `file:///${process.argv[1].replace(/\\/g, '/')}`;
+// Only run when executed directly (not imported by tests). pathToFileURL is
+// the cross-platform idiom — hand-building the file:/// URL breaks on posix
+// (leading / doubles up), silently no-opping the whole runner on Linux CI.
+const isMainModule = process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false;
 if (isMainModule) {
   const suites = buildSuiteList(process.env.BASE_URL);
 

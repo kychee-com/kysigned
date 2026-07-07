@@ -62,6 +62,7 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { run402, fileSetFromDir } from '@run402/sdk/node';
 import { KYSIGNED_RUN402_FUNCTIONS, ROOT, bundleRun402Function } from './run402-functions.mjs';
 
@@ -318,7 +319,10 @@ async function main() {
 // Only run main() when executed directly (`node scripts/deploy.mjs`), NOT when
 // imported by the unit test — importing must have no side effects (no apply, no
 // process.exit), so the exported spec builders can be asserted in isolation.
-const isMainModule = import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`;
+// pathToFileURL is the cross-platform idiom — hand-building the file:/// URL
+// breaks on posix (leading / doubles up), silently no-opping the forker deploy
+// on Linux/macOS.
+const isMainModule = process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false;
 if (isMainModule) {
   main().catch((err) => {
     console.error('\nDeploy failed:', err?.message ?? err);
