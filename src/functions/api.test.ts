@@ -640,3 +640,104 @@ describe('handleRequest — bearer API keys (F-30.1 / AC-131)', () => {
     assert.equal(res.status, 401);
   });
 });
+
+// ── F-30.3 / AC-136 — Idempotency-Key on create, wired at the dispatch ──────
+describe('handleRequest — Idempotency-Key on createEnvelope (F-30.3 / AC-136)', () => {
+  const RAW_KEY = 'ksk_' + 'e'.repeat(64);
+
+  /** Pool = bearer key resolution + the create CTE + an in-memory
+   *  idempotency_keys table; counts how many times the create CTE ran. */
+  function idemPool() {
+    const idem = new Map<string, { request_hash: string; response_status: number | null; response_body: string | null }>();
+    let createRuns = 0;
+    const pool: DbPool = {
+      async query(text: string, values?: unknown[]) {
+        const v = (values ?? []) as unknown[];
+        if (text.includes('FROM api_keys')) {
+          return {
+            rows: [{ id: 'key-1', creator_email: 'agent@example.com', key_hash: 'h', label: null, created_at: new Date(), last_used_at: null, revoked_at: null }],
+            rowCount: 1,
+          } as unknown as pg.QueryResult;
+        }
+        if (/INSERT INTO idempotency_keys/i.test(text)) {
+          const k = `${v[0]} ${v[1]}`;
+          if (idem.has(k)) return { rows: [], rowCount: 0 } as unknown as pg.QueryResult;
+          idem.set(k, { request_hash: v[2] as string, response_status: null, response_body: null });
+          return { rows: [{ ok: 1 }], rowCount: 1 } as unknown as pg.QueryResult;
+        }
+        if (/^\s*SELECT/i.test(text) && /FROM idempotency_keys/i.test(text)) {
+          const r = idem.get(`${v[0]} ${v[1]}`);
+          return { rows: r ? [r] : [], rowCount: r ? 1 : 0 } as unknown as pg.QueryResult;
+        }
+        if (/UPDATE idempotency_keys/i.test(text)) {
+          const r = idem.get(`${v[2]} ${v[3]}`);
+          if (r) { r.response_status = v[0] as number; r.response_body = v[1] as string; }
+          return { rows: [], rowCount: 1 } as unknown as pg.QueryResult;
+        }
+        if (/DELETE FROM idempotency_keys/i.test(text)) {
+          idem.delete(`${v[0]} ${v[1]}`);
+          return { rows: [], rowCount: 1 } as unknown as pg.QueryResult;
+        }
+        if (text.includes('WITH env_ins AS')) {
+          createRuns += 1;
+          const env = { id: `env-${createRuns}`, sender_email: v[1], document_name: v[2], status: 'active', internal_test: false };
+          const signers: Array<Record<string, unknown>> = [];
+          for (let i = 6; i + 3 < v.length; i += 6) {
+            signers.push({
+              id: `sg-${signers.length + 1}`, envelope_id: env.id, email: v[i], name: v[i + 1],
+              verification_level: v[i + 2], signing_token: v[i + 3], on_behalf_of: v[i + 4] ?? null,
+              sent_pdf_hash: v[i + 5] ?? null, status: 'pending', signed_at: null, reminder_count: 0,
+            });
+          }
+          return { rows: [{ envelope: env, signers }], rowCount: 1 } as unknown as pg.QueryResult;
+        }
+        return { rows: [], rowCount: 0 } as unknown as pg.QueryResult;
+      },
+      async end() {},
+    };
+    return { pool, createCount: () => createRuns };
+  }
+
+  it('two creates with the same Idempotency-Key yield ONE envelope; the retry replays the same response', async () => {
+    const { pool, createCount } = idemPool();
+    const deps = makeDeps({
+      pool,
+      apiContext: () => ({
+        pool,
+        emailProvider: { async send() { return { messageId: 'm' }; } },
+        baseUrl: 'https://kysigned.com',
+        senderIdentity: 'agent@example.com',
+        internalTestDomains: ['kychee.com'],
+        storePdf: async () => {},
+        deletePdf: async () => {},
+        senderGate: { getCreditBalance: async () => 10_000_000 },
+      }) as never,
+    });
+    const TINY = 'JVBERi0xLjcKJYGBgYEKCjEgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFsgNCAwIFIgXQovQ291bnQgMQo+PgplbmRvYmoKCjIgMCBvYmoKPDwKL1R5cGUgL0NhdGFsb2cKL1BhZ2VzIDEgMCBSCj4+CmVuZG9iagoKMyAwIG9iago8PAovUHJvZHVjZXIgPEZFRkYwMDc0MDA2NTAwNzMwMDc0MDAyRDAwNjYwMDY5MDA3ODAwNzQwMDc1MDA3MjAwNjU+Ci9Nb2REYXRlIChEOjIwMjAwMTAxMDAwMDAwWikKL0NyZWF0b3IgPEZFRkYwMDcwMDA2NDAwNjYwMDJEMDA2QzAwNjkwMDYyMDAyMDAwMjgwMDY4MDA3NDAwNzQwMDcwMDA3MzAwM0EwMDJGMDAyRjAwNjcwMDY5MDA3NDAwNjgwMDc1MDA2MjAwMkUwMDYzMDA2RjAwNkQwMDJGMDA0ODAwNkYwMDcwMDA2NDAwNjkwMDZFMDA2NzAwMkYwMDcwMDA2NDAwNjYwMDJEMDA2QzAwNjkwMDYyMDAyOT4KL0NyZWF0aW9uRGF0ZSAoRDoyMDIwMDEwMTAwMDAwMFopCi9UaXRsZSA8RkVGRjAwNzQwMDY1MDA3MzAwNzQ+Cj4+CmVuZG9iagoKNCAwIG9iago8PAovVHlwZSAvUGFnZQovUGFyZW50IDEgMCBSCi9SZXNvdXJjZXMgPDwKL0ZvbnQgPDwKL0hlbHZldGljYS03MDk4NDgwNzg5IDUgMCBSCj4+Ci9YT2JqZWN0IDw8Cj4+Ci9FeHRHU3RhdGUgPDwKPj4KPj4KL01lZGlhQm94IFsgMCAwIDYxMiA3OTIgXQovQW5ub3RzIFsgXQovQ29udGVudHMgWyA2IDAgUiBdCj4+CmVuZG9iagoKNSAwIG9iago8PAovVHlwZSAvRm9udAovU3VidHlwZSAvVHlwZTEKL0Jhc2VGb250IC9IZWx2ZXRpY2EKL0VuY29kaW5nIC9XaW5BbnNpRW5jb2RpbmcKPj4KZW5kb2JqCgo2IDAgb2JqCjw8Ci9GaWx0ZXIgL0ZsYXRlRGVjb2RlCi9MZW5ndGggOTYKPj4Kc3RyZWFtCnicK+RyCuEyUADBonQufY/UnLLUkszkRF1zA0sLEwsDcwtLBSMThZA0LhDpw2UIVgohQ3K5bMxNzEzNjc1NjAzMzMwszS3MTcxNzY3MTO0UQrK4QrS4XEO4ArkAobMWLQplbmRzdHJlYW0KZW5kb2JqCgp4cmVmCjAgNwowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMTYgMDAwMDAgbiAKMDAwMDAwMDA3NiAwMDAwMCBuIAowMDAwMDAwMTI2IDAwMDAwIG4gCjAwMDAwMDA0OTggMDAwMDAgbiAKMDAwMDAwMDY5MyAwMDAwMCBuIAowMDAwMDAwNzkxIDAwMDAwIG4gCgp0cmFpbGVyCjw8Ci9TaXplIDcKL1Jvb3QgMiAwIFIKL0luZm8gMyAwIFIKPj4KCnN0YXJ0eHJlZgo5NTkKJSVFT0Y=';
+    const payload = JSON.stringify({
+      document_name: 'Idem test',
+      pdf_base64: TINY,
+      signers: [{ email: 's@example.com', name: 'S' }],
+    });
+    const mk = () =>
+      req('POST', '/v1/envelope', {
+        headers: {
+          authorization: `Bearer ${RAW_KEY}`,
+          'content-type': 'application/json',
+          'idempotency-key': 'agent-retry-1',
+        },
+        body: payload,
+      });
+
+    const first = await handleRequest(mk(), deps);
+    assert.equal(first.status, 201, `first create must 201, got ${first.status}`);
+    const firstBody = (await first.json()) as { envelope_id: string };
+
+    const second = await handleRequest(mk(), deps);
+    assert.equal(second.status, 201);
+    const secondBody = (await second.json()) as { envelope_id: string };
+
+    assert.equal(createCount(), 1, 'the create CTE ran exactly once — one envelope, one debit');
+    assert.equal(secondBody.envelope_id, firstBody.envelope_id, 'the retry returns the SAME envelope');
+  });
+});

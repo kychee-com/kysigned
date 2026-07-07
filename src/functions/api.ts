@@ -36,6 +36,7 @@ import { matchRoute } from '../integrations/run402Router.js';
 import { csrfOk, resolveSession } from '../api/auth/session.js';
 import { resolveApiKey } from '../api/auth/apiKeyAuth.js';
 import { handleMintApiKey, handleListApiKeys, handleRevokeApiKey } from '../api/apiKeys.js';
+import { withCreateIdempotency } from '../api/idempotentCreate.js';
 import { handleHealth } from '../api/health.js';
 import {
   handleAuthMagicLink,
@@ -296,7 +297,20 @@ export async function handleRequest(req: Request, deps: RequestDeps): Promise<Re
     // ── envelopes (creator, session) ──
     case 'createEnvelope': {
       const body = await readJsonBody(req);
-      const r = await handleCreateEnvelope(deps.apiContext(actorEmail!), body as never);
+      // F-30.3 / AC-136 — an Idempotency-Key header makes the create replay-safe:
+      // a retried create returns the SAME envelope with exactly one debit. No
+      // header → unchanged. The payload identity is the stable serialization of
+      // the parsed body (a genuine agent retry resends identical JSON).
+      const r = await withCreateIdempotency(
+        { pool: deps.pool },
+        actorEmail!,
+        req.headers.get('idempotency-key'),
+        JSON.stringify(body),
+        async () => {
+          const inner = await handleCreateEnvelope(deps.apiContext(actorEmail!), body as never);
+          return { status: inner.status, body: inner.body };
+        },
+      );
       return json(r.body, r.status);
     }
     case 'getEnvelope': {

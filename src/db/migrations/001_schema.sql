@@ -321,3 +321,18 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 
 CREATE INDEX IF NOT EXISTS api_keys_creator_email_idx ON api_keys (creator_email);
+
+-- ── Create-endpoint idempotency keys (F-30.3 / AC-136) ──────────────────────
+-- (creator, Idempotency-Key) → request hash + stored 201 response for replay.
+-- NULL response_status = in-flight reservation; failures delete their row.
+-- (Incremental parity for pre-Phase-44 databases: 007_idempotency_keys.sql.)
+
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  creator_email    TEXT NOT NULL,
+  idempotency_key  TEXT NOT NULL,
+  request_hash     TEXT NOT NULL,
+  response_status  INTEGER,
+  response_body    JSONB,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (creator_email, idempotency_key)
+);
