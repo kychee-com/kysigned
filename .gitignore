@@ -1,0 +1,25 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+coverage/
+*.log
+.DS_Store
+Thumbs.db
+
+frontend/node_modules/
+frontend/dist/
+mcp/node_modules/
+mcp/dist/
+
+# Local AI-harness state — never part of the forkable template (kysigned-spec F17.11.7).
+# Untracked dev junctions; gitignored so the public-flip `git add -A` can't sweep them in.
+.claude/
+.cursor/
+.agent/
+memory/
+
+# Local scratch (SSM params, downloaded build artifacts — all also in S3)
+.tmp/

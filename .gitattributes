@@ -1,0 +1,8 @@
+# Binary assets — never apply text/CRLF normalization (would corrupt the bytes).
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.png binary
+*.pdf binary
+*.eml -text

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>How Kysigned Works — Technical</title>
+    <link rel="icon" href="/favicon.png">
+    <style>
+      :root { color: #1a1a2e; background: #fff; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; line-height: 1.6; }
+      header, main, footer { width: min(920px, calc(100% - 40px)); margin: 0 auto; }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 72px; border-bottom: 1px solid #eee; }
+      nav { display: flex; gap: 18px; flex-wrap: wrap; font-size: 14px; }
+      a { color: #1a1a2e; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; background: #f4f4f5; padding: 1px 5px; border-radius: 3px; }
+      .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; text-decoration: none; }
+      .brand img { width: 32px; height: 32px; border-radius: 6px; }
+      h1 { font-size: clamp(30px, 5vw, 48px); line-height: 1.05; letter-spacing: 0; margin: 64px 0 14px; }
+      h2 { margin: 38px 0 10px; font-size: 22px; }
+      p, li { color: #444; }
+      .lede { font-size: 18px; color: #666; max-width: 760px; }
+      ol, ul { padding-left: 22px; max-width: 760px; }
+      li { margin: 10px 0; }
+      footer { padding: 34px 0 46px; color: #666; font-size: 13px; }
+      @media (max-width: 640px) {
+        header { align-items: flex-start; flex-direction: column; padding: 18px 0; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/">
+        <img src="/favicon.png" alt="">
+        <span>kysigned</span>
+      </a>
+      <nav aria-label="Main">
+        <a href="/how-it-works">How it works</a>
+        <a href="/faq">FAQ</a>
+        <a href="/verify">Verify</a>
+        <a href="/?intent=signin">Sign in</a>
+      </nav>
+    </header>
+    <main>
+      <h1>How it works: the technical details</h1>
+      <p class="lede">A kysigned signature is an email its sender's provider signed with DKIM. Nothing about the proof depends on kysigned staying online: the trust set is the signer's email provider, the public DKIM-key archives, and the timestamp authorities.</p>
+
+      <h2>1. The document and the cover</h2>
+      <p>The creator uploads a PDF. For each signer, kysigned prepends a one-page cover (the ESIGN/UETA and eIDAS consent to sign electronically, plus the document's SHA-256) and computes a per-signer canonical PDF <code>P = cover ++ document</code>. Each signer is emailed their own <code>P</code> as an attachment.</p>
+
+      <h2>2. The signature is a DKIM-signed forward</h2>
+      <p>A signer signs by forwarding that email back with <code>I sign this document</code> as the first line, keeping the attachment. Their provider (Gmail, Outlook, iCloud, and so on) adds a DKIM signature over the message headers and body hash on the way out. Only that provider can produce a valid DKIM signature for that mailbox, so the forward is a signature only the signer could have made. Signers need no account and no app.</p>
+
+      <h2>3. Classical verification, then evidence capture</h2>
+      <p>kysigned verifies the DKIM signature with the mainstream <code>mailauth</code> library, confirms the forwarded attachment is byte-identical to the <code>P</code> that was sent, checks the signing phrase on the first line, and records the signer. The raw signed <code>.eml</code> is time-stamped with RFC&nbsp;3161 and OpenTimestamps.</p>
+
+      <h2>4. The evidence bundle</h2>
+      <p>When every signer is in, kysigned assembles a single self-contained PDF: the original document, each signer's cover, each signer's original DKIM-signed <code>.eml</code>, the RFC&nbsp;3161 + OpenTimestamps proofs, and the DKIM public keys with their public-archive provenance. It is a clean, unsigned PDF (no certificate dictionary), so it opens with no warning in any viewer, and it carries a SHA-256 fingerprint over the embedded evidence printed on the signature page. Every party is emailed the bundle; the working copy on kysigned's servers is then deleted.</p>
+
+      <h2>5. Verification is client-side and offline</h2>
+      <p>Anyone can verify the bundle with no account and no server call. The verifier recomputes each signer's <code>P = cover ++ document</code> from the embedded parts, checks that it matches the signed <code>.eml</code> attachment, validates each DKIM signature against the embedded and publicly-archived keys, validates the time proofs, and recomputes the printed fingerprint. A clean verdict means: these signers, this document, at this time, provable forever. A reference command-line verifier and a second independent cross-check ship in the repository.</p>
+
+      <p>Want to see a verdict before signing anything? The repository ships sample files under <code>docs/test-assets/</code>: a genuine signed record for <a href="/verify">/verify</a>, tampered bundles that must fail, and original + sign-request pairs for <a href="/hashcheck">/hashcheck</a>, each with a documented expected verdict.</p>
+
+      <p style="margin-top: 28px;"><a href="/how-it-works">&larr; Back to the plain-language overview</a></p>
+    </main>
+    <footer>
+      kysigned is not a substitute for legal advice. Check whether electronic signatures are valid for your use case and jurisdiction.
+    </footer>
+  </body>
+</html>

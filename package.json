@@ -1,0 +1,55 @@
+{
+  "name": "kysigned",
+  "version": "0.1.0",
+  "description": "Self-verifying e-signatures — your email provider signs, the proof lives in your inbox. Pay per envelope, verify offline forever, no accounts for signers.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kychee-com/kysigned.git"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:run402-cloud": "node scripts/build-run402-cloud.mjs",
+    "test": "node --test --import tsx src/**/*.test.ts",
+    "test:run402-app": "node --test test/run402-app-manifest.test.mjs",
+    "test:timestamp:live": "node --test --import tsx src/timestamp/**/*.live.ts",
+    "test:e2e": "node --test --import tsx test/e2e/*.test.ts",
+    "test:e2e:smoke": "node --test --import tsx test/e2e-smoke/*.test.ts",
+    "test:docs": "node --test --import tsx test/api-docs-alignment.test.ts",
+    "test:audit": "node --test --import tsx test/no-localstorage-tokens.test.ts test/no-app-subdomain.test.ts",
+    "test:all": "node scripts/test-all.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.20.0",
+    "esbuild": "^0.27.7",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.2.0",
+    "@pdf-lib/fontkit": "^1.1.1",
+    "@run402/sdk": "^3.7.9",
+    "@types/qrcode": "^1.5.6",
+    "bidi-js": "^1.0.3",
+    "crypto-js": "^4.2.0",
+    "disposable-email-domains": "^1.0.62",
+    "mailauth": "^4.13.3",
+    "pdf-lib": "^1.17.1",
+    "pg": "^8.20.0",
+    "pkijs": "^3.4.0",
+    "qrcode": "^1.5.4"
+  }
+}

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>How Kysigned Works</title>
+    <link rel="icon" href="/favicon.png">
+    <style>
+      :root { color: #1a1a2e; background: #fff; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; line-height: 1.6; }
+      header, main, footer { width: min(920px, calc(100% - 40px)); margin: 0 auto; }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 72px; border-bottom: 1px solid #eee; }
+      nav { display: flex; gap: 18px; flex-wrap: wrap; font-size: 14px; }
+      a { color: #1a1a2e; }
+      .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; text-decoration: none; }
+      .brand img { width: 32px; height: 32px; border-radius: 6px; }
+      h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.05; letter-spacing: 0; margin: 64px 0 14px; }
+      h2 { margin: 38px 0 10px; font-size: 22px; }
+      p, li { color: #444; }
+      .lede { font-size: 18px; color: #666; max-width: 760px; }
+      ol { padding-left: 22px; max-width: 760px; }
+      li { margin: 14px 0; }
+      .note { margin-top: 34px; padding: 18px 20px; border: 1px solid #eee; border-radius: 8px; background: #fafafa; max-width: 760px; }
+      footer { padding: 34px 0 46px; color: #666; font-size: 13px; }
+      @media (max-width: 640px) {
+        header { align-items: flex-start; flex-direction: column; padding: 18px 0; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/">
+        <img src="/favicon.png" alt="">
+        <span>kysigned</span>
+      </a>
+      <nav aria-label="Main">
+        <a href="/faq">FAQ</a>
+        <a href="/verify">Verify</a>
+        <a href="/?intent=signin">Sign in</a>
+      </nav>
+    </header>
+    <main>
+      <h1>How it works</h1>
+      <p class="lede">Kysigned turns a signer email forward into a verifiable signature by relying on DKIM, the cryptographic signature email providers already add to outbound mail.</p>
+
+      <ol>
+        <li><strong>The creator sends a PDF.</strong> Kysigned records the document hash, signers, and signing instructions.</li>
+        <li><strong>Each signer forwards the request email.</strong> The first line states the signing intent, and the original PDF stays attached.</li>
+        <li><strong>The signer email provider signs the forward.</strong> DKIM proves the message came from that domain's mail system and has not been changed.</li>
+        <li><strong>Kysigned checks the evidence.</strong> It verifies the DKIM signature, signer address, signing phrase, attachment bytes, timestamps, and envelope state.</li>
+        <li><strong>Everyone receives a bundle.</strong> The final PDF carries the original document plus enough evidence for later offline verification.</li>
+      </ol>
+
+      <p>Try it before sending anything: the repository ships sample files under <code>docs/test-assets/</code>, including a genuine signed record for the <a href="/verify">verify page</a> and matching originals for the <a href="/hashcheck">hash-check tool</a>, each with a documented expected result.</p>
+
+      <div class="note">
+        <strong>Running your own instance?</strong>
+        Clone the repo, set <code>KYSIGNED_ALLOWED_CREATORS</code>, and run <code>run402 up --name your-name</code>. Your instance gets its own web origin and project mail host.
+      </div>
+    </main>
+    <footer>
+      For technical verification details, see the repository trust-model documentation.
+    </footer>
+  </body>
+</html>

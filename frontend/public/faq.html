@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Kysigned FAQ</title>
+    <link rel="icon" href="/favicon.png">
+    <style>
+      :root { color: #1a1a2e; background: #fff; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; line-height: 1.6; }
+      header, main, footer { width: min(920px, calc(100% - 40px)); margin: 0 auto; }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 72px; border-bottom: 1px solid #eee; }
+      nav { display: flex; gap: 18px; flex-wrap: wrap; font-size: 14px; }
+      a { color: #1a1a2e; }
+      .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; text-decoration: none; }
+      .brand img { width: 32px; height: 32px; border-radius: 6px; }
+      h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.05; letter-spacing: 0; margin: 64px 0 14px; }
+      h2 { margin: 38px 0 10px; font-size: 22px; }
+      p { color: #444; max-width: 760px; }
+      .lede { font-size: 18px; color: #666; }
+      .section { padding-bottom: 22px; border-bottom: 1px solid #f0f0f0; }
+      footer { padding: 34px 0 46px; color: #666; font-size: 13px; }
+      @media (max-width: 640px) {
+        header { align-items: flex-start; flex-direction: column; padding: 18px 0; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/">
+        <img src="/favicon.png" alt="">
+        <span>kysigned</span>
+      </a>
+      <nav aria-label="Main">
+        <a href="/how-it-works">How it works</a>
+        <a href="/verify">Verify</a>
+        <a href="/?intent=signin">Sign in</a>
+      </nav>
+    </header>
+    <main>
+      <h1>FAQ</h1>
+      <p class="lede">Short answers for people signing by email and teams running their own Kysigned instance.</p>
+
+      <section class="section" id="how-to-sign">
+        <h2>How do I sign?</h2>
+        <p>Open the signing email, read the attached PDF, then forward the whole email back to the signing address. Put the required signing phrase as the first line of your forward and keep the PDF attached.</p>
+      </section>
+
+      <section class="section" id="wrong-email">
+        <h2>What if I forward from the wrong email address?</h2>
+        <p>Kysigned checks the email address that created the DKIM signature. Forward from the same address that received the signing request, or ask the document creator to send a new request to the address you want to use.</p>
+      </section>
+
+      <section class="section">
+        <h2>Do signers need an account?</h2>
+        <p>No. Signers use their existing email provider. The creator needs access to the Kysigned dashboard, but signers can complete a request by forwarding email.</p>
+      </section>
+
+      <section class="section">
+        <h2>Can I verify a completed bundle later?</h2>
+        <p>Yes. The evidence bundle carries the document, signer emails, DKIM evidence, timestamps, and verification metadata. Use the verifier at <a href="/verify">/verify</a> or the repository CLI.</p>
+      </section>
+
+      <section class="section" id="languages">
+        <h2>Which languages can I use for names?</h2>
+        <p>Document titles and signer names printed on the cover and signature pages support Latin (with accents), Greek, Cyrillic, Hebrew, and Arabic. Hebrew is laid out right to left; Arabic renders in standalone letter shapes rather than joined cursive. Chinese, Japanese, and Korean names are not supported yet: a name using a character the cover font cannot render is rejected at creation, with the exact character named, so nothing is ever printed as an empty box. This applies only to the names Kysigned prints. The uploaded document is never re-typeset, so its own contents can be in any language.</p>
+      </section>
+
+      <section class="section">
+        <h2>Can I run my own copy?</h2>
+        <p>Yes. Clone the open-source repository, set <code>KYSIGNED_ALLOWED_CREATORS</code>, then run <code>run402 up --name your-name</code>. Run402 provisions the project, mailboxes, secrets, site, database, and function routes declared in <code>run402.json</code>.</p>
+      </section>
+    </main>
+    <footer>
+      Kysigned is not a substitute for legal advice. Check whether electronic signatures are valid for your use case and jurisdiction.
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+/* Brand font — Inter, matching the static marketing/legal pages + the injected
+   site header. The SPA otherwise inherits the OS system font, which made the
+   AppHeader "kysigned" wordmark look a different size than on the static pages.
+   Loaded via the <link> in index.html. */
+
+/* UX-002 / UX-006 (CLS): a metric-matched fallback for the web font. Inter loads
+   async (display=swap), so before it arrives text is painted in the fallback and
+   then re-flows when Inter swaps in — the layout-shift root cause on the
+   text-heavy pages (/verify, /faq). This @font-face overlays Inter's own metrics
+   (ascent/descent/size-adjust, the published Inter+Arial values) onto a local
+   Arial, so the pre-swap fallback occupies the SAME space as Inter and the swap is
+   metric-neutral: no reflow, Inter still used once loaded. Styling only (no render
+   / SSR change). */
+@font-face {
+  font-family: "Inter Fallback";
+  src: local("Arial");
+  ascent-override: 90.44%;
+  descent-override: 22.52%;
+  line-gap-override: 0.00%;
+  size-adjust: 107.12%;
+}
+body {
+  font-family: "Inter", "Inter Fallback", -apple-system, system-ui, sans-serif;
+}
+
+/* UX-003 (CLS): reserve the scrollbar gutter so a route that starts short (a loading
+   spinner) and then grows tall (e.g. the review page's full document view) doesn't
+   make the vertical scrollbar appear and reflow the page horizontally — a layout shift
+   the design sweep measured on /review. Inert on pages that already scroll. */
+html {
+  scrollbar-gutter: stable;
+}

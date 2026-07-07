@@ -1,0 +1,165 @@
+# kysigned — self-verifying e-signatures for agents and humans
+
+> This is a kysigned instance. kysigned is open-source, operator-forkable software: this
+> deployment is run by its own operator, on its own domain, with its own branding, pricing,
+> and allowlist. The URLs below are relative to this instance's origin.
+>
+> How it works: /how-it-works (technical: /how-it-works-technical.html)
+> Verify a bundle: /verify (offline, no account, no server lookup)
+> FAQ: /faq
+> Health: /v1/health
+> Pricing / access: operator-configured — this instance may charge per envelope, gate creators by
+>   an allowlist, or both. Signing is always free for signers.
+> Open source: Apache-2.0-licensed; run your own with `run402 up`.
+
+**IMPORTANT: kysigned is NOT in the trust chain.** The proof of a signature is the signer's own
+email provider, not kysigned. The instance assembles and time-stamps the evidence; anyone can verify
+it with math and public keys — even if this instance no longer exists. No accounts for signers, no
+certificate authority, no central registry, no lookups.
+
+## Hello, Agent!
+
+kysigned turns a PDF plus a list of signers into a legally-binding, independently-verifiable
+e-signature — and it's built for you to drive end to end, no human UI required. You act as the
+CREATOR: you create an envelope and track it. Each human signer signs by replying to one email.
+When everyone has signed, every party receives a sealed EVIDENCE BUNDLE they can verify forever.
+
+## How a signature actually works
+
+1. You create an envelope (a PDF + signers). kysigned prepends a one-page cover (the ESIGN/UETA +
+   eIDAS consent to sign electronically, plus the document's SHA-256) and emails each signer their
+   own signing request from this instance's signing mailbox (`forward-to-sign@<this-instance>`).
+2. A signer signs by FORWARDING that email back with **`I sign this document`** as the first line,
+   the PDF still attached. Their provider (Gmail, Outlook, iCloud, …) DKIM-signs that reply — a
+   cryptographic signature only that provider can produce for that mailbox. Signers need no account
+   and no app.
+3. When all signers are in, kysigned assembles the **evidence bundle**: the original document, every
+   signed `.eml` reply, RFC-3161 + OpenTimestamps time proofs, and the DKIM public keys. It's a clean
+   unsigned PDF (opens with no certificate warning / no red-X) carrying a verify QR, and it's emailed
+   to every party (and you).
+4. Anyone verifies the bundle offline — math + public DKIM keys — with no server involved.
+
+## TL;DR for an agent
+
+- **Create**: `POST /v1/envelope` with a PDF + signers → kysigned emails the requests.
+- **Track**: `GET /v1/envelope/:id` → per-signer status + signed times. Each non-creator signature
+  also emails you a "X just signed Y" progress note.
+- **Nudge / cancel**: `POST /v1/envelope/:id/remind`, `POST /v1/envelope/:id/void`.
+- **Complete**: everyone receives the bundle automatically. Verify any time at `/verify`.
+- **Pay / access**: operator-configured — the creator account may need credits and/or allowlisting.
+
+## Authentication
+
+The creator API (`/v1/envelope*`, `/v1/documents`) is authenticated as the CREATOR account.
+
+- Sign in: `POST /v1/auth/magic-link` with `{ "email": "you@example.com" }` → this instance emails a
+  one-time link; exchange it via `POST /v1/auth/token` for a session. (Passkeys are also supported.)
+- The session is an HttpOnly cookie; for programmatic/agent use, pass it as the `Authorization` header.
+- MCP / CLI: set `KYSIGNED_ENDPOINT` (this instance's origin) and `KYSIGNED_AUTHORIZATION` (your
+  creator session / API credential). See "Agent tools (MCP)" below.
+- Signer endpoints (`/v1/sign/:id/:token/info`, `/v1/envelope/:id/:token/pdf`) use the per-signer
+  token from the signing-request email — no account needed.
+
+## The agent journey (creator)
+
+1. Ensure your creator account can create envelopes on this instance (credits and/or allowlist, per
+   the operator's configuration).
+2. Create the envelope:
+
+   ```
+   POST /v1/envelope
+   {
+     "document_name": "Mutual NDA",
+     "pdf_base64": "<base64-encoded PDF>",
+     "signers": [ { "email": "jane@acme.com", "name": "Jane Roe" } ],
+     "message": "Please review and sign our mutual NDA."
+   }
+   ```
+   → `{ "envelope_id", "status", "document_hash", "status_url", "verify_url", "signing_links": [...] }`
+   Each `signing_links[]` entry is `{ email, name, link, review_link }`. `review_link`
+   (`/review/:id/:token`) is the human, browser-openable review page you can hand a signer directly.
+   `link` (`/v1/sign/:id/:token`) is the programmatic signer-token API base (`GET .../info` plus the
+   POST-to-sign call); it is not meant to be opened in a browser. Normally signers receive the invite
+   email and use neither.
+
+   Notes: ≤ 20 signers; each PDF must be ≤ ~3 MB when sent as `pdf_base64` (the create call is invoked
+   synchronously on Lambda, whose event payload is capped at 6 MiB; base64-in-JSON plus the gateway's own
+   wrapping inflates a raw PDF by ~16/9, so ~3 MB is the safe ceiling — larger bodies fail at the gateway).
+   To send a larger document, pass `pdf_url` instead of `pdf_base64` (the bytes are fetched server-side,
+   bypassing the request-body limit). Separately, oversize envelopes are rejected up front with the size
+   math: the completed bundle re-attaches each signer's PDF, so large documents × many signers can exceed
+   the 15 MiB bundle limit even when each upload fits.
+
+3. Track: `GET /v1/envelope/:id` until every signer is `signed`.
+4. Optional: `POST /v1/envelope/:id/remind` to nudge pending signers; `POST /v1/envelope/:id/void` to
+   cancel. Until the envelope is sealed you can edit recipients with `POST` / `PATCH` / `DELETE`
+   `/v1/envelope/:id/signers` (the signer's address rides in `?email=`).
+5. On completion every party receives the evidence-bundle email. The bundle is the durable record —
+   verify it any time at `/verify`. (No server-side verify endpoint exists; verification is client-side.)
+
+## Agent tools (MCP)
+
+`npx kysigned-mcp` exposes five tools — configure with `KYSIGNED_ENDPOINT` + `KYSIGNED_AUTHORIZATION`:
+
+- **create_envelope** — `POST /v1/envelope` (`document_name`, `pdf_base64` | `pdf_url`, `signers[]`, `message?`)
+- **check_envelope_status** — `GET /v1/envelope/:id`
+- **list_envelopes** — `GET /v1/envelopes` (the creator's own envelopes)
+- **send_reminder** — `POST /v1/envelope/:id/remind`
+- **void_envelope** — `POST /v1/envelope/:id/void`
+
+Verification is intentionally NOT a tool — the bundle verifies client-side at `/verify` or with the
+reference verifier in the public repo.
+
+## API reference (public surface)
+
+| Method & path | Auth | Description |
+|---|---|---|
+| `GET /v1/health` | none | Liveness check → `{ status, service, ts }`. |
+| `POST /v1/auth/magic-link` | none | Email the creator a one-time sign-in link. |
+| `POST /v1/auth/token` | none | Exchange a magic-link (or passkey) for a creator session. |
+| `POST /v1/envelope` | creator | Create an envelope from a PDF + signers; emails each request. |
+| `GET /v1/envelope/:id` | creator | Envelope status + per-signer state and signed times. |
+| `POST /v1/envelope/:id/remind` | creator | Remind all pending signers. |
+| `POST /v1/envelope/:id/void` | creator | Cancel an active envelope and notify signers. |
+| `POST /v1/envelope/:id/signers` | creator | Add a recipient (allowed until the envelope is sealed). |
+| `PATCH /v1/envelope/:id/signers` | creator | Edit a recipient (`?email=`), until sealed. |
+| `DELETE /v1/envelope/:id/signers` | creator | Remove a recipient (`?email=`), until sealed. |
+| `POST /v1/envelope/:id/seal` | creator | Manually seal + distribute once everyone has signed. |
+| `GET /v1/envelope/:id/pdf` | creator | Download the creator's copy of the document. |
+| `GET /v1/envelopes` | creator | List the creator's envelopes (id, name, status, dates). |
+| `GET /v1/documents` | creator | List the creator's uploaded documents (grouped by hash). |
+| `GET /v1/sign/:id/:token/info` | signer token | Signer review-page data (name, document, hash). |
+| `GET /v1/envelope/:id/:token/pdf` | signer token | Signer downloads their copy of the document. |
+
+Not part of the public agent surface: the operator allowlist admin, the inbound-mail webhook, and any
+operator-specific credit/billing routes. There is **no** server-side verify endpoint — verification is
+fully client-side (the `/verify` page or the CLI).
+
+## Verifying a bundle
+
+The bundle is an ordinary PDF anyone can verify with no account and no server:
+
+- **Browser**: open `/verify` and drop the bundle in. It re-computes the document hash, checks each
+  signer's DKIM signature against the embedded and publicly-archived keys, validates the RFC-3161 and
+  OpenTimestamps time proofs, and confirms each signer signed THIS document.
+- **CLI**: a reference verifier ships in the public repository.
+
+A clean "verified" verdict means: these signers, this document, at this time — provable forever.
+
+## Fork your own
+
+kysigned is open source and operator-forkable: run your own instance on your own domain, with your
+own branding, pay-per-envelope or allowlist-gated. The Apache-2.0-licensed public repository (with the
+README quickstart) shows how; point agents at your instance via the MCP's `KYSIGNED_ENDPOINT`.
+
+## Human FAQ
+
+Your agent may share this with you.
+
+- **What am I getting?** A legally-binding e-signature (ESIGN/UETA in the US, eIDAS SES/AES in the EU)
+  whose proof lives in your and your signers' inboxes — verifiable forever, by anyone, without trusting
+  this instance.
+- **Do signers need an account?** No. They sign by forwarding one email — no app, no login.
+- **What does it cost?** Operator-configured. Signing is always free for signers.
+- **What if this instance disappears?** Your evidence bundle still verifies — it's math and your
+  providers' public keys, not a lookup against any server.

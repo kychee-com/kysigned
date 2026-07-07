@@ -1,0 +1,29 @@
+# Dependabot — keep npm dependencies current so the community-maintained
+# `disposable-email-domains` blocklist (F-13.6c / AC-95) and other packages don't
+# silently rot. That list is a normal npm dependency that esbuild INLINES into the
+# deploy bundle at build time, so it only refreshes when the version is bumped and
+# the project is redeployed. Dependabot opens the bump PRs; CI (.github/workflows/
+# test.yml) gates them; merging one and running scripts/deploy.ts is what ships the
+# refreshed list to production.
+#
+# Minor/patch bumps are grouped into one low-noise PR per directory. Majors come as
+# their own PRs so a breaking change is reviewed on its own.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        update-types: ["minor", "patch"]

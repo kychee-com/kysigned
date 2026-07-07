@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>kysigned</title>
+    <!-- Brand font — Inter, the same the static marketing/legal pages load. Without
+         this the SPA fell back to the OS system font, so the AppHeader logo looked
+         a different size from the static pages' headers. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- display=optional (was swap): the browser keeps the metric-matched fallback
+         (see "Inter Fallback" in index.css) for the whole first paint rather than
+         swapping Inter in mid-load, which removes the font-swap reflow that was the
+         layout-shift (CLS) root cause on the text-heavy pages (/verify, /faq).
+         Inter still loads + shows on subsequent (cached) visits. Font-loading
+         policy only — not SSR / static pre-rendering. -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=optional" rel="stylesheet" />
+    <script>
+      // Apex canonical: redirect www.* to apex BEFORE the SPA mounts so
+      // cookies + WebAuthn rpId + every auth surface lives at exactly one
+      // origin. Synchronous redirect (no React flicker). Forkers who prefer
+      // www-canonical can change `target.startsWith("www.")` to invert.
+      (function () {
+        var host = window.location.host;
+        if (host.startsWith("www.") && host.length > 4) {
+          var apex = host.slice(4);
+          window.location.replace(
+            "https://" + apex + window.location.pathname + window.location.search + window.location.hash
+          );
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

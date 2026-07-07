@@ -1,0 +1,223 @@
+{
+  "$schema": "https://run402.com/schemas/run402-app.v1.schema.json",
+  "spec_version": 1,
+  "app": {
+    "id": "kysigned",
+    "display_name": "Kysigned",
+    "description": "Self-verifying e-signatures powered by email DKIM signatures."
+  },
+  "project": {
+    "name": "${input.name}",
+    "origin": {
+      "subdomain": "${input.name}"
+    }
+  },
+  "resources": {
+    "mailboxes": {
+      "forward_to_sign": {
+        "slug": "forward-to-sign",
+        "description": "Signer replies and forward-to-sign evidence intake."
+      },
+      "notifications": {
+        "slug": "notifications",
+        "roles": ["default_outbound", "auth_sender"],
+        "description": "Status, login, and completion notifications."
+      },
+      "info": {
+        "slug": "info",
+        "description": "Human contact inbox; the Reply-To on notification mail (F-19 three-mailbox model)."
+      }
+    }
+  },
+  "secrets": {
+    "KYSIGNED_ALLOWED_CREATORS": {
+      "required": true,
+      "source_env": "KYSIGNED_ALLOWED_CREATORS",
+      "description": "Allowed request creators. Comma-separated exact emails or exact-domain wildcards such as you@example.com,*@example.org."
+    }
+  },
+  "build": {
+    "mode": "local",
+    "commands": [
+      {
+        "id": "install-root",
+        "argv": ["npm", "ci"]
+      },
+      {
+        "id": "install-frontend",
+        "argv": ["npm", "ci", "--prefix", "frontend"]
+      },
+      {
+        "id": "build",
+        "argv": ["npm", "run", "build:run402-cloud"]
+      }
+    ]
+  },
+  "release": {
+    "database": {
+      "migrations": [
+        {
+          "id": "001_schema",
+          "sql_path": "src/db/migrations/001_schema.sql"
+        },
+        {
+          "id": "002_drop_signing_order",
+          "sql_path": "src/db/migrations/002_drop_signing_order.sql"
+        },
+        {
+          "id": "003_family_b",
+          "sql_path": "src/db/migrations/003_family_b.sql"
+        },
+        {
+          "id": "004_signup_grant",
+          "sql_path": "src/db/migrations/004_signup_grant.sql"
+        },
+        {
+          "id": "005_email_triggers",
+          "sql_path": "src/db/migrations/005_email_triggers.sql"
+        }
+      ]
+    },
+    "secrets": {
+      "require": [
+        "RUN402_PROJECT_ID",
+        "RUN402_SERVICE_KEY",
+        "RUN402_ANON_KEY",
+        "RUN402_API_BASE",
+        "RUN402_API_BASE_URL",
+        "RUN402_PUBLIC_ORIGIN",
+        "RUN402_MAILBOX_FORWARD_TO_SIGN_ID",
+        "RUN402_MAILBOX_FORWARD_TO_SIGN_ADDRESS",
+        "RUN402_MAILBOX_NOTIFICATIONS_ID",
+        "RUN402_MAILBOX_NOTIFICATIONS_ADDRESS",
+        "KYSIGNED_ALLOWED_CREATORS"
+      ]
+    },
+    "functions": {
+      "replace": {
+        "kysigned-api": {
+          "runtime": "node22",
+          "deps": [
+            "@run402/sdk@^3.7.9",
+            "@noble/hashes@^2.2.0",
+            "@pdf-lib/fontkit@^1.1.1",
+            "crypto-js@^4.2.0",
+            "mailauth@^4.13.3",
+            "pdf-lib@^1.17.1",
+            "pg@^8.20.0",
+            "pkijs@^3.4.0",
+            "qrcode@^1.5.4"
+          ],
+          "source": {
+            "path": "dist/run402/cloud-functions/kysigned-api.js"
+          },
+          "triggers": [
+            {
+              "id": "signing-replies",
+              "type": "email",
+              "mailbox": "${RUN402_MAILBOX_FORWARD_TO_SIGN_ID}",
+              "events": ["reply_received"],
+              "run": {
+                "event_type": "reply_received",
+                "retry": {
+                  "max_attempts": 5,
+                  "min_delay_seconds": 30
+                },
+                "expires_after_seconds": 86400
+              }
+            },
+            {
+              "id": "signing-bounces",
+              "type": "email",
+              "mailbox": "${RUN402_MAILBOX_FORWARD_TO_SIGN_ID}",
+              "events": ["bounced"],
+              "run": {
+                "event_type": "bounced",
+                "retry": {
+                  "max_attempts": 3,
+                  "min_delay_seconds": 60
+                },
+                "expires_after_seconds": 86400
+              }
+            }
+          ]
+        }
+      }
+    },
+    "site": {
+      "replace": {
+        "__source": "local-dir",
+        "path": "frontend/dist"
+      },
+      "public_paths": {
+        "mode": "implicit"
+      }
+    },
+    "subdomains": {
+      "set": ["${input.name}"]
+    },
+    "routes": {
+      "replace": [
+        {
+          "pattern": "/faq",
+          "methods": ["GET", "HEAD"],
+          "target": {
+            "type": "static",
+            "file": "faq.html"
+          }
+        },
+        {
+          "pattern": "/how-it-works",
+          "methods": ["GET", "HEAD"],
+          "target": {
+            "type": "static",
+            "file": "how-it-works.html"
+          }
+        },
+        {
+          "pattern": "/v1/*",
+          "target": {
+            "type": "function",
+            "name": "kysigned-api"
+          }
+        }
+      ]
+    }
+  },
+  "verify": {
+    "http": [
+      {
+        "id": "home",
+        "path": "/",
+        "expect": {
+          "status": 200
+        },
+        "retries": 6
+      },
+      {
+        "id": "health",
+        "path": "/v1/health",
+        "expect": {
+          "status": 200
+        },
+        "retries": 6
+      },
+      {
+        "id": "faq",
+        "path": "/faq.html",
+        "expect": {
+          "status": 200
+        },
+        "retries": 3
+      },
+      {
+        "id": "how-it-works",
+        "path": "/how-it-works",
+        "expect": {
+          "status": 200
+        },
+        "retries": 3
+      }
+    ]
+  }
+}

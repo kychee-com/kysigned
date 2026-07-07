@@ -1,0 +1,293 @@
+/**
+ * MarketingHomePage — public landing at `/` on the apex domain.
+ *
+ * GH#103 / F-14.10 / F-17.7: this component ships ZERO operator-specifics. The
+ * hero, the (optional) pricing comparison, the (optional) audience cards, and
+ * the footer identity all come from `getOperatorConfig()` — generic,
+ * operator-free defaults baked into the config module, overridden at build for
+ * a specific operator via `VITE_OPERATOR_CONFIG`. A fresh fork renders a
+ * placeholder hero + a generic "how it works" + no pricing; kysigned.com's
+ * private deploy injects its config so the SAME compiled SPA renders its real
+ * home UNCHANGED. Only genuinely product-level content (the 3-step "how it
+ * works", the legal disclaimer) is static here — it's the same for every operator.
+ *
+ * Ported from the previous static marketing page so that under DD-73 (single-
+ * project same-origin hosting, v0.22.1) the SPA owns the apex landing and
+ * cookie-based session auth Just Works for subsequent navigation. Styling is
+ * inlined (scoped to `.marketing-home-page`) so a fork ports cleanly without
+ * touching the global stylesheet.
+ */
+import { Link } from 'react-router-dom'
+import { getOperatorConfig } from '../config/operator'
+
+const MARKETING_CSS = `
+.marketing-home-page * { margin: 0; padding: 0; box-sizing: border-box; }
+.marketing-home-page { font-family: 'Inter', -apple-system, system-ui, sans-serif; color: #1a1a2e; background: #fff; line-height: 1.6; min-height: 100vh; }
+.marketing-home-page .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+.marketing-home-page a { color: #1a1a2e; }
+
+.marketing-home-page nav { padding: 20px 0; border-bottom: 1px solid #eee; }
+.marketing-home-page nav .container { display: flex; justify-content: space-between; align-items: center; }
+.marketing-home-page .nav-logo { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 700; font-size: 18px; }
+.marketing-home-page .nav-logo img { width: 32px; height: 32px; border-radius: 6px; }
+.marketing-home-page .nav-links { display: flex; gap: 24px; font-size: 14px; }
+.marketing-home-page .nav-links a { text-decoration: none; color: #666; }
+.marketing-home-page .nav-links a:hover { color: #1a1a2e; }
+
+.marketing-home-page .hero { padding: 80px 0 60px; text-align: center; }
+.marketing-home-page .hero h1 { font-size: 48px; font-weight: 700; line-height: 1.1; letter-spacing: -1.5px; margin-bottom: 20px; text-wrap: balance; }
+.marketing-home-page .hero h1 span { color: #666; font-weight: 400; }
+.marketing-home-page .hero p { font-size: 18px; color: #666; max-width: 600px; margin: 0 auto 32px; }
+.marketing-home-page .hero-ctas { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.marketing-home-page .btn-primary { display: inline-block; background: #1a1a2e; color: #fff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 15px; }
+.marketing-home-page .btn-primary:hover { background: #2a2a40; }
+.marketing-home-page .btn-secondary { display: inline-block; border: 2px solid #1a1a2e; color: #1a1a2e; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 15px; }
+.marketing-home-page .btn-secondary:hover { background: #f5f5f5; }
+
+.marketing-home-page .comparison { padding: 60px 0; background: #f9f9f9; }
+.marketing-home-page .comparison h2 { text-align: center; font-size: 28px; margin-bottom: 32px; }
+.marketing-home-page .compare-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 15px; }
+.marketing-home-page .compare-table th, .marketing-home-page .compare-table td { padding: 14px 20px; text-align: left; border-bottom: 1px solid #eee; overflow-wrap: anywhere; word-break: break-word; }
+.marketing-home-page .compare-table th { font-weight: 600; background: #f0f0f0; }
+.marketing-home-page .compare-table .highlight { font-weight: 700; color: #1a1a2e; }
+
+.marketing-home-page .features { padding: 60px 0; }
+.marketing-home-page .features h2 { text-align: center; font-size: 28px; margin-bottom: 40px; }
+.marketing-home-page .step-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+.marketing-home-page .step-card { padding: 32px 20px; border: 1px solid #eee; border-radius: 12px; text-align: center; }
+.marketing-home-page .step-card h3 { font-size: 17px; margin-bottom: 10px; }
+.marketing-home-page .step-card p { font-size: 14px; color: #666; }
+.marketing-home-page .step-number { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; background: #1a1a2e; color: #fff; font-weight: 700; font-size: 18px; margin-bottom: 14px; }
+
+.marketing-home-page .audiences { padding: 60px 0; background: #f9f9f9; }
+.marketing-home-page .audiences h2 { text-align: center; font-size: 28px; margin-bottom: 32px; }
+.marketing-home-page .audience-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; }
+.marketing-home-page .audience-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 32px 28px; display: flex; flex-direction: column; }
+.marketing-home-page .audience-card h3 { font-size: 14px; font-weight: 600; color: #5a5a6e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+.marketing-home-page .audience-card .audience-tagline { font-size: 22px; font-weight: 700; margin-bottom: 20px; color: #1a1a2e; }
+.marketing-home-page .audience-card ul { list-style: none; margin: 0 0 24px 0; font-size: 14px; color: #444; flex-grow: 1; }
+.marketing-home-page .audience-card li { padding: 7px 0; border-bottom: 1px solid #f5f5f5; line-height: 1.5; }
+.marketing-home-page .audience-card li:last-child { border-bottom: none; }
+.marketing-home-page .audience-card li::before { content: "\\2713"; color: #1a1a2e; font-weight: 700; margin-right: 8px; }
+.marketing-home-page .audience-card .audience-cta { text-align: center; }
+
+@media (max-width: 720px) {
+  .marketing-home-page .step-grid { grid-template-columns: 1fr; }
+  .marketing-home-page .audience-grid { grid-template-columns: 1fr; }
+}
+
+.marketing-home-page footer { padding: 40px 0; border-top: 1px solid #eee; font-size: 13px; color: #5a5a6e; }
+.marketing-home-page footer .container { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+.marketing-home-page footer a { color: #5a5a6e; text-decoration: none; }
+.marketing-home-page footer a:hover { color: #1a1a2e; }
+
+@media (max-width: 640px) {
+  .marketing-home-page .hero h1 { font-size: 32px; }
+  .marketing-home-page .hero p { font-size: 16px; }
+  .marketing-home-page .nav-links { gap: 16px; font-size: 13px; }
+  /* FC1.2 (F-002): tighten comparison-table cell padding so the 3 columns +
+     wrapped text fit a 375px viewport (was overflowing to 384px). Paired with
+     table-layout:fixed + overflow-wrap:anywhere above. */
+  .marketing-home-page .comparison { padding: 48px 0; }
+  .marketing-home-page .compare-table { font-size: 14px; }
+  .marketing-home-page .compare-table th,
+  .marketing-home-page .compare-table td { padding: 12px 10px; }
+}
+`
+
+export function MarketingHomePage() {
+  const cfg = getOperatorConfig()
+  const { hero, comparison, audiences } = cfg.home
+  return (
+    <div className="marketing-home-page">
+      <style>{MARKETING_CSS}</style>
+
+      {/* v0.22.0 / 2F.AUTH7: the global <AppHeader/> above the Routes
+          provides the canonical logo + nav + auth-widget. The page-local
+          `<nav>` that used to live here was removed to avoid duplication. */}
+
+      {/* Hero — content from the operator config (generic placeholder for a
+          fork; the operator's real hero when VITE_OPERATOR_CONFIG is injected). */}
+      <section className="hero">
+        <div className="container">
+          <h1>
+            {hero.title}
+            <br />
+            <span>{hero.subtitle}</span>
+          </h1>
+          <p dangerouslySetInnerHTML={{ __html: hero.bodyHtml }} />
+          <div className="hero-ctas">
+            <Link to="/dashboard/create" className="btn-primary">
+              Create an envelope
+            </Link>
+          </div>
+          {/* Operator note under the CTA — kysigned.com's trial offer
+              (F-14.8 / AC-98) or, on a fresh fork, a "replace this" hint. */}
+          {hero.note ? (
+            <p style={{ marginTop: 14, fontSize: 14, fontWeight: 600, color: '#666' }}>{hero.note}</p>
+          ) : null}
+        </div>
+      </section>
+
+      {/* Comparison — operator-specific (carries pricing), so it renders only
+          when the operator supplies it. A fresh fork omits it entirely. */}
+      {comparison ? (
+        <section className="comparison">
+          <div className="container">
+            <h2>{comparison.heading}</h2>
+            <table className="compare-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>{comparison.columns[0]}</th>
+                  <th className="highlight">{comparison.columns[1]}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {comparison.rows.map((row, i) => (
+                  <tr key={i}>
+                    <td>{row.label}</td>
+                    <td dangerouslySetInnerHTML={{ __html: row.aHtml }} />
+                    <td className="highlight" dangerouslySetInnerHTML={{ __html: row.bHtml }} />
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
+
+      <section className="features">
+        <div className="container">
+          <h2>How it works</h2>
+          <div className="step-grid">
+            <div className="step-card">
+              <div className="step-number">1</div>
+              <h3>Send a PDF</h3>
+              <p>Add signers and send. Share the signing link any way you like.</p>
+            </div>
+            <div className="step-card">
+              <div className="step-number">2</div>
+              <h3>Signers forward</h3>
+              <p>
+                Each signer forwards the email back with &ldquo;I sign this document&rdquo;. Their provider&rsquo;s
+                DKIM signature on that email <em>is</em> the signature, no account, no app.
+              </p>
+            </div>
+            <div className="step-card">
+              <div className="step-number">3</div>
+              <h3>Everyone gets the proof</h3>
+              <p>One signing record, verifiable by anyone, offline, forever, even if we shut down.</p>
+            </div>
+          </div>
+          <p style={{ textAlign: 'center', marginTop: 28, fontSize: 14, color: '#666' }}>
+            <a href="/how-it-works-technical.html" style={{ color: '#1a1a2e', textDecoration: 'underline' }}>
+              The technical details &rarr;
+            </a>
+          </p>
+        </div>
+      </section>
+
+      {/* Audiences — operator-specific positioning (names the operator, carries
+          pricing), so it renders only when the operator supplies it. A fresh
+          fork omits it. Each card's CTA is an SPA <Link> (internal) or a
+          full-navigation <a> (static page), per ctaExternal. */}
+      {audiences ? (
+        <section className="audiences">
+          <div className="container">
+            <h2>{audiences.heading}</h2>
+            <div className="audience-grid">
+              {audiences.cards.map((card, i) => (
+                <div className="audience-card" key={i}>
+                  <h3>{card.kicker}</h3>
+                  <p className="audience-tagline">{card.tagline}</p>
+                  <ul>
+                    {card.itemsHtml.map((item, j) => (
+                      <li key={j} dangerouslySetInnerHTML={{ __html: item }} />
+                    ))}
+                  </ul>
+                  <div className="audience-cta">
+                    {card.ctaExternal ? (
+                      <a href={card.ctaHref} className={`btn-${card.ctaStyle}`}>
+                        {card.ctaLabel}
+                      </a>
+                    ) : (
+                      <Link to={card.ctaHref} className={`btn-${card.ctaStyle}`}>
+                        {card.ctaLabel}
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      <div style={{ maxWidth: 960, margin: '0 auto', padding: '0 24px' }}>
+        <p
+          style={{
+            fontSize: 13,
+            color: '#5a5a6e',
+            textAlign: 'center',
+            lineHeight: 1.5,
+            padding: '16px 0 0',
+          }}
+        >
+          kysigned is not a substitute for legal advice. It is your responsibility to determine whether electronic
+          signatures are legally valid for your use case, jurisdiction, and industry. See our{' '}
+          <a href="/terms.html" style={{ color: '#1a1a2e', textDecoration: 'underline' }}>
+            Terms of Service
+          </a>
+          .
+        </p>
+      </div>
+
+      {/* Footer identity is config-injected (F-17.7): a fresh fork shows a
+          generic "© Your Company", no company link, and no Contact; the
+          operator's config supplies its real company/URL/contact. "Built on
+          run402" and the legal links are the same for every operator. */}
+      <footer>
+        <div className="container">
+          <div>
+            &copy; 2026{' '}
+            {cfg.companyUrl ? (
+              <a href={cfg.companyUrl} target="_blank" rel="noreferrer">
+                {cfg.companyName}
+              </a>
+            ) : (
+              <span>{cfg.companyName}</span>
+            )}{' '}
+            &middot; Built on{' '}
+            <a href="https://run402.com" target="_blank" rel="noreferrer">
+              run402
+            </a>
+          </div>
+          <div>
+            <a href="/terms.html">Terms</a> &middot; <a href="/privacy.html">Privacy</a> &middot;{' '}
+            <a href="/cookies.html">Cookies</a> &middot;{' '}
+            {/* F-006 / AC-193: re-open the consent panel. openConsentSettings is
+                defined by the consent banner injected into the SPA shell at deploy
+                (F-008); guarded so it's a harmless no-op in dev/test. */}
+            <a
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                (window as unknown as { openConsentSettings?: () => void }).openConsentSettings?.();
+              }}
+            >
+              Cookie settings
+            </a>{' '}
+            &middot; <a href="/aup.html">Acceptable Use</a> &middot; <a href="/dpa.html">DPA</a>
+            {cfg.contactEmail ? (
+              <>
+                {' '}
+                &middot; <a href={`mailto:${cfg.contactEmail}`}>Contact</a>
+              </>
+            ) : null}
+          </div>
+        </div>
+      </footer>
+    </div>
+  )
+}

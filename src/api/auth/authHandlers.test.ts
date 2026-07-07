@@ -1,0 +1,144 @@
+/**
+ * authHandlers.test.ts — magic-link cookie-session auth endpoints (F-18.1).
+ */
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import type { DbPool } from '../../db/pool.js';
+import {
+  handleAuthMagicLink,
+  handleAuthTokenExchange,
+  handleAuthUser,
+  handleAuthSignout,
+  type AuthHandlerCtx,
+} from './authHandlers.js';
+import { SESSION_COOKIE } from './session.js';
+
+function fakePool(creatorName: string | null = null) {
+  const sessions = new Map<string, true>();
+  let lastDelete: string | undefined;
+  const pool: DbPool = {
+    async query(text: string, values?: unknown[]) {
+      const v = (values ?? []) as unknown[];
+      if (text.includes('INSERT INTO auth_sessions')) { sessions.set(v[0] as string, true); return { rows: [], rowCount: 0 } as never; }
+      if (text.includes('DELETE FROM auth_sessions')) { lastDelete = v[0] as string; sessions.delete(v[0] as string); return { rows: [], rowCount: 1 } as never; }
+      if (text.includes('creator_profiles')) { return { rows: creatorName ? [{ display_name: creatorName }] : [], rowCount: creatorName ? 1 : 0 } as never; }
+      return { rows: [], rowCount: 0 } as never;
+    },
+    async end() {},
+  };
+  return { pool, sessions, getLastDelete: () => lastDelete };
+}
+
+type FImpl = AuthHandlerCtx['session']['fetchImpl'];
+function fetchImpl(tokenResp: { status: number; body: unknown }): FImpl {
+  return async (url: string) => {
+    if (url.includes('/auth/v1/magic-link')) return { status: 200, ok: true, json: async () => ({}) };
+    if (url.includes('/auth/v1/token')) return { status: tokenResp.status, ok: tokenResp.status < 300, json: async () => tokenResp.body };
+    return { status: 404, ok: false, json: async () => ({}) };
+  };
+}
+
+function ctx(pool: DbPool, fImpl?: FImpl): AuthHandlerCtx {
+  return { pool, appBaseUrl: 'https://kysigned.com', session: { projectAnonKey: 'anon', secure: true, fetchImpl: fImpl } };
+}
+
+describe('handleAuthMagicLink', () => {
+  it('rejects an invalid email (400)', async () => {
+    assert.equal((await handleAuthMagicLink(ctx(fakePool().pool), { email: 'nope' })).status, 400);
+  });
+  it('always returns 200 for a valid email (anti-enumeration)', async () => {
+    const r = await handleAuthMagicLink(ctx(fakePool().pool, fetchImpl({ status: 200, body: {} })), { email: 'Alice@Example.com' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { ok: true });
+  });
+});
+
+describe('handleAuthTokenExchange', () => {
+  it('exchanges a valid token → 200 + a session cookie', async () => {
+    const { pool, sessions } = fakePool();
+    const r = await handleAuthTokenExchange(
+      ctx(pool, fetchImpl({ status: 200, body: { access_token: 'at', refresh_token: 'rt', user: { email: 'Alice@x.com' } } })),
+      { token: 'magic' },
+    );
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { ok: true, email: 'alice@x.com' });
+    assert.equal(sessions.size, 1);
+    assert.ok(r.setCookies?.[0]?.includes(SESSION_COOKIE));
+  });
+  it('rejects a missing token (400) and a failed exchange (401)', async () => {
+    assert.equal((await handleAuthTokenExchange(ctx(fakePool().pool), {})).status, 400);
+    const r = await handleAuthTokenExchange(ctx(fakePool().pool, fetchImpl({ status: 401, body: { error: 'bad' } })), { token: 'x' });
+    assert.equal(r.status, 401);
+  });
+});
+
+describe('handleAuthTokenExchange — new-account trial credit (F-13.4 / F-18.4)', () => {
+  const okExchange = fetchImpl({ status: 200, body: { access_token: 'at', refresh_token: 'rt', user: { email: 'New.User@x.com' } } });
+
+  // A pool that captures the credit_ledger CTE write (the grant) + handles the session insert.
+  function grantCapturePool(opts: { throwOnCredit?: boolean } = {}) {
+    const credited: Array<{ email: string; delta: string; source: string; external_ref: string }> = [];
+    const pool: DbPool = {
+      async query(text: string, values?: unknown[]) {
+        const v = (values ?? []) as unknown[];
+        if (text.includes('INSERT INTO auth_sessions')) return { rows: [], rowCount: 0 } as never;
+        if (/WITH new_ledger AS[\s\S]*INSERT INTO credit_ledger/.test(text)) {
+          if (opts.throwOnCredit) throw new Error('db down');
+          const [email, delta, source, externalRef] = v as [string, string, string, string];
+          credited.push({ email, delta, source, external_ref: externalRef });
+          return { rows: [{ balance_usd_micros: delta }], rowCount: 1 } as never;
+        }
+        return { rows: [], rowCount: 0 } as never;
+      },
+      async end() {},
+    };
+    return { pool, credited };
+  }
+
+  it('grants the trial credit on a successful sign-in when configured (amount + normalized-inbox dedupe key)', async () => {
+    const { pool, credited } = grantCapturePool();
+    const c: AuthHandlerCtx = { pool, appBaseUrl: 'https://kysigned.com', session: { projectAnonKey: 'anon', secure: true, fetchImpl: okExchange }, signupGrantUsdMicros: 1_000_000n };
+    const r = await handleAuthTokenExchange(c, { token: 'magic' });
+    assert.equal(r.status, 200);
+    assert.equal(credited.length, 1, 'one signup_grant credit write');
+    assert.equal(credited[0]!.source, 'signup_grant');
+    assert.equal(credited[0]!.delta, '1000000');
+    assert.equal(credited[0]!.external_ref, 'new.user@x.com', 'external_ref is the normalized inbox');
+  });
+
+  it('does NOT grant when unconfigured (forker default → no credit write)', async () => {
+    const { pool, credited } = grantCapturePool();
+    const r = await handleAuthTokenExchange(ctx(pool, okExchange), { token: 'magic' });
+    assert.equal(r.status, 200);
+    assert.equal(credited.length, 0, 'no grant when signupGrantUsdMicros unset');
+  });
+
+  it('a grant failure never breaks sign-in (best-effort)', async () => {
+    const { pool } = grantCapturePool({ throwOnCredit: true });
+    const c: AuthHandlerCtx = { pool, appBaseUrl: 'https://kysigned.com', session: { projectAnonKey: 'anon', secure: true, fetchImpl: okExchange }, signupGrantUsdMicros: 1_000_000n };
+    const r = await handleAuthTokenExchange(c, { token: 'magic' });
+    assert.equal(r.status, 200, 'sign-in still succeeds despite a grant failure');
+    assert.deepEqual(r.body, { ok: true, email: 'new.user@x.com' });
+  });
+});
+
+describe('handleAuthUser', () => {
+  it('returns the actor email + saved display name', async () => {
+    const r = await handleAuthUser(ctx(fakePool('Alice Smith').pool), { email: 'alice@x.com', sessionId: 's' });
+    assert.deepEqual(r.body, { email: 'alice@x.com', display_name: 'Alice Smith' });
+  });
+  it('omits display_name when none saved', async () => {
+    const r = await handleAuthUser(ctx(fakePool(null).pool), { email: 'a@x.com', sessionId: 's' });
+    assert.deepEqual(r.body, { email: 'a@x.com', display_name: undefined });
+  });
+});
+
+describe('handleAuthSignout', () => {
+  it('deletes the session + clears the cookie', async () => {
+    const { pool, getLastDelete } = fakePool();
+    const r = await handleAuthSignout(ctx(pool), { email: 'a@x.com', sessionId: 'sess-9' });
+    assert.equal(r.status, 200);
+    assert.equal(getLastDelete(), 'sess-9');
+    assert.match(r.setCookies![0]!, /Max-Age=0/);
+  });
+});
