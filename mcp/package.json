@@ -1,6 +1,6 @@
 {
   "name": "kysigned-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP server for kysigned — self-verifying e-signatures",
   "type": "module",
   "license": "Apache-2.0",
@@ -10,12 +10,20 @@
     "directory": "mcp"
   },
   "homepage": "https://kysigned.com",
-  "keywords": ["mcp", "e-signature", "esignature", "dkim", "kysigned"],
+  "keywords": [
+    "mcp",
+    "e-signature",
+    "esignature",
+    "dkim",
+    "kysigned"
+  ],
   "bin": {
     "kysigned-mcp": "dist/index.js"
   },
   "main": "dist/index.js",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=20"
   },
