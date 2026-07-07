@@ -139,6 +139,14 @@ export function AppHeader() {
                   >
                     Passkeys
                   </Link>
+                  <Link
+                    to="/account/api-keys"
+                    role="menuitem"
+                    className="block px-3 py-1.5 hover:bg-gray-50"
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    API keys
+                  </Link>
                   <SignOutMenuItem onAfter={() => setMenuOpen(false)} />
                 </div>
               )}
@@ -209,6 +217,7 @@ export function AppHeader() {
                   <div className="px-3 py-1 text-xs text-gray-500 font-mono truncate" title={user.email}>{user.email}</div>
                   <Link to="/dashboard" role="menuitem" className="block px-3 py-2 hover:bg-gray-50 text-gray-800 font-medium" onClick={closeMobile}>Dashboard</Link>
                   <Link to="/account/passkeys" role="menuitem" className={mobileItem} onClick={closeMobile}>Passkeys</Link>
+                  <Link to="/account/api-keys" role="menuitem" className={mobileItem} onClick={closeMobile}>API keys</Link>
                   <SignOutMenuItem testId="header-signout-mobile" onAfter={closeMobile} />
                 </>
               ) : (

@@ -7,6 +7,7 @@ import { VerifyPage } from './pages/VerifyPage'
 import { HashCheckPage } from './pages/HashCheckPage'
 import { MarketingHomePage } from './pages/MarketingHomePage'
 import { PasskeysPage } from './pages/PasskeysPage'
+import { ApiKeysPage } from './pages/ApiKeysPage'
 import { AuthProvider } from './auth/AuthContext'
 import { RequireAuth } from './auth/RequireAuth'
 import { SignInScreen } from './auth/SignInScreen'
@@ -76,6 +77,14 @@ export function App() {
             element={
               <RequireAuth>
                 <PasskeysPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/account/api-keys"
+            element={
+              <RequireAuth>
+                <ApiKeysPage />
               </RequireAuth>
             }
           />
