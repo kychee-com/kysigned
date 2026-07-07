@@ -22,7 +22,8 @@ import {
   markEnvelopePdfDeleted,
   setEnvelopeAutoClose,
 } from '../db/envelopes.js';
-import { computePdfHash, decodePdfBase64, fetchPdfFromUrl } from '../pdf/hash.js';
+import { computePdfHash, decodePdfBase64, fetchPdfFromUrl, PdfUrlError } from '../pdf/hash.js';
+import { validatePublicHttpsUrl } from '../net/urlGuard.js';
 import { buildSignerCanonicalPdf } from '../pdf/perSignerCanonical.js';
 import { documentBlobKey } from '../pdf/documentKey.js';
 import { purgeEnvelopeBlobs } from '../pdf/blobPurge.js';
@@ -307,6 +308,18 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
       return { status: 400, body: { error: verdict.reason, code: 'validation_callback_url' } };
     }
   }
+  // F-16.7 / AC-140 — SSRF guard the pdf_url the SERVER fetches: fail fast on a
+  // non-https or literal private/loopback/metadata host before the credit gate
+  // (the DNS-resolved-host + timeout + size checks run in fetchPdfFromUrl below).
+  if (req.pdf_url !== undefined) {
+    if (typeof req.pdf_url !== 'string') {
+      return { status: 400, body: { error: 'pdf_url must be a string', code: 'validation_pdf_url' } };
+    }
+    const urlVerdict = validatePublicHttpsUrl(req.pdf_url);
+    if (!urlVerdict.ok) {
+      return { status: 400, body: { error: `pdf_url ${urlVerdict.reason}`, code: 'validation_pdf_url' } };
+    }
+  }
   if (req.signers.length > MAX_SIGNERS_PER_ENVELOPE) {
     return {
       status: 400,
@@ -372,9 +385,18 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
   }
 
   // Get source PDF bytes: `pdf_base64` was decoded + size-guarded above; the
-  // `pdf_url` path fetches server-side here (the documented large-doc escape).
+  // `pdf_url` path fetches server-side here (the documented large-doc escape),
+  // under the F-16.7 SSRF guard (resolved-host + no-redirect + time + size). A
+  // blocked/failed fetch is a clean named 400, never a 500 or an internal echo.
   if (!sourceBytes) {
-    sourceBytes = await fetchPdfFromUrl(req.pdf_url!);
+    try {
+      sourceBytes = await fetchPdfFromUrl(req.pdf_url!);
+    } catch (e) {
+      if (e instanceof PdfUrlError) {
+        return { status: 400, body: { error: e.message, code: 'validation_pdf_url' } };
+      }
+      throw e;
+    }
   }
 
   // F-3.5 / AC-7 — size guard: reject an oversize envelope at creation (with the

@@ -811,3 +811,39 @@ describe('handleRequest — Idempotency-Key on createEnvelope (F-30.3 / AC-136)'
     assert.equal(body.code, 'validation_callback_url');
   });
 });
+
+// ── F-16.7 / AC-140 — SSRF guard on the pdf_url create path ─────────────────
+describe('handleRequest — pdf_url SSRF guard (F-16.7 / AC-140)', () => {
+  const RAW_KEY = 'ksk_' + 'f'.repeat(64);
+  function keyPool() {
+    const pool: DbPool = {
+      async query(text: string) {
+        if (text.includes('FROM api_keys')) {
+          return { rows: [{ id: 'k-1', creator_email: 'agent@example.com', key_hash: 'h', label: null, created_at: new Date(), last_used_at: null, revoked_at: null }], rowCount: 1 } as unknown as pg.QueryResult;
+        }
+        return { rows: [], rowCount: 0 } as unknown as pg.QueryResult;
+      },
+      async end() {},
+    };
+    return pool;
+  }
+  const mkDeps = (pool: DbPool) => makeDeps({
+    pool,
+    apiContext: () => ({ pool, baseUrl: 'https://kysigned.com', operatorDomain: 'kysigned.com', senderIdentity: 'agent@example.com', internalTestDomains: [] }) as never,
+  });
+
+  it('a pdf_url pointing at a literal private/metadata host → 400 validation_pdf_url (no fetch, no charge)', async () => {
+    for (const url of ['https://169.254.169.254/latest/meta-data/', 'https://10.0.0.5/x.pdf', 'http://cdn.example.com/x.pdf']) {
+      const res = await handleRequest(
+        req('POST', '/v1/envelope', {
+          headers: { authorization: `Bearer ${RAW_KEY}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ document_name: 'Doc', pdf_url: url, signers: [{ email: 's@example.com', name: 'S' }] }),
+        }),
+        mkDeps(keyPool()),
+      );
+      assert.equal(res.status, 400, `${url} must 400`);
+      const body = (await res.json()) as { code?: string };
+      assert.equal(body.code, 'validation_pdf_url', `${url} → validation_pdf_url`);
+    }
+  });
+});

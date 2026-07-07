@@ -20,39 +20,19 @@ import { RetryableRunError, PermanentRunError } from '../functions/runs.js';
 import { getEnvelopeWebhook } from '../db/envelopeWebhooks.js';
 import { getEnvelope, getEnvelopeSigners } from '../db/envelopes.js';
 import { buildSignatureHeader } from './webhookSignature.js';
+import { validatePublicHttpsUrl } from '../net/urlGuard.js';
 
 const DELIVERY_TIMEOUT_MS = 6_000; // F-6.9 hang-proofing convention
 
 export type UrlVerdict = { ok: true } | { ok: false; reason: string };
 
-const PRIVATE_HOST_RE = new RegExp(
-  [
-    '^localhost$',
-    '^127\\.', // loopback v4
-    '^\\[?::1\\]?$', // loopback v6
-    '^10\\.',
-    '^192\\.168\\.',
-    '^172\\.(1[6-9]|2\\d|3[01])\\.',
-    '^169\\.254\\.', // link-local / cloud metadata
-    '^0\\.',
-  ].join('|'),
-  'i',
-);
-
+/** callback_url guard — the shared F-16.7 literal-host + https check, phrased
+ *  for the webhook field. (The pdf_url path additionally resolves the host;
+ *  a webhook is delivered later so the same DNS check would be stale.) */
 export function validateCallbackUrl(url: string): UrlVerdict {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return { ok: false, reason: 'callback_url is not a valid URL' };
-  }
-  if (parsed.protocol !== 'https:') {
-    return { ok: false, reason: 'callback_url must be https' };
-  }
-  if (PRIVATE_HOST_RE.test(parsed.hostname)) {
-    return { ok: false, reason: 'callback_url host is not reachable from the service' };
-  }
-  return { ok: true };
+  const v = validatePublicHttpsUrl(url);
+  if (v.ok) return v;
+  return { ok: false, reason: `callback_url ${v.reason}` };
 }
 
 /**
