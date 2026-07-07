@@ -106,6 +106,11 @@ export const API_ROUTES: RouteDef[] = [
   { method: 'POST', pattern: '/v1/admin/allowed-senders', name: 'addAllowedSender', auth: 'session' },
   { method: 'DELETE', pattern: '/v1/admin/allowed-senders/:id', name: 'removeAllowedSender', auth: 'session' },
 
+  // ── F-30.1 creator API keys (session-ONLY: a bearer key cannot manage keys) ──
+  { method: 'POST', pattern: '/v1/api-keys', name: 'mintApiKey', auth: 'session' },
+  { method: 'GET', pattern: '/v1/api-keys', name: 'listApiKeys', auth: 'session' },
+  { method: 'DELETE', pattern: '/v1/api-keys/:id', name: 'revokeApiKey', auth: 'session' },
+
   // F-29.6 — inbound MAILBOX email has NO route: run402 delivers it as a
   // `reply_received` / `bounced` EMAIL-TRIGGER durable run (see inboundEmail.ts).
   // (The payment-provider webhook is proprietary → the operator's private billing fn, not here.)

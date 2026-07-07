@@ -526,3 +526,117 @@ describe('handleRequest — internal_test:true create dispatches to 201 (F-005)'
     assert.ok(body.envelope_id, 'response carries an envelope_id');
   });
 });
+
+// ── F-30.1 / AC-131 — bearer creator API keys: the auth gate's second mode ──
+//
+// An `Authorization` header on a session route is a BEARER ATTEMPT: it must win
+// (resolve to the key's creator, CSRF-exempt) or fail with a machine-readable
+// 401 — it must NEVER fall back to the cookie path or a CSRF-flavored 403.
+describe('handleRequest — bearer API keys (F-30.1 / AC-131)', () => {
+  const RAW_KEY = 'ksk_' + 'a'.repeat(64);
+  const KEY_EMAIL = 'agent-owner@example.com';
+
+  /** Pool that resolves the api_keys hash lookup to KEY_EMAIL and answers the
+   *  envelopes list with zero rows; records every query for scoping assertions. */
+  function keyPool(): { pool: DbPool; queries: Array<{ text: string; values?: unknown[] }> } {
+    const queries: Array<{ text: string; values?: unknown[] }> = [];
+    const pool: DbPool = {
+      async query(text: string, values?: unknown[]) {
+        queries.push({ text, values });
+        if (text.includes('FROM api_keys')) {
+          return {
+            rows: [{
+              id: 'key-1', creator_email: KEY_EMAIL, key_hash: 'irrelevant-here',
+              label: 'mcp', created_at: new Date(), last_used_at: null, revoked_at: null,
+            }],
+            rowCount: 1,
+          } as unknown as pg.QueryResult;
+        }
+        return { rows: [], rowCount: 0, command: '', oid: 0, fields: [] } as unknown as pg.QueryResult;
+      },
+      async end() {},
+    };
+    return { pool, queries };
+  }
+
+  it('a valid bearer key with NO cookie and NO CSRF header dispatches as the key creator', async () => {
+    const { pool, queries } = keyPool();
+    const res = await handleRequest(
+      req('GET', '/v1/envelopes', { headers: { authorization: `Bearer ${RAW_KEY}` } }),
+      makeDeps({ pool }),
+    );
+    assert.equal(res.status, 200, `bearer-authed list must dispatch, got ${res.status}`);
+    // The key was actually resolved (hash lookup ran)…
+    assert.ok(queries.some((q) => q.text.includes('FROM api_keys')), 'api_keys hash lookup ran');
+    // …and the envelope query is scoped to the KEY's creator, not any request input.
+    assert.ok(
+      queries.some((q) => (q.values ?? []).includes(KEY_EMAIL)),
+      'downstream query is scoped to the key creator email',
+    );
+  });
+
+  it('an unsafe (POST) route with a valid bearer key and NO CSRF header is CSRF-EXEMPT (no 403)', async () => {
+    const { pool } = keyPool();
+    // remindEnvelope hits reminderSendCtx (a thrower in makeDeps) AFTER the gate —
+    // reaching the thrower proves the gate passed; a 401/403 means it did not.
+    await assert.rejects(
+      handleRequest(
+        req('POST', '/v1/envelope/env-1/remind', { headers: { authorization: `Bearer ${RAW_KEY}` } }),
+        makeDeps({ pool }),
+      ),
+      /unexpected ctx build: reminderSendCtx/,
+      'gate must pass the bearer POST through to dispatch (CSRF-exempt)',
+    );
+  });
+
+  it('an unknown key → 401 with the machine-readable code auth_invalid_key (never a CSRF 403)', async () => {
+    const { pool } = makePool(() => []); // api_keys lookup finds nothing
+    const res = await handleRequest(
+      req('POST', '/v1/envelope', {
+        headers: { authorization: `Bearer ${'ksk_' + 'b'.repeat(64)}`, 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      makeDeps({ pool }),
+    );
+    assert.equal(res.status, 401, `unknown key must 401, got ${res.status}`);
+    const body = (await res.json()) as { code?: string };
+    assert.equal(body.code, 'auth_invalid_key');
+  });
+
+  it('a malformed Authorization value → 401 auth_invalid_key (bearer attempt never falls back to cookies)', async () => {
+    // Even WITH a valid session cookie present, an explicit-but-garbage
+    // Authorization header must fail closed, not silently use the cookie.
+    const res = await handleRequest(
+      req('GET', '/v1/envelopes', {
+        headers: {
+          authorization: 'Bearer not-a-key',
+          cookie: `${SESSION_COOKIE}=${VALID_SESSION_ID}`,
+        },
+      }),
+      makeDeps({ pool: validSessionPool() }),
+    );
+    assert.equal(res.status, 401, `malformed bearer must 401, got ${res.status}`);
+    const body = (await res.json()) as { code?: string };
+    assert.equal(body.code, 'auth_invalid_key');
+  });
+
+  it('a key on an out-of-scope session route → 403 auth_key_scope (a key cannot mint keys)', async () => {
+    const { pool } = keyPool();
+    const res = await handleRequest(
+      req('POST', '/v1/api-keys', {
+        headers: { authorization: `Bearer ${RAW_KEY}`, 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      makeDeps({ pool }),
+    );
+    assert.equal(res.status, 403, `key on key-management must 403, got ${res.status}`);
+    const body = (await res.json()) as { code?: string };
+    assert.equal(body.code, 'auth_key_scope');
+  });
+
+  it('cookie-path regression: a session route with no Authorization header behaves exactly as before', async () => {
+    // No cookie → 401 (and no code field required on the legacy path).
+    const res = await handleRequest(req('GET', '/v1/envelopes'), makeDeps());
+    assert.equal(res.status, 401);
+  });
+});

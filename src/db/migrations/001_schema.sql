@@ -303,3 +303,21 @@ CREATE INDEX IF NOT EXISTS idx_signature_artifacts_ts_status
 
 CREATE INDEX IF NOT EXISTS idx_signature_artifacts_envelope
   ON signature_artifacts (envelope_id);
+
+-- ── Creator API keys (F-30.1 / AC-131, AC-132) ──────────────────────────────
+-- Bearer keys for the /v1 auth gate's second mode. Stores ONLY sha256(raw);
+-- the raw ksk_… value appears exactly once in the mint response. revoked_at
+-- is a tombstone — the auth lookup filters `revoked_at IS NULL`.
+-- (Incremental parity for pre-Phase-44 databases: 006_api_keys.sql.)
+
+CREATE TABLE IF NOT EXISTS api_keys (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creator_email  TEXT NOT NULL,
+  key_hash       TEXT NOT NULL UNIQUE,
+  label          TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_used_at   TIMESTAMPTZ,
+  revoked_at     TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS api_keys_creator_email_idx ON api_keys (creator_email);

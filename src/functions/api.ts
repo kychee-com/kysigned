@@ -10,9 +10,14 @@
  * ── The auth gate (read carefully — this is the security boundary) ──────────
  *   matchRoute(method, path) → { name, auth, params } | null   (null → 404)
  *   - `public`        : dispatched with no auth.
- *   - `session`       : unsafe methods require the CSRF custom header (csrfOk)
- *                       → 403 if absent; then resolveSession(cookie) → 401 if no
- *                       actor; the actor (email) is passed to the handler.
+ *   - `session`       : TWO modes (DD-28 / F-30.1). An `Authorization` header is
+ *                       a bearer ATTEMPT: resolveApiKey → the key's creator
+ *                       (CSRF-exempt, fenced to BEARER_ROUTES) or a machine-
+ *                       readable 401/403 — never a cookie fallback. Otherwise
+ *                       the cookie path: unsafe methods require the CSRF custom
+ *                       header (csrfOk) → 403 if absent; then
+ *                       resolveSession(cookie) → 401 if no actor; the actor
+ *                       (email) is passed to the handler.
  *   - `signer-token`  : NO session; the handler itself validates `params.token`
  *                       (getSignerByToken) — dispatched with params.id + token.
  *
@@ -29,6 +34,8 @@
  */
 import { matchRoute } from '../integrations/run402Router.js';
 import { csrfOk, resolveSession } from '../api/auth/session.js';
+import { resolveApiKey } from '../api/auth/apiKeyAuth.js';
+import { handleMintApiKey, handleListApiKeys, handleRevokeApiKey } from '../api/apiKeys.js';
 import { handleHealth } from '../api/health.js';
 import {
   handleAuthMagicLink,
@@ -142,6 +149,27 @@ function signerEditCtx(deps: RequestDeps): SignerEditCtx {
 
 // ── the pure request handler (the security boundary lives here) ─────────────
 
+/**
+ * The routes a bearer API key may reach (spec F-30.1 / AC-131): exactly the
+ * creator envelope actions of F-12.1. Everything else on the session surface —
+ * auth/passkey management, the admin allowlist, and ABOVE ALL key management —
+ * stays cookie-only, so a leaked key can neither mint more keys nor touch
+ * account credentials (privilege containment).
+ */
+const BEARER_ROUTES: ReadonlySet<string> = new Set([
+  'createEnvelope',
+  'listEnvelopes',
+  'getEnvelope',
+  'remindEnvelope',
+  'voidEnvelope',
+  'addSigner',
+  'editSigner',
+  'deleteSigner',
+  'sealEnvelope',
+  'ownerPdf',
+  'listDocuments',
+]);
+
 export async function handleRequest(req: Request, deps: RequestDeps): Promise<Response> {
   const method = req.method.toUpperCase();
   const url = new URL(req.url);
@@ -155,21 +183,41 @@ export async function handleRequest(req: Request, deps: RequestDeps): Promise<Re
 
   // ── AUTH GATE ──────────────────────────────────────────────────────────────
   // public: no auth.
-  // session: resolve the cookie → actor FIRST (→401), THEN CSRF on unsafe methods
-  // (→403). Authentication precedes CSRF so an unauthenticated caller can never
-  // be told (via a 403) that a route exists and needs CSRF before they have proven
-  // they are authenticated — an unauthenticated request is always a flat 401
-  // regardless of the CSRF header (system-test F-001 / AC-5 / AC-32).
+  // session: TWO modes (DD-28 / spec F-30.1).
+  //   • bearer — an `Authorization` header is an explicit bearer ATTEMPT: it must
+  //     resolve (→ the key's creator, CSRF-EXEMPT since CSRF defends the cookie's
+  //     ambient authority, which a bearer request never carries) or fail with a
+  //     machine-readable 401 (`auth_invalid_key`) — it NEVER falls back to the
+  //     cookie. Keys are fenced to the creator envelope actions (BEARER_ROUTES);
+  //     anything else — key management above all — answers 403 `auth_key_scope`.
+  //   • cookie — unchanged: resolve the cookie → actor FIRST (→401), THEN CSRF on
+  //     unsafe methods (→403). Authentication precedes CSRF so an unauthenticated
+  //     caller can never be told (via a 403) that a route exists and needs CSRF
+  //     before they have proven they are authenticated — an unauthenticated
+  //     request is always a flat 401 regardless of the CSRF header (system-test
+  //     F-001 / AC-5 / AC-32).
   let actorEmail: string | null = null;
   let actorSessionId: string | null = null;
   if (auth === 'session') {
-    const actor = await resolveSession(deps.pool, deps.sessionConfig, cookies);
-    if (!actor) return json({ error: 'Authentication required' }, 401);
-    if (!csrfOk(method, req.headers)) {
-      return json({ error: 'CSRF check failed' }, 403);
+    const authz = req.headers.get('authorization');
+    if (authz !== null && authz.trim() !== '') {
+      if (!BEARER_ROUTES.has(name)) {
+        return json({ error: 'API key not allowed for this action', code: 'auth_key_scope' }, 403);
+      }
+      const keyActor = await resolveApiKey(deps.pool, authz);
+      if (!keyActor) {
+        return json({ error: 'Authentication required', code: 'auth_invalid_key' }, 401);
+      }
+      actorEmail = keyActor.email;
+    } else {
+      const actor = await resolveSession(deps.pool, deps.sessionConfig, cookies);
+      if (!actor) return json({ error: 'Authentication required' }, 401);
+      if (!csrfOk(method, req.headers)) {
+        return json({ error: 'CSRF check failed' }, 403);
+      }
+      actorEmail = actor.email;
+      actorSessionId = actor.sessionId;
     }
-    actorEmail = actor.email;
-    actorSessionId = actor.sessionId;
   }
   // F-29.6 — inbound MAILBOX email is no longer an app webhook route: run402
   // creates a `reply_received` / `bounced` durable run via an EMAIL TRIGGER,
@@ -366,6 +414,20 @@ export async function handleRequest(req: Request, deps: RequestDeps): Promise<Re
         identityType as never,
         identity,
       );
+      return json(r.body, r.status);
+    }
+
+    // ── F-30.1 creator API keys (session-ONLY; fenced out of BEARER_ROUTES) ──
+    case 'mintApiKey': {
+      const r = await handleMintApiKey({ pool: deps.pool }, actorEmail!, await readJsonBody(req));
+      return json(r.body, r.status);
+    }
+    case 'listApiKeys': {
+      const r = await handleListApiKeys({ pool: deps.pool }, actorEmail!);
+      return json(r.body, r.status);
+    }
+    case 'revokeApiKey': {
+      const r = await handleRevokeApiKey({ pool: deps.pool }, actorEmail!, params.id!);
       return json(r.body, r.status);
     }
 
