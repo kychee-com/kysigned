@@ -36,6 +36,9 @@ import { upsertCreatorName } from '../db/creatorProfiles.js';
 import { scheduleSignerReminders } from './reminderSchedule.js';
 import { scheduleEnvelopeExpiry } from './expirySchedule.js';
 import { scheduleDeliveryBackstop } from './deliveryBackstop.js';
+import { validateCallbackUrl } from './webhookDeliver.js';
+import { mintWebhookSecret } from './webhookSignature.js';
+import { setEnvelopeWebhook } from '../db/envelopeWebhooks.js';
 import type { CreateRun } from '../functions/runs.js';
 import { randomUUID, randomBytes } from 'node:crypto';
 
@@ -53,6 +56,9 @@ export interface CreateEnvelopeRequest {
   }>;
   expiry_days?: number;
   message?: string;
+  /** F-30.3 / AC-138 — creator-supplied completion-webhook URL (https only). The
+   *  create response returns `callback_secret` (once) for signature verification. */
+  callback_url?: string;
   /** F-3.7 — flag this as an internal-test envelope (no credit, excluded from metrics). */
   internal_test?: boolean;
   /**
@@ -290,6 +296,17 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
   if (!Array.isArray(req.signers) || req.signers.length === 0) {
     return { status: 400, body: { error: 'At least one signer required', code: 'validation_signers' } };
   }
+  // F-30.3 / AC-138 — validate the completion-webhook URL up front (https only,
+  // no literal loopback/private hosts — the server POSTs it at completion).
+  if (req.callback_url !== undefined) {
+    if (typeof req.callback_url !== 'string') {
+      return { status: 400, body: { error: 'callback_url must be a string', code: 'validation_callback_url' } };
+    }
+    const verdict = validateCallbackUrl(req.callback_url);
+    if (!verdict.ok) {
+      return { status: 400, body: { error: verdict.reason, code: 'validation_callback_url' } };
+    }
+  }
   if (req.signers.length > MAX_SIGNERS_PER_ENVELOPE) {
     return {
       status: 400,
@@ -449,6 +466,19 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
   };
 
   const result = await createEnvelope(ctx.pool, input, ctx.baseUrl);
+
+  // F-30.3 / AC-138 — arm the completion webhook: mint the signing secret and
+  // store it with the URL. The RAW secret appears exactly once — in this create
+  // response — as `callback_secret`; deliveries are signed with it.
+  let callbackSecret: string | undefined;
+  if (typeof req.callback_url === 'string') {
+    callbackSecret = mintWebhookSecret();
+    await setEnvelopeWebhook(ctx.pool, {
+      envelopeId: result.envelope.id,
+      url: req.callback_url,
+      secret: callbackSecret,
+    });
+  }
 
   // F-3.7 — mark internal-test (set after create; no credit was/will be charged).
   if (isInternalTest) {
@@ -691,6 +721,8 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
       // Per-signer send outcome (2026-06-21). `undeliverable`/`failed` let the UI
       // warn the creator instead of a misleading all-green "sent" banner.
       delivery: { delivered: delivered.length, undeliverable, failed },
+      // F-30.3 — the webhook signing secret, shown EXACTLY ONCE (AC-138).
+      ...(callbackSecret ? { callback_secret: callbackSecret } : {}),
       ...(suggestion ? { suggestion } : {}),
     },
   };

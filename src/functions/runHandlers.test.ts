@@ -521,3 +521,29 @@ describe('runHandlers — completion_delivery / completion_bounced (F-013 regist
     assert.equal(out.action, 'no_match');
   });
 });
+
+// ── F-30.3 / AC-138 — webhook_deliver event mapping ─────────────────────────
+describe('runHandlers — webhook_deliver (F-30.3)', () => {
+  it('maps the event to the injected delivery op and passes the envelopeId', async () => {
+    const h = createInboundRepliesMemoryPool();
+    let delivered = '';
+    const handlers = buildRunHandlers(depsWith(h.pool), {
+      deliverWebhook: async (_pool: DbPool, id: string) => {
+        delivered = id;
+        return { action: 'delivered', status: 200 };
+      },
+    });
+    assert.equal(typeof handlers.webhook_deliver, 'function');
+    const out = await handlers.webhook_deliver({ envelopeId: 'env-9' });
+    assert.equal(delivered, 'env-9');
+    assert.equal(out.action, 'delivered');
+  });
+
+  it('rejects a payload without envelopeId as PERMANENT', async () => {
+    const h = createInboundRepliesMemoryPool();
+    const handlers = buildRunHandlers(depsWith(h.pool), {
+      deliverWebhook: async () => ({ action: 'delivered' }),
+    });
+    await assert.rejects(() => handlers.webhook_deliver({}), PermanentRunError);
+  });
+});

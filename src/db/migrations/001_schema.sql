@@ -336,3 +336,15 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (creator_email, idempotency_key)
 );
+
+-- ── Creator completion webhooks (F-30.3 / AC-138) ───────────────────────────
+-- callback_url + delivery-signing secret per envelope; raw secret returned
+-- once at create. Dies with its envelope (CASCADE), consistent with F-9.
+-- (Incremental parity for pre-Phase-44 databases: 008_envelope_webhooks.sql.)
+
+CREATE TABLE IF NOT EXISTS envelope_webhooks (
+  envelope_id  UUID PRIMARY KEY REFERENCES envelopes(id) ON DELETE CASCADE,
+  url          TEXT NOT NULL,
+  secret       TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);

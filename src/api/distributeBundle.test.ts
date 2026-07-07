@@ -153,6 +153,35 @@ describe('distributeEnvelopeBundle — F-9.1 / AC-4 / AC-24', () => {
     assert.equal(scheduled[0].payload.envelopeId, ENV);
   });
 
+  it('F-30.3: schedules the webhook_deliver run on distribution when a webhook row exists', async () => {
+    const { pool } = makePool({
+      senderEmail: 'carol@acme.com',
+      signers: [{ id: 's1', email: 'alice@x.com', name: 'Alice' }],
+    });
+    // Wrap the pool so the envelope_webhooks lookup finds a row.
+    const wrapped: typeof pool = {
+      async query(text: string, values?: unknown[]) {
+        if (/FROM envelope_webhooks/i.test(text)) {
+          return {
+            rows: [{ envelope_id: ENV, url: 'https://agent.example.com/h', secret: 'whs_x', created_at: new Date().toISOString() }],
+            rowCount: 1,
+          } as never;
+        }
+        return pool.query(text, values);
+      },
+      async end() {},
+    };
+    const scheduled: any[] = [];
+    const r = await distributeEnvelopeBundle(wrapped, ENV, deps({
+      createRun: async (o) => { scheduled.push(o); return { runId: 'r', deduplicated: false }; },
+    }));
+    assert.equal(r.action, 'distributed');
+    const hook = scheduled.find((o) => o.eventType === 'webhook_deliver');
+    assert.ok(hook, 'webhook_deliver run scheduled alongside retention');
+    assert.equal(hook.idempotencyKey, `webhook-completed:${ENV}`);
+    assert.deepEqual(hook.payload, { envelopeId: ENV });
+  });
+
   it('F-013: does NOT schedule retention on a partial (undistributed) send', async () => {
     const { pool } = makePool({
       senderEmail: 'carol@acme.com',

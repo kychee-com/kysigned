@@ -18,6 +18,7 @@ import type { DbPool } from '../db/pool.js';
 import type { EmailProvider } from '../email/types.js';
 import { getEnvelope, getEnvelopeSigners, getSignerById, claimExpiredEnvelope, markEnvelopePdfDeleted } from '../db/envelopes.js';
 import { distributeEnvelopeBundle, type DistributeBundleDeps } from '../api/distributeBundle.js';
+import { deliverEnvelopeWebhook } from '../api/webhookDeliver.js';
 import { shouldDeletePdf } from '../pdf/retention.js';
 import { sweepRetention } from '../pdf/sweep.js';
 import { purgeEnvelopeBlobs } from '../pdf/blobPurge.js';
@@ -68,6 +69,7 @@ export interface RunHandlerOverrides {
   loadArtifact?: typeof getSignatureArtifactById;
   upgradeArtifact?: typeof upgradeOneArtifact;
   handleUndeliverable?: typeof handleUndeliverableSigningRequest;
+  deliverWebhook?: typeof deliverEnvelopeWebhook;
 }
 
 export function buildRunHandlers(
@@ -83,6 +85,7 @@ export function buildRunHandlers(
   const loadArtifact = overrides.loadArtifact ?? getSignatureArtifactById;
   const upgradeArtifact = overrides.upgradeArtifact ?? upgradeOneArtifact;
   const markUndeliverable = overrides.handleUndeliverable ?? handleUndeliverableSigningRequest;
+  const deliverWebhook = overrides.deliverWebhook ?? deliverEnvelopeWebhook;
 
   return {
     /**
@@ -110,6 +113,18 @@ export function buildRunHandlers(
         throw new RetryableRunError(`distribute ${r.action} for ${envelopeId}`);
       }
       return { envelopeId, mode: 'auto', action: r.action, recipients: r.recipients, sent: r.sent };
+    },
+
+    /**
+     * F-30.3 / AC-138 — deliver the creator's SIGNED completion webhook
+     * (enqueued by distributeBundle when the bundle distributes; idempotency =
+     * `webhook-completed:<envelopeId>`). 2xx → terminal; 5xx/network →
+     * RetryableRunError (run402 retries = at-least-once); 4xx → permanent.
+     */
+    webhook_deliver: async (payload) => {
+      const envelopeId = typeof payload.envelopeId === 'string' ? payload.envelopeId : '';
+      if (!envelopeId) throw new PermanentRunError('webhook_deliver: payload.envelopeId is required');
+      return deliverWebhook(deps.pool, envelopeId);
     },
 
     /**

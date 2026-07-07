@@ -740,4 +740,74 @@ describe('handleRequest — Idempotency-Key on createEnvelope (F-30.3 / AC-136)'
     assert.equal(createCount(), 1, 'the create CTE ran exactly once — one envelope, one debit');
     assert.equal(secondBody.envelope_id, firstBody.envelope_id, 'the retry returns the SAME envelope');
   });
+
+  // ── F-30.3 / AC-138 — callback_url on create: stored + secret returned once ──
+  it('create with a callback_url returns a whs_ callback_secret and stores the webhook row', async () => {
+    const { pool } = idemPool();
+    const inserted: unknown[][] = [];
+    const wrapped: DbPool = {
+      async query(text: string, values?: unknown[]) {
+        if (/INSERT INTO envelope_webhooks/i.test(text)) {
+          inserted.push(values ?? []);
+          return { rows: [], rowCount: 1 } as unknown as pg.QueryResult;
+        }
+        return pool.query(text, values);
+      },
+      async end() {},
+    };
+    const deps = makeDeps({
+      pool: wrapped,
+      apiContext: () => ({
+        pool: wrapped,
+        emailProvider: { async send() { return { messageId: 'm' }; } },
+        baseUrl: 'https://kysigned.com',
+        senderIdentity: 'agent@example.com',
+        internalTestDomains: ['kychee.com'],
+        storePdf: async () => {},
+        deletePdf: async () => {},
+        senderGate: { getCreditBalance: async () => 10_000_000 },
+      }) as never,
+    });
+    const TINY = 'JVBERi0xLjcKJYGBgYEKCjEgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFsgNCAwIFIgXQovQ291bnQgMQo+PgplbmRvYmoKCjIgMCBvYmoKPDwKL1R5cGUgL0NhdGFsb2cKL1BhZ2VzIDEgMCBSCj4+CmVuZG9iagoKMyAwIG9iago8PAovUHJvZHVjZXIgPEZFRkYwMDc0MDA2NTAwNzMwMDc0MDAyRDAwNjYwMDY5MDA3ODAwNzQwMDc1MDA3MjAwNjU+Ci9Nb2REYXRlIChEOjIwMjAwMTAxMDAwMDAwWikKL0NyZWF0b3IgPEZFRkYwMDcwMDA2NDAwNjYwMDJEMDA2QzAwNjkwMDYyMDAyMDAwMjgwMDY4MDA3NDAwNzQwMDcwMDA3MzAwM0EwMDJGMDAyRjAwNjcwMDY5MDA3NDAwNjgwMDc1MDA2MjAwMkUwMDYzMDA2RjAwNkQwMDJGMDA0ODAwNkYwMDcwMDA2NDAwNjkwMDZFMDA2NzAwMkYwMDcwMDA2NDAwNjYwMDJEMDA2QzAwNjkwMDYyMDAyOT4KL0NyZWF0aW9uRGF0ZSAoRDoyMDIwMDEwMTAwMDAwMFopCi9UaXRsZSA8RkVGRjAwNzQwMDY1MDA3MzAwNzQ+Cj4+CmVuZG9iagoKNCAwIG9iago8PAovVHlwZSAvUGFnZQovUGFyZW50IDEgMCBSCi9SZXNvdXJjZXMgPDwKL0ZvbnQgPDwKL0hlbHZldGljYS03MDk4NDgwNzg5IDUgMCBSCj4+Ci9YT2JqZWN0IDw8Cj4+Ci9FeHRHU3RhdGUgPDwKPj4KPj4KL01lZGlhQm94IFsgMCAwIDYxMiA3OTIgXQovQW5ub3RzIFsgXQovQ29udGVudHMgWyA2IDAgUiBdCj4+CmVuZG9iagoKNSAwIG9iago8PAovVHlwZSAvRm9udAovU3VidHlwZSAvVHlwZTEKL0Jhc2VGb250IC9IZWx2ZXRpY2EKL0VuY29kaW5nIC9XaW5BbnNpRW5jb2RpbmcKPj4KZW5kb2JqCgo2IDAgb2JqCjw8Ci9GaWx0ZXIgL0ZsYXRlRGVjb2RlCi9MZW5ndGggOTYKPj4Kc3RyZWFtCnicK+RyCuEyUADBonQufY/UnLLUkszkRF1zA0sLEwsDcwtLBSMThZA0LhDpw2UIVgohQ3K5bMxNzEzNjc1NjAzMzMwszS3MTcxNzY3MTO0UQrK4QrS4XEO4ArkAobMWLQplbmRzdHJlYW0KZW5kb2JqCgp4cmVmCjAgNwowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMTYgMDAwMDAgbiAKMDAwMDAwMDA3NiAwMDAwMCBuIAowMDAwMDAwMTI2IDAwMDAwIG4gCjAwMDAwMDA0OTggMDAwMDAgbiAKMDAwMDAwMDY5MyAwMDAwMCBuIAowMDAwMDAwNzkxIDAwMDAwIG4gCgp0cmFpbGVyCjw8Ci9TaXplIDcKL1Jvb3QgMiAwIFIKL0luZm8gMyAwIFIKPj4KCnN0YXJ0eHJlZgo5NTkKJSVFT0Y=';
+    const res = await handleRequest(
+      req('POST', '/v1/envelope', {
+        headers: { authorization: `Bearer ${RAW_KEY}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          document_name: 'Hooked',
+          pdf_base64: TINY,
+          callback_url: 'https://agent.example.com/hook',
+          signers: [{ email: 's@example.com', name: 'S' }],
+        }),
+      }),
+      deps,
+    );
+    assert.equal(res.status, 201, `create with callback_url must 201, got ${res.status}`);
+    const body = (await res.json()) as { callback_secret?: string };
+    assert.ok(body.callback_secret?.startsWith('whs_'), 'callback_secret returned once at create');
+    assert.equal(inserted.length, 1, 'webhook row stored');
+    assert.ok(inserted[0]!.includes('https://agent.example.com/hook'));
+  });
+
+  it('create with an invalid callback_url → 400 validation_callback_url', async () => {
+    const { pool } = idemPool();
+    const deps = makeDeps({
+      pool,
+      apiContext: () => ({ pool }) as never,
+    });
+    const res = await handleRequest(
+      req('POST', '/v1/envelope', {
+        headers: { authorization: `Bearer ${RAW_KEY}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          document_name: 'Bad hook',
+          pdf_base64: 'JVBERi0x',
+          callback_url: 'http://10.0.0.5/hook',
+          signers: [{ email: 's@example.com', name: 'S' }],
+        }),
+      }),
+      deps,
+    );
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { code?: string };
+    assert.equal(body.code, 'validation_callback_url');
+  });
 });

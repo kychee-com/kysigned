@@ -35,6 +35,7 @@ import { templates } from '../email/templates.js';
 import type { EmailMessage, EmailProvider } from '../email/types.js';
 import type { CreateRun } from '../functions/runs.js';
 import { scheduleCompletionRetention, RETENTION_INITIAL_DELAY } from './retentionSchedule.js';
+import { scheduleCompletionWebhook } from './webhookDeliver.js';
 
 export interface PreparedBundle {
   bytes: Uint8Array;
@@ -191,6 +192,10 @@ export async function distributeEnvelopeBundle(
     // delivery is confirmed (or at the 30-day cap). Best-effort — the daily
     // retention_sweep is the backstop if this scheduling misses.
     await scheduleCompletionRetention(deps.createRun, envelopeId, 1, RETENTION_INITIAL_DELAY);
+    // F-30.3 / AC-138 — deliver the creator's completion webhook as its own
+    // durable run (platform retries; never blocks the email distribution).
+    // Best-effort like retention; no-op when the envelope has no webhook row.
+    if (deps.createRun) await scheduleCompletionWebhook(pool, deps.createRun, envelopeId);
     return { envelopeId, action: 'distributed', recipients: recipients.length, sent };
   }
   return { envelopeId, action: 'partial', recipients: recipients.length, sent };
