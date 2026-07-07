@@ -177,7 +177,7 @@ export async function handleRequest(req: Request, deps: RequestDeps): Promise<Re
   const path = url.pathname;
 
   const route = matchRoute(method, path);
-  if (!route) return json({ error: 'Not found' }, 404);
+  if (!route) return json({ error: 'Not found', code: 'not_found' }, 404);
 
   const { name, auth, params } = route;
   const cookies = parseCookies(req.headers.get('cookie'));
@@ -212,9 +212,9 @@ export async function handleRequest(req: Request, deps: RequestDeps): Promise<Re
       actorEmail = keyActor.email;
     } else {
       const actor = await resolveSession(deps.pool, deps.sessionConfig, cookies);
-      if (!actor) return json({ error: 'Authentication required' }, 401);
+      if (!actor) return json({ error: 'Authentication required', code: 'auth_required' }, 401);
       if (!csrfOk(method, req.headers)) {
-        return json({ error: 'CSRF check failed' }, 403);
+        return json({ error: 'CSRF check failed', code: 'csrf_failed' }, 403);
       }
       actorEmail = actor.email;
       actorSessionId = actor.sessionId;
@@ -374,7 +374,9 @@ export async function handleRequest(req: Request, deps: RequestDeps): Promise<Re
         actorEmail,
       );
       if (result.ok) return pdf(result.bytes);
-      return json(result.context ? { error: result.error, ...result.context } : { error: result.error }, result.status);
+      // The taxonomy `code` (F-30.3) rides along from the handler's result.
+      const errBody = { code: result.code, error: result.error };
+      return json(result.context ? { ...errBody, ...result.context } : errBody, result.status);
     }
     case 'listDocuments': {
       const r = await handleListDocuments({ pool: deps.pool }, actorEmail!);
@@ -396,7 +398,7 @@ export async function handleRequest(req: Request, deps: RequestDeps): Promise<Re
     case 'signerPdf': {
       const r = await handleSignerPdf(deps.signerCtx(), params.id!, params.token!);
       if (r.status === 200 && r.bytes) return pdf(r.bytes);
-      return json(r.body ?? { error: 'Document not available' }, r.status);
+      return json(r.body ?? { error: 'Document not available', code: 'not_found' }, r.status);
     }
 
     // ── verifier support: key-archive lookup proxy (public; F-10.8) ──
@@ -448,7 +450,7 @@ export async function handleRequest(req: Request, deps: RequestDeps): Promise<Re
     default:
       // Unreachable: every route in API_ROUTES has a case above. A new route
       // without a handler lands here as a hard 500 (caught in dev/tests).
-      return json({ error: `No handler for route ${name}` }, 500);
+      return json({ error: `No handler for route ${name}`, code: 'internal_error' }, 500);
   }
 }
 

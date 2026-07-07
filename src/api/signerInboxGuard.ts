@@ -13,7 +13,8 @@
 import { firstUnsupportedNameChar } from '../pdf/nameFont.js';
 
 export interface SignerAddressIssue {
-  code: 'plus_alias' | 'same_inbox' | 'unrenderable';
+  /** Taxonomy `validation_*` code (F-30.3) — surfaced verbatim on the 400 body. */
+  code: 'validation_plus_alias' | 'validation_same_inbox' | 'validation_unrenderable';
   /** Client-facing 400 message naming the offending / colliding / unrenderable value. */
   message: string;
 }
@@ -69,9 +70,9 @@ const RENDERED_FIELDS: ReadonlyArray<
  * Inspect a submitted signer set. Returns the FIRST blocking issue, or null when
  * every signer is renderable and a distinct primary inbox.
  *   (0) any rendered field (address / name / organisation) the cover font can't
- *       encode → `unrenderable` (#101 — would otherwise 500 in cover assembly)
- *   (a) any plus-alias address → `plus_alias` (even a single, lone signer)
- *   (b) two addresses on one inbox → `same_inbox`
+ *       encode → `validation_unrenderable` (#101 — would otherwise 500 in cover assembly)
+ *   (a) any plus-alias address → `validation_plus_alias` (even a single, lone signer)
+ *   (b) two addresses on one inbox → `validation_same_inbox`
  */
 export function checkSignerAddresses(
   signers: Array<{ email: string; name?: string; on_behalf_of?: string }>,
@@ -88,7 +89,7 @@ export function checkSignerAddresses(
       const bad = firstUnsupportedNameChar(value);
       if (bad) {
         return {
-          code: 'unrenderable',
+          code: 'validation_unrenderable',
           message:
             `Signer ${label} "${value.trim()}" contains a character we can't put on ` +
             `the signed document (${bad.char} ${bad.label}). We support Latin, Greek, ` +
@@ -102,7 +103,7 @@ export function checkSignerAddresses(
   for (const s of signers) {
     if (isPlusAlias(s.email)) {
       return {
-        code: 'plus_alias',
+        code: 'validation_plus_alias',
         message:
           `Signer address "${s.email.trim()}" is a plus-alias. Use the primary address ` +
           `"${primaryOf(s.email)}" instead — kysigned needs each signer's primary mailbox so ` +
@@ -117,7 +118,7 @@ export function checkSignerAddresses(
     const prior = seen.get(key);
     if (prior !== undefined) {
       return {
-        code: 'same_inbox',
+        code: 'validation_same_inbox',
         message:
           `Signers "${prior.trim()}" and "${s.email.trim()}" resolve to the same inbox. ` +
           `Each signer must use a distinct email address.`,

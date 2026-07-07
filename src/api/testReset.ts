@@ -29,7 +29,7 @@ export interface TestResetRequest {
 
 export interface TestResetResult {
   status: 200 | 400 | 401 | 403 | 404;
-  body: { report: ResetReport } | { error: string };
+  body: { report: ResetReport } | { code: string; error: string };
 }
 
 export async function handleTestResetUser(
@@ -39,19 +39,19 @@ export async function handleTestResetUser(
   // Inert unless a reset secret is configured — indistinguishable from a
   // non-existent route (F-28: disabled → 404).
   if (!ctx.resetSecret) {
-    return { status: 404, body: { error: 'not_found' } };
+    return { status: 404, body: { error: 'not_found', code: 'not_found' } };
   }
   if (!req.secret || req.secret !== ctx.resetSecret) {
-    return { status: 401, body: { error: 'unauthorized' } };
+    return { status: 401, body: { error: 'unauthorized', code: 'auth_required' } };
   }
   if (!req.email || req.email.trim() === '') {
-    return { status: 400, body: { error: 'email is required' } };
+    return { status: 400, body: { error: 'email is required', code: 'validation_email' } };
   }
   // Identity-scoped: refuse anything outside the configured test pattern
   // (fail-closed when no pattern is set) — no mutation reaches the DB.
   const candidate = req.email.trim().toLowerCase();
   if (!ctx.identityPattern || !ctx.identityPattern.test(candidate)) {
-    return { status: 403, body: { error: 'identity not permitted for test reset' } };
+    return { status: 403, body: { error: 'identity not permitted for test reset', code: 'auth_forbidden' } };
   }
   const report = await resetTestAccount(ctx.pool, req.email);
   return { status: 200, body: { report } };

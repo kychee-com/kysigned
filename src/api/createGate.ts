@@ -55,6 +55,8 @@ export interface GateVerdict {
   /** Set when !ok — the HTTP status the create endpoint must return. */
   status?: 401 | 402 | 403;
   error?: string;
+  /** Set when !ok — the stable machine-readable taxonomy code (F-30.3 / AC-137). */
+  code?: 'auth_required' | 'auth_forbidden' | 'payment_required';
   /** The resolved per-envelope cost (USD micros) — what the handler debits. */
   cost: number;
 }
@@ -78,14 +80,14 @@ export async function evaluateCreateGate(ctx: CreateGateContext): Promise<GateVe
   // upstream; this guards a missing/blank identity reaching the handler.
   const identity = ctx.senderIdentity?.trim();
   if (!identity) {
-    return { ok: false, status: 401, error: 'Authentication required', cost };
+    return { ok: false, status: 401, error: 'Authentication required', code: 'auth_required', cost };
   }
 
   // 403 — optional allowedCreators allowlist (F-3.6). Empty/absent = allow any.
   if (ctx.allowedCreators && ctx.allowedCreators.length > 0) {
     const listed = ctx.allowedCreators.some((c) => allowedCreatorMatches(identity, c));
     if (!listed) {
-      return { ok: false, status: 403, error: 'Creator not on the operator allowlist', cost };
+      return { ok: false, status: 403, error: 'Creator not on the operator allowlist', code: 'auth_forbidden', cost };
     }
   }
 
@@ -98,6 +100,7 @@ export async function evaluateCreateGate(ctx: CreateGateContext): Promise<GateVe
         ok: false,
         status: 402,
         error: `Insufficient credit — your balance is ${formatUsdMicros(balance)}, but sending an envelope costs ${formatUsdMicros(cost)}.`,
+        code: 'payment_required',
         cost,
       };
     }

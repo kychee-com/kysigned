@@ -28,13 +28,13 @@ const VALID_IDENTITY_TYPES: IdentityType[] = ['email', 'email_domain'];
 
 export async function handleAddAllowedSender(ctx: AdminContext, req: AddAllowedSenderRequest) {
   if (!VALID_IDENTITY_TYPES.includes(req.identity_type)) {
-    return { status: 400, body: { error: 'identity_type must be "email" or "email_domain"' } };
+    return { status: 400, body: { error: 'identity_type must be "email" or "email_domain"', code: 'validation_identity_type' } };
   }
   if (!req.identity || req.identity.trim() === '') {
-    return { status: 400, body: { error: 'identity is required' } };
+    return { status: 400, body: { error: 'identity is required', code: 'validation_identity' } };
   }
   if (req.quota_per_month !== null && req.quota_per_month !== undefined && req.quota_per_month < 0) {
-    return { status: 400, body: { error: 'quota_per_month must be >= 0 or null' } };
+    return { status: 400, body: { error: 'quota_per_month must be >= 0 or null', code: 'validation_quota' } };
   }
 
   const row = await addAllowedSender(ctx.pool, {
@@ -54,11 +54,11 @@ export async function handleRemoveAllowedSender(
   identity: string
 ) {
   if (!VALID_IDENTITY_TYPES.includes(identity_type)) {
-    return { status: 400, body: { error: 'identity_type must be "email" or "email_domain"' } };
+    return { status: 400, body: { error: 'identity_type must be "email" or "email_domain"', code: 'validation_identity_type' } };
   }
   const removed = await removeAllowedSender(ctx.pool, identity_type, identity);
   if (!removed) {
-    return { status: 404, body: { error: 'Sender not found' } };
+    return { status: 404, body: { error: 'Sender not found', code: 'not_found' } };
   }
   return { status: 200, body: { removed: true } };
 }

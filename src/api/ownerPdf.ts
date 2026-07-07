@@ -39,7 +39,7 @@ export interface OwnerPdfDeps {
 
 export type OwnerPdfResult =
   | { ok: true; bytes: Uint8Array; filename: string }
-  | { ok: false; status: number; error: string; context?: Record<string, unknown> };
+  | { ok: false; status: number; code: string; error: string; context?: Record<string, unknown> };
 
 export async function handleGetEnvelopePdfForOwner(
   deps: OwnerPdfDeps,
@@ -47,12 +47,12 @@ export async function handleGetEnvelopePdfForOwner(
   authenticatedEmail: string | null | undefined,
 ): Promise<OwnerPdfResult> {
   if (!authenticatedEmail) {
-    return { ok: false, status: 401, error: 'Authentication required' };
+    return { ok: false, status: 401, error: 'Authentication required', code: 'auth_required' };
   }
 
   const envelope = await deps.getEnvelope(envelopeId);
   if (!envelope) {
-    return { ok: false, status: 404, error: 'Envelope not found' };
+    return { ok: false, status: 404, error: 'Envelope not found', code: 'not_found' };
   }
 
   // F8.12.1 owner check — only the envelope creator may download, BEFORE any
@@ -61,7 +61,7 @@ export async function handleGetEnvelopePdfForOwner(
     !envelope.sender_email ||
     envelope.sender_email.toLowerCase() !== authenticatedEmail.toLowerCase()
   ) {
-    return { ok: false, status: 403, error: 'Not authorized for this envelope' };
+    return { ok: false, status: 403, error: 'Not authorized for this envelope', code: 'auth_forbidden' };
   }
 
   // The document is stored at create under documentBlobKey(H_D) =
@@ -80,6 +80,7 @@ export async function handleGetEnvelopePdfForOwner(
       ok: false,
       status: 410,
       error: 'pdf_deleted',
+      code: 'state_document_purged',
       context: {
         envelope_id: envelope.id,
         envelope_status: envelope.status,

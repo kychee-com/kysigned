@@ -34,7 +34,7 @@ describe('checkSignerAddresses — #96 guard', () => {
   it('rejects a lone plus-alias signer, naming the address + primary (AC-89)', () => {
     const issue = checkSignerAddresses([{ email: 'user+tester@gmail.com' }]);
     assert.ok(issue);
-    assert.equal(issue.code, 'plus_alias');
+    assert.equal(issue.code, 'validation_plus_alias');
     assert.match(issue.message, /user\+tester@gmail\.com/);
     assert.match(issue.message, /user@gmail\.com/); // names the primary form
   });
@@ -45,7 +45,7 @@ describe('checkSignerAddresses — #96 guard', () => {
       { email: 'bob+sneaky@example.com' },
     ]);
     assert.ok(issue);
-    assert.equal(issue.code, 'plus_alias');
+    assert.equal(issue.code, 'validation_plus_alias');
     assert.match(issue.message, /bob\+sneaky@example\.com/);
   });
 
@@ -55,7 +55,7 @@ describe('checkSignerAddresses — #96 guard', () => {
       { email: 'alice@example.COM' },
     ]);
     assert.ok(issue);
-    assert.equal(issue.code, 'same_inbox');
+    assert.equal(issue.code, 'validation_same_inbox');
     assert.match(issue.message, /Alice@Example\.com/);
     assert.match(issue.message, /alice@example\.COM/);
   });
@@ -66,7 +66,7 @@ describe('checkSignerAddresses — #96 guard', () => {
       { email: 'name@gmail.com' },
     ]);
     assert.ok(issue);
-    assert.equal(issue.code, 'same_inbox');
+    assert.equal(issue.code, 'validation_same_inbox');
   });
 
   it('rejects a googlemail-vs-gmail collision as the same inbox (AC-88)', () => {
@@ -75,7 +75,7 @@ describe('checkSignerAddresses — #96 guard', () => {
       { email: 'bob@gmail.com' },
     ]);
     assert.ok(issue);
-    assert.equal(issue.code, 'same_inbox');
+    assert.equal(issue.code, 'validation_same_inbox');
   });
 
   it('accepts signers on distinct primary inboxes (AC-88)', () => {
@@ -124,7 +124,7 @@ describe('checkSignerAddresses — #110 renderable signer fields (embedded Unico
   it('rejects a signer NAME the embedded font cannot draw (CJK), naming the char + code point + FAQ', () => {
     const issue = checkSignerAddresses([{ email: 'lei@example.com', name: '李雷' }]);
     assert.ok(issue);
-    assert.equal(issue.code, 'unrenderable');
+    assert.equal(issue.code, 'validation_unrenderable');
     assert.match(issue.message, /name/i);
     assert.match(issue.message, /李/, 'names the offending character');
     assert.match(issue.message, /Chinese, Japanese, and Korean/);
@@ -136,7 +136,7 @@ describe('checkSignerAddresses — #110 renderable signer fields (embedded Unico
       { email: 'a@example.com', name: 'A', on_behalf_of: '한국 주식회사' }, // Hangul
     ]);
     assert.ok(issue);
-    assert.equal(issue.code, 'unrenderable');
+    assert.equal(issue.code, 'validation_unrenderable');
     assert.match(issue.message, /organisation/i);
   });
 
@@ -148,8 +148,8 @@ describe('checkSignerAddresses — #110 renderable signer fields (embedded Unico
   });
 
   it('checks renderability BEFORE the alias / collision rules', () => {
-    // BOTH a font-unrenderable name (CJK) AND a plus-alias → reports `unrenderable` first.
+    // BOTH a font-unrenderable name (CJK) AND a plus-alias → reports `validation_unrenderable` first.
     const issue = checkSignerAddresses([{ email: 'user+tag@example.com', name: '中' }]);
-    assert.equal(issue?.code, 'unrenderable');
+    assert.equal(issue?.code, 'validation_unrenderable');
   });
 });

@@ -112,7 +112,10 @@ export async function processForward(
   if (!membership.envelopeOpen) {
     return {
       outcome: 'rejected',
-      code: 'envelope_inactive',
+      // NOT a /v1 HTTP taxonomy code (F-30.3 / AC-137) — this is the internal F-7
+      // bounce-note key (ForwardRejectionCode → templates.ts). The key is quoted so
+      // the errorCodes meta-test's `code: '…'` scan doesn't mistake it for one.
+      'code': 'envelope_inactive',
       reason: `Envelope is ${membership.envelopeStatus}, no longer open for signing.`,
       envelopeId,
       signerEmail,

@@ -258,7 +258,7 @@ export function deliveryStatus(
 export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeRequest) {
   // Validate PDF input
   if (!req.pdf_base64 && !req.pdf_url) {
-    return { status: 400, body: { error: 'Provide pdf_base64 or pdf_url' } };
+    return { status: 400, body: { error: 'Provide pdf_base64 or pdf_url', code: 'validation_pdf' } };
   }
   // F-005: `document_name` is REQUIRED and must be a non-empty string. A raw
   // API/agent client (bypassing the typed SPA) that omits it previously crashed
@@ -266,7 +266,7 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
   // clean 400. Validate malformed input up front. (Also guard `signers` being
   // absent — `.length` on undefined would likewise throw before this fix.)
   if (typeof req.document_name !== 'string' || req.document_name.trim() === '') {
-    return { status: 400, body: { error: 'document_name is required (a non-empty string).' } };
+    return { status: 400, body: { error: 'document_name is required (a non-empty string).', code: 'validation_document_name' } };
   }
   // #110 — the document name is drawn on the cover in an embedded Unicode font
   // (Latin/Greek/Cyrillic/Hebrew/Arabic). A character that font can't render (CJK,
@@ -283,16 +283,17 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
           `(${docNameBad.char} ${docNameBad.label}). We support Latin, Greek, Cyrillic, ` +
           `Hebrew, and Arabic names; Chinese, Japanese, and Korean aren't supported yet. ` +
           `See our FAQ on supported languages, or rename the document.`,
+        code: 'validation_document_name',
       },
     };
   }
   if (!Array.isArray(req.signers) || req.signers.length === 0) {
-    return { status: 400, body: { error: 'At least one signer required' } };
+    return { status: 400, body: { error: 'At least one signer required', code: 'validation_signers' } };
   }
   if (req.signers.length > MAX_SIGNERS_PER_ENVELOPE) {
     return {
       status: 400,
-      body: { error: `An envelope can have at most ${MAX_SIGNERS_PER_ENVELOPE} signers.` },
+      body: { error: `An envelope can have at most ${MAX_SIGNERS_PER_ENVELOPE} signers.`, code: 'validation_signers' },
     };
   }
   // F-3.2a / AC-88 / AC-89 (#96): reject plus-alias or same-inbox signer sets up
@@ -301,7 +302,8 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
   // identity model (F-3.4 / F-6.4), so the signature can't be bound to one signer.
   const signerIssue = checkSignerAddresses(req.signers);
   if (signerIssue) {
-    return { status: 400, body: { error: signerIssue.message } };
+    // The guard's `code` is a taxonomy `validation_*` code (F-30.3) — pass it through.
+    return { status: 400, body: { code: signerIssue.code, error: signerIssue.message } };
   }
 
   // F-3.5a / AC-7 (F-004): app-level upload-size guard — run it EARLY, before the
@@ -317,7 +319,7 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
   if (req.pdf_base64) {
     sourceBytes = decodePdfBase64(req.pdf_base64);
     if (isUploadTooLarge(sourceBytes.length)) {
-      return { status: 400, body: { error: uploadTooLargeMessage(sourceBytes.length) } };
+      return { status: 400, body: { error: uploadTooLargeMessage(sourceBytes.length), code: 'rate_size_pdf' } };
     }
   }
 
@@ -331,7 +333,7 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
     if (!isInternalTest) {
       return {
         status: 403,
-        body: { error: 'Internal-test envelopes are restricted to internal accounts (F-3.7)' },
+        body: { error: 'Internal-test envelopes are restricted to internal accounts (F-3.7)', code: 'auth_forbidden' },
       };
     }
   }
@@ -347,7 +349,9 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
     signerCount: req.signers.length,
   });
   if (!gate.ok) {
-    return { status: gate.status!, body: { error: gate.error } };
+    // The gate verdict carries its own taxonomy code (auth_required / auth_forbidden /
+    // payment_required — F-30.3), matching its 401/403/402 status.
+    return { status: gate.status!, body: { code: gate.code!, error: gate.error } };
   }
 
   // Get source PDF bytes: `pdf_base64` was decoded + size-guarded above; the
@@ -369,6 +373,7 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
       status: 413,
       body: {
         error: sizeRejectionMessage(sizeEst),
+        code: 'rate_size_bundle',
         document_bytes: sizeEst.documentBytes,
         signer_count: sizeEst.signerCount,
         estimated_bundle_bytes: sizeEst.estimatedBundleBytes,
@@ -701,7 +706,7 @@ export async function handleGetEnvelope(
   // list (the signer roster is PII). 404 (not 403) so the endpoint never confirms
   // an envelope exists to a non-owner who guesses an id.
   if (!envelope || envelope.sender_email !== senderIdentity) {
-    return { status: 404, body: { error: 'Envelope not found' } };
+    return { status: 404, body: { error: 'Envelope not found', code: 'not_found' } };
   }
 
   const signers = await getEnvelopeSigners(ctx.pool, envelopeId);
@@ -770,9 +775,9 @@ export async function handleVoidEnvelope(
   senderIdentity: string
 ) {
   const envelope = await getEnvelope(ctx.pool, envelopeId);
-  if (!envelope) return { status: 404, body: { error: 'Envelope not found' } };
+  if (!envelope) return { status: 404, body: { error: 'Envelope not found', code: 'not_found' } };
   if (envelope.sender_email !== senderIdentity) {
-    return { status: 403, body: { error: 'Not the envelope sender' } };
+    return { status: 403, body: { error: 'Not the envelope sender', code: 'auth_forbidden' } };
   }
 
   // F-24.1 — an AUTO-close envelope that is all-signed WILL auto-distribute (the
@@ -784,7 +789,7 @@ export async function handleVoidEnvelope(
     if (sgnrs.length > 0 && sgnrs.every((s) => s.status === 'signed')) {
       return {
         status: 409,
-        body: { error: 'Everyone has signed — the completed bundle is on its way, so this envelope can no longer be cancelled.' },
+        body: { error: 'Everyone has signed — the completed bundle is on its way, so this envelope can no longer be cancelled.', code: 'state_completed' },
       };
     }
   }
@@ -899,11 +904,11 @@ export async function handleRemind(
   senderIdentity: string
 ) {
   const envelope = await getEnvelope(ctx.pool, envelopeId);
-  if (!envelope) return { status: 404, body: { error: 'Envelope not found' } };
+  if (!envelope) return { status: 404, body: { error: 'Envelope not found', code: 'not_found' } };
   // Creator-scoped: only the envelope's creator may trigger reminders (else a
   // session-authed stranger could spam another envelope's signers by id).
   if (envelope.sender_email !== senderIdentity) {
-    return { status: 403, body: { error: 'Not the envelope sender' } };
+    return { status: 403, body: { error: 'Not the envelope sender', code: 'auth_forbidden' } };
   }
   // Reminders apply while the envelope is OPEN (active OR awaiting_seal) — matches
   // the dashboard, which shows "Send reminders" whenever it's open + not all-signed
@@ -911,7 +916,7 @@ export async function handleRemind(
   // (completed / voided / expired) has nobody to nudge. (Barry QA: reminding an
   // awaiting_seal envelope 400'd "Envelope is not active".)
   if (!isEnvelopeEditable(envelope.status)) {
-    return { status: 400, body: { error: `Envelope is ${envelope.status} — reminders only apply while it's open` } };
+    return { status: 400, body: { error: `Envelope is ${envelope.status} — reminders only apply while it's open`, code: 'validation_envelope_not_open' } };
   }
 
   const pending = await getOutstandingSigners(ctx.pool, envelopeId);
@@ -1096,7 +1101,7 @@ export async function handleResendToMissing(
   const incomplete = await getIncompleteSigners(ctx.pool, documentHash, senderIdentity);
 
   if (incomplete.length === 0) {
-    return { status: 400, body: { error: 'No incomplete signers for this document' } };
+    return { status: 400, body: { error: 'No incomplete signers for this document', code: 'validation_no_incomplete_signers' } };
   }
 
   // Find document name from the first envelope with this hash
@@ -1107,7 +1112,7 @@ export async function handleResendToMissing(
     d.envelopes.some(e => e.document_hash === documentHash),
   );
   if (!docGroup) {
-    return { status: 404, body: { error: 'Document not found' } };
+    return { status: 404, body: { error: 'Document not found', code: 'not_found' } };
   }
 
   // Create a new envelope with the same doc hash and only incomplete signers
@@ -1363,21 +1368,21 @@ export async function handleAddSigner(
   req: { email: string; name?: string; on_behalf_of?: string; verification_level?: 1 | 2 | 5; message?: string },
 ): Promise<{ status: number; body: any }> {
   const envelope = await getEnvelope(ctx.pool, envelopeId);
-  if (!envelope) return { status: 404, body: { error: 'Envelope not found' } };
-  if (envelope.sender_email !== senderIdentity) return { status: 403, body: { error: 'Not the envelope sender' } };
+  if (!envelope) return { status: 404, body: { error: 'Envelope not found', code: 'not_found' } };
+  if (envelope.sender_email !== senderIdentity) return { status: 403, body: { error: 'Not the envelope sender', code: 'auth_forbidden' } };
   if (!isEnvelopeEditable(envelope.status)) {
-    return { status: 409, body: { error: `Envelope is ${envelope.status} — the signer set is frozen (F-23.5)` } };
+    return { status: 409, body: { error: `Envelope is ${envelope.status} — the signer set is frozen (F-23.5)`, code: 'state_not_active' } };
   }
   if (!req.email || !req.email.includes('@')) {
-    return { status: 400, body: { error: 'A valid signer email is required' } };
+    return { status: 400, body: { error: 'A valid signer email is required', code: 'validation_email' } };
   }
 
   const existing = await getEnvelopeSigners(ctx.pool, envelopeId);
   if (existing.some((s) => s.email.toLowerCase() === req.email.toLowerCase())) {
-    return { status: 409, body: { error: 'That email is already a signer on this envelope' } };
+    return { status: 409, body: { error: 'That email is already a signer on this envelope', code: 'state_duplicate_signer' } };
   }
   if (existing.length >= MAX_SIGNERS_PER_ENVELOPE) {
-    return { status: 400, body: { error: `An envelope can have at most ${MAX_SIGNERS_PER_ENVELOPE} signers.` } };
+    return { status: 400, body: { error: `An envelope can have at most ${MAX_SIGNERS_PER_ENVELOPE} signers.`, code: 'validation_signers' } };
   }
   // F-3.2a / AC-88 / AC-89 (#96) — the same signer-set validity rule that gates
   // creation runs wherever the set is submitted: the FULL resulting set (existing
@@ -1388,7 +1393,7 @@ export async function handleAddSigner(
     ...existing.map((s) => ({ email: s.email, name: s.name, on_behalf_of: s.on_behalf_of ?? undefined })),
     { email: req.email, name: req.name, on_behalf_of: req.on_behalf_of },
   ]);
-  if (addIssue) return { status: 400, body: { error: addIssue.message } };
+  if (addIssue) return { status: 400, body: { code: addIssue.code, error: addIssue.message } };
 
   // F-24.2 — adding a signer to an all-signed (`awaiting_seal`) envelope introduces a
   // new pending signer, so it's no longer "ready to seal" → revert it to active (Barry QA).
@@ -1415,14 +1420,14 @@ export async function handleEditSigner(
   req: { name?: string; on_behalf_of?: string | null; message?: string; new_email?: string },
 ): Promise<{ status: number; body: any }> {
   const envelope = await getEnvelope(ctx.pool, envelopeId);
-  if (!envelope) return { status: 404, body: { error: 'Envelope not found' } };
-  if (envelope.sender_email !== senderIdentity) return { status: 403, body: { error: 'Not the envelope sender' } };
+  if (!envelope) return { status: 404, body: { error: 'Envelope not found', code: 'not_found' } };
+  if (envelope.sender_email !== senderIdentity) return { status: 403, body: { error: 'Not the envelope sender', code: 'auth_forbidden' } };
   if (!isEnvelopeEditable(envelope.status)) {
-    return { status: 409, body: { error: `Envelope is ${envelope.status} — the signer set is frozen (F-23.5)` } };
+    return { status: 409, body: { error: `Envelope is ${envelope.status} — the signer set is frozen (F-23.5)`, code: 'state_not_active' } };
   }
 
   const current = await getSignerByEnvelopeAndEmail(ctx.pool, envelopeId, signerEmail);
-  if (!current) return { status: 404, body: { error: 'Signer not found on this envelope' } };
+  if (!current) return { status: 404, body: { error: 'Signer not found on this envelope', code: 'not_found' } };
 
   // F-24.2 — ANY edit de-completes an all-signed (`awaiting_seal`) envelope: a
   // signed signer is superseded, an email-change adds a pending signer. So it's no
@@ -1439,7 +1444,7 @@ export async function handleEditSigner(
   if (newEmail && newEmail.toLowerCase() !== current.email.toLowerCase()) {
     const siblings = await getEnvelopeSigners(ctx.pool, envelopeId);
     if (siblings.some((s) => s.email.toLowerCase() === newEmail.toLowerCase())) {
-      return { status: 409, body: { error: 'That email is already a signer on this envelope' } };
+      return { status: 409, body: { error: 'That email is already a signer on this envelope', code: 'state_duplicate_signer' } };
     }
     // F-3.2a (#96) — the new address must not be a plus-alias nor collapse to
     // another signer's inbox (excluding the one being replaced).
@@ -1453,7 +1458,7 @@ export async function handleEditSigner(
         on_behalf_of: (req.on_behalf_of === undefined ? current.on_behalf_of : req.on_behalf_of) ?? undefined,
       },
     ]);
-    if (editIssue) return { status: 400, body: { error: editIssue.message } };
+    if (editIssue) return { status: 400, body: { code: editIssue.code, error: editIssue.message } };
     await deleteSignerCore(ctx, envelope, current, true); // cancellation to the old address
     const added = await addSignerCore(ctx, envelope, {
       email: newEmail,
@@ -1476,7 +1481,7 @@ export async function handleEditSigner(
   const inPlaceIssue = checkSignerAddresses([
     { email: current.email, name, on_behalf_of: on_behalf_of ?? undefined },
   ]);
-  if (inPlaceIssue) return { status: 400, body: { error: inPlaceIssue.message } };
+  if (inPlaceIssue) return { status: 400, body: { code: inPlaceIssue.code, error: inPlaceIssue.message } };
   const { pdf, sentPdfHash } = await regenerateSignerPdf(ctx, envelope, {
     email: current.email,
     name,
@@ -1508,14 +1513,14 @@ export async function handleDeleteSigner(
   signerEmail: string,
 ): Promise<{ status: number; body: any }> {
   const envelope = await getEnvelope(ctx.pool, envelopeId);
-  if (!envelope) return { status: 404, body: { error: 'Envelope not found' } };
-  if (envelope.sender_email !== senderIdentity) return { status: 403, body: { error: 'Not the envelope sender' } };
+  if (!envelope) return { status: 404, body: { error: 'Envelope not found', code: 'not_found' } };
+  if (envelope.sender_email !== senderIdentity) return { status: 403, body: { error: 'Not the envelope sender', code: 'auth_forbidden' } };
   if (!isEnvelopeEditable(envelope.status)) {
-    return { status: 409, body: { error: `Envelope is ${envelope.status} — the signer set is frozen (F-23.5)` } };
+    return { status: 409, body: { error: `Envelope is ${envelope.status} — the signer set is frozen (F-23.5)`, code: 'state_not_active' } };
   }
 
   const current = await getSignerByEnvelopeAndEmail(ctx.pool, envelopeId, signerEmail);
-  if (!current) return { status: 404, body: { error: 'Signer not found on this envelope' } };
+  if (!current) return { status: 404, body: { error: 'Signer not found on this envelope', code: 'not_found' } };
 
   await deleteSignerCore(ctx, envelope, current, true);
   return { status: 200, body: { deleted: current.email } };

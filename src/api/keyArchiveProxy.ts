@@ -21,7 +21,7 @@ export interface KeyArchiveProxyDeps {
 
 export interface KeyArchiveProxyResult {
   status: number;
-  body: ArchiveKeyRecord[] | { error: string };
+  body: ArchiveKeyRecord[] | { code: string; error: string };
 }
 
 // Public DNS labels — a permissive shape guard (defense-in-depth on a public forward).
@@ -35,15 +35,15 @@ export async function handleKeyArchiveLookup(
 ): Promise<KeyArchiveProxyResult> {
   const d = (domain ?? '').trim().toLowerCase();
   const s = (selector ?? '').trim();
-  if (!d || !s) return { status: 400, body: { error: 'domain and selector are required' } };
+  if (!d || !s) return { status: 400, body: { error: 'domain and selector are required', code: 'validation_domain_selector' } };
   if (!DOMAIN_RE.test(d) || !SELECTOR_RE.test(s)) {
-    return { status: 400, body: { error: 'invalid domain or selector' } };
+    return { status: 400, body: { error: 'invalid domain or selector', code: 'validation_domain_selector' } };
   }
   try {
     const { records } = await lookupArchivedKey(d, s, deps.archive);
     return { status: 200, body: records };
   } catch {
     // Archive unreachable / errored → 502; the web verifier degrades to `pending`.
-    return { status: 502, body: { error: 'archive lookup failed' } };
+    return { status: 502, body: { error: 'archive lookup failed', code: 'internal_upstream' } };
   }
 }

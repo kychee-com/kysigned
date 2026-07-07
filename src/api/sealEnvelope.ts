@@ -90,17 +90,17 @@ export async function handleSealEnvelope(
   deps: DistributeBundleDeps,
 ): Promise<{ status: number; body: any }> {
   const envelope = await getEnvelope(pool, envelopeId);
-  if (!envelope) return { status: 404, body: { error: 'Envelope not found' } };
-  if (envelope.sender_email !== senderIdentity) return { status: 403, body: { error: 'Not the envelope sender' } };
+  if (!envelope) return { status: 404, body: { error: 'Envelope not found', code: 'not_found' } };
+  if (envelope.sender_email !== senderIdentity) return { status: 403, body: { error: 'Not the envelope sender', code: 'auth_forbidden' } };
   if (envelope.completion_distributed_at) {
     return { status: 200, body: { already_sealed: true, status: envelope.status } };
   }
   if (envelope.status === 'voided' || envelope.status === 'expired') {
-    return { status: 409, body: { error: `Envelope is ${envelope.status} — it cannot be sealed` } };
+    return { status: 409, body: { error: `Envelope is ${envelope.status} — it cannot be sealed`, code: 'state_not_active' } };
   }
   const signers = await getEnvelopeSigners(pool, envelopeId);
   if (signers.length === 0 || !signers.every((s) => s.status === 'signed')) {
-    return { status: 409, body: { error: 'Not all signers have signed yet — the envelope cannot be sealed' } };
+    return { status: 409, body: { error: 'Not all signers have signed yet — the envelope cannot be sealed', code: 'state_not_all_signed' } };
   }
 
   const result: DistributeResult = await distributeEnvelopeBundle(pool, envelopeId, deps);

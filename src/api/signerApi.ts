@@ -41,7 +41,7 @@ export interface SignerApiCtx {
 
 export interface SignerInfoResult {
   status: number;
-  body: SigningInfo | { error: string };
+  body: SigningInfo | { code: string; error: string };
 }
 
 export async function handleSignerInfo(
@@ -51,10 +51,10 @@ export async function handleSignerInfo(
 ): Promise<SignerInfoResult> {
   const signer = await getSignerByToken(ctx.pool, token);
   if (!signer || signer.envelope_id !== envelopeId) {
-    return { status: 404, body: { error: 'Signing request not found' } };
+    return { status: 404, body: { error: 'Signing request not found', code: 'not_found' } };
   }
   const envelope = await getEnvelope(ctx.pool, envelopeId);
-  if (!envelope) return { status: 404, body: { error: 'Signing request not found' } };
+  if (!envelope) return { status: 404, body: { error: 'Signing request not found', code: 'not_found' } };
   return {
     status: 200,
     body: {
@@ -79,7 +79,7 @@ export interface SignerPdfResult {
   /** Present on 200 — the PDF bytes (the entry returns them as application/pdf). */
   bytes?: Uint8Array;
   contentType?: string;
-  body?: { error: string };
+  body?: { code: string; error: string };
 }
 
 export async function handleSignerPdf(
@@ -89,21 +89,21 @@ export async function handleSignerPdf(
 ): Promise<SignerPdfResult> {
   const signer = await getSignerByToken(ctx.pool, token);
   if (!signer || signer.envelope_id !== envelopeId) {
-    return { status: 404, body: { error: 'Signing request not found' } };
+    return { status: 404, body: { error: 'Signing request not found', code: 'not_found' } };
   }
   const envelope = await getEnvelope(ctx.pool, envelopeId);
   if (!envelope) {
-    return { status: 404, body: { error: 'Document not available' } };
+    return { status: 404, body: { error: 'Document not available', code: 'not_found' } };
   }
   if (envelope.pdf_deleted_at) {
     // F-9.3 ephemeral retention — the durable copy is the bundle in the inbox.
-    return { status: 410, body: { error: 'This document is no longer stored on our servers.' } };
+    return { status: 410, body: { error: 'This document is no longer stored on our servers.', code: 'state_document_purged' } };
   }
   const fetchPdf = ctx.getPdf ?? ((k: string) => getPdfBlob(ctx.pool, k));
   // The shared document D is stored ONCE at create under documentBlobKey(H_D) =
   // `envelopes/<hash>/document.pdf`; `pdf_storage_key` is a normally-NULL override.
   const document = await fetchPdf(envelope.pdf_storage_key ?? documentBlobKey(envelope.document_hash));
-  if (!document) return { status: 404, body: { error: 'Document not available' } };
+  if (!document) return { status: 404, body: { error: 'Document not available', code: 'not_found' } };
   // F-3.2 / F-5.1 — the signer reviews EXACTLY what they sign: their per-signer
   // canonical P_i = cover_i ++ D, re-assembled from the STORED cover so it is
   // byte-identical to the bytes the signing-request email attached (the forward's

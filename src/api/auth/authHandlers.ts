@@ -43,7 +43,7 @@ const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 export async function handleAuthMagicLink(ctx: AuthHandlerCtx, body: { email?: unknown }): Promise<AuthResult> {
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
   if (!email || !EMAIL_RE.test(email)) {
-    return { status: 400, body: { error: 'A valid email address is required' } };
+    return { status: 400, body: { error: 'A valid email address is required', code: 'validation_email' } };
   }
   await requestMagicLink({
     email,
@@ -58,7 +58,7 @@ export async function handleAuthMagicLink(ctx: AuthHandlerCtx, body: { email?: u
 
 export async function handleAuthTokenExchange(ctx: AuthHandlerCtx, body: { token?: unknown }): Promise<AuthResult> {
   const token = typeof body.token === 'string' ? body.token.trim() : '';
-  if (!token) return { status: 400, body: { error: 'token is required' } };
+  if (!token) return { status: 400, body: { error: 'token is required', code: 'validation_token' } };
   const r = await exchangeMagicLinkToken({
     magicLinkToken: token,
     projectAnonKey: ctx.session.projectAnonKey,
@@ -66,7 +66,7 @@ export async function handleAuthTokenExchange(ctx: AuthHandlerCtx, body: { token
     fetchImpl: ctx.session.fetchImpl,
   });
   if (!r.ok || !r.accessToken || !r.refreshToken || !r.email) {
-    return { status: 401, body: { error: 'Sign-in failed', reason: r.reason } };
+    return { status: 401, body: { error: 'Sign-in failed', code: 'auth_signin_failed', reason: r.reason } };
   }
   const email = r.email.toLowerCase();
   const { cookie } = await startSession(ctx.pool, ctx.session, {

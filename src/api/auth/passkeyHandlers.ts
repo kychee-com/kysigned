@@ -64,7 +64,7 @@ async function parseJson(res: { status: number; json: () => Promise<unknown> }):
   try {
     return await res.json();
   } catch {
-    return { error: `Upstream returned non-JSON (status ${res.status})` };
+    return { error: `Upstream returned non-JSON (status ${res.status})`, code: 'internal_upstream' };
   }
 }
 
@@ -132,7 +132,7 @@ export async function handlePasskeyLoginVerify(
 
   const data = (up.body ?? {}) as { access_token?: string; refresh_token?: string };
   if (!data.access_token || !data.refresh_token) {
-    return { status: 502, body: { error: 'Passkey verify returned unexpected shape (no tokens)' } };
+    return { status: 502, body: { error: 'Passkey verify returned unexpected shape (no tokens)', code: 'internal_upstream' } };
   }
   // run402's passkey verify returns tokens but not the email — resolve it canonically.
   const userInfo = await fetchRun402User({
@@ -143,7 +143,7 @@ export async function handlePasskeyLoginVerify(
   });
   const email = userInfo.ok && userInfo.user ? userInfo.user.email.toLowerCase() : null;
   if (!email) {
-    return { status: 401, body: { error: 'Could not resolve user email after passkey verify' } };
+    return { status: 401, body: { error: 'Could not resolve user email after passkey verify', code: 'auth_signin_failed' } };
   }
   const { cookie } = await startSession(ctx.pool, ctx.session, {
     email,
@@ -161,9 +161,9 @@ export async function handlePasskeyRegisterOptions(
   body: { app_origin?: unknown; label?: unknown },
 ): Promise<PasskeyResult> {
   const at = await sessionAccessToken(ctx, sessionId);
-  if (!at) return { status: 401, body: { error: 'Not authenticated' } };
+  if (!at) return { status: 401, body: { error: 'Not authenticated', code: 'auth_required' } };
   const appOrigin = asString(body.app_origin);
-  if (!appOrigin) return { status: 400, body: { error: 'app_origin is required' } };
+  if (!appOrigin) return { status: 400, body: { error: 'app_origin is required', code: 'validation_app_origin' } };
   return run402PasskeyPost(
     ctx,
     '/auth/v1/passkeys/register/options',
@@ -179,9 +179,9 @@ export async function handlePasskeyRegisterVerify(
   body: { challenge_id?: unknown; response?: unknown; label?: unknown; app_origin?: unknown },
 ): Promise<PasskeyResult> {
   const at = await sessionAccessToken(ctx, sessionId);
-  if (!at) return { status: 401, body: { error: 'Not authenticated' } };
+  if (!at) return { status: 401, body: { error: 'Not authenticated', code: 'auth_required' } };
   if (!body.challenge_id || !body.response) {
-    return { status: 400, body: { error: 'challenge_id and response are required' } };
+    return { status: 400, body: { error: 'challenge_id and response are required', code: 'validation_challenge' } };
   }
   return run402PasskeyPost(
     ctx,
@@ -194,7 +194,7 @@ export async function handlePasskeyRegisterVerify(
 
 export async function handlePasskeyList(ctx: PasskeyHandlerCtx, sessionId: string): Promise<PasskeyResult> {
   const at = await sessionAccessToken(ctx, sessionId);
-  if (!at) return { status: 401, body: { error: 'Not authenticated' } };
+  if (!at) return { status: 401, body: { error: 'Not authenticated', code: 'auth_required' } };
   const f = fetchImpl(ctx.session);
   const res = await f(`${base(ctx.session)}/auth/v1/passkeys`, {
     method: 'GET',
@@ -209,7 +209,7 @@ export async function handlePasskeyDelete(
   id: string,
 ): Promise<PasskeyResult> {
   const at = await sessionAccessToken(ctx, sessionId);
-  if (!at) return { status: 401, body: { error: 'Not authenticated' } };
+  if (!at) return { status: 401, body: { error: 'Not authenticated', code: 'auth_required' } };
   const f = fetchImpl(ctx.session);
   const res = await f(`${base(ctx.session)}/auth/v1/passkeys/${encodeURIComponent(id)}`, {
     method: 'DELETE',
