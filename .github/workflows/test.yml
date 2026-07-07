@@ -23,6 +23,7 @@ jobs:
       # sails through CI green.
       - run: npm run build
       - run: npm run test:all
-      - name: Documentation coverage (non-blocking until llms.txt exists)
+      # Blocking since 44.8: llms.txt + openapi.json exist and are drift-tested —
+      # an undocumented endpoint or a docs lie fails CI.
+      - name: Documentation coverage
         run: npm run test:docs
-        continue-on-error: true

@@ -50,15 +50,47 @@ When everyone has signed, every party receives a sealed EVIDENCE BUNDLE they can
 
 ## Authentication
 
-The creator API (`/v1/envelope*`, `/v1/documents`) is authenticated as the CREATOR account.
+The creator API (`/v1/envelope*`, `/v1/documents`, `/v1/envelopes`) is authenticated as the CREATOR
+account, in one of two ways:
 
-- Sign in: `POST /v1/auth/magic-link` with `{ "email": "you@example.com" }` → this instance emails a
-  one-time link; exchange it via `POST /v1/auth/token` for a session. (Passkeys are also supported.)
-- The session is an HttpOnly cookie; for programmatic/agent use, pass it as the `Authorization` header.
+- **API key (the agent path).** Mint a key in the dashboard at `/account/api-keys` (shown exactly
+  once, format `ksk_…`) and send it in the `Authorization` header — `Bearer ksk_…` or the bare key
+  both work. Keys are creator-scoped (envelope actions only — they cannot manage keys or the
+  account), CSRF-exempt, and revocable. Auth failures return `401 { "code": "auth_invalid_key" }`;
+  using a key outside its scope returns `403 { "code": "auth_key_scope" }`.
+- **Browser session (the human path).** `POST /v1/auth/magic-link` with `{ "email": "you@example.com" }`
+  → this instance emails a one-time link; exchange it via `POST /v1/auth/token` for an HttpOnly
+  session cookie. (Passkeys are also supported.) State-changing requests on the cookie path require
+  the `X-Kysigned-Csrf` header.
 - MCP / CLI: set `KYSIGNED_ENDPOINT` (this instance's origin) and `KYSIGNED_AUTHORIZATION` (your
-  creator session / API credential). See "Agent tools (MCP)" below.
+  `ksk_…` API key). See "Agent tools (MCP)" below.
 - Signer endpoints (`/v1/sign/:id/:token/info`, `/v1/envelope/:id/:token/pdf`) use the per-signer
   token from the signing-request email — no account needed.
+
+## Machine-readable errors
+
+Every `/v1` error response is `{ "error": "<human message>", "code": "<stable code>" }`. Codes are a
+fixed taxonomy mapped to the status contract: `auth_*` (401/403), `csrf_*` (403), `payment_required`
+(402), `validation_*` (400), `state_*` (409 lifecycle conflicts, e.g. editing a sealed envelope),
+`not_found` (404), `rate_size_*` (413/400 size guards), `idempotency_*` (Idempotency-Key semantics),
+`internal_*` (5xx). Branch on `code`, display `error`.
+
+## Reliability (idempotency + webhooks)
+
+- **Idempotent create.** Send an `Idempotency-Key` header (≤ 200 chars) on `POST /v1/envelope`: a
+  retried create with the same key returns the SAME envelope with exactly one charge; the same key
+  with a different payload returns `409 { "code": "idempotency_key_reuse" }`. Always set it when you
+  retry on timeouts.
+- **Signed completion webhooks.** Pass `callback_url` (https only) at create; the 201 response
+  returns `callback_secret` (`whs_…`) EXACTLY ONCE. When the envelope completes, this instance POSTs
+  `{ "type": "envelope.completed", "envelope_id", "document_name", "status", "completed_at",
+  "signers": [...] }` to your URL with the header
+  `X-Kysigned-Signature: t=<unix seconds>,v1=<hex hmac-sha256(callback_secret, "<t>." + rawBody)>`.
+  Verify by recomputing the HMAC over `t + "." + rawBody`, comparing constant-time, and rejecting
+  timestamps outside your tolerance (e.g. 5 minutes). Deliveries retry on failure (at-least-once) —
+  make your receiver idempotent on `envelope_id`.
+
+The full surface is also machine-readable as OpenAPI 3.1 at `/openapi.json`.
 
 ## The agent journey (creator)
 
@@ -68,14 +100,19 @@ The creator API (`/v1/envelope*`, `/v1/documents`) is authenticated as the CREAT
 
    ```
    POST /v1/envelope
+   Authorization: Bearer ksk_<your key>
+   Idempotency-Key: <your retry-safe key>
    {
      "document_name": "Mutual NDA",
      "pdf_base64": "<base64-encoded PDF>",
      "signers": [ { "email": "jane@acme.com", "name": "Jane Roe" } ],
-     "message": "Please review and sign our mutual NDA."
+     "message": "Please review and sign our mutual NDA.",
+     "callback_url": "https://your-agent.example.com/kysigned-hook"
    }
    ```
-   → `{ "envelope_id", "status", "document_hash", "status_url", "verify_url", "signing_links": [...] }`
+   → `{ "envelope_id", "status", "document_hash", "status_url", "verify_url", "signing_links": [...], "callback_secret"? }`
+   (`callback_secret` appears only when you sent `callback_url`, and only this once — store it to
+   verify webhook deliveries.)
    Each `signing_links[]` entry is `{ email, name, link, review_link }`. `review_link`
    (`/review/:id/:token`) is the human, browser-openable review page you can hand a signer directly.
    `link` (`/v1/sign/:id/:token`) is the programmatic signer-token API base (`GET .../info` plus the
@@ -94,7 +131,8 @@ The creator API (`/v1/envelope*`, `/v1/documents`) is authenticated as the CREAT
 4. Optional: `POST /v1/envelope/:id/remind` to nudge pending signers; `POST /v1/envelope/:id/void` to
    cancel. Until the envelope is sealed you can edit recipients with `POST` / `PATCH` / `DELETE`
    `/v1/envelope/:id/signers` (the signer's address rides in `?email=`).
-5. On completion every party receives the evidence-bundle email. The bundle is the durable record —
+5. On completion every party receives the evidence-bundle email, and — if you set `callback_url` —
+   your receiver gets the signed `envelope.completed` webhook. The bundle is the durable record —
    verify it any time at `/verify`. (No server-side verify endpoint exists; verification is client-side.)
 
 ## Agent tools (MCP)
@@ -128,8 +166,14 @@ reference verifier in the public repo.
 | `GET /v1/envelope/:id/pdf` | creator | Download the creator's copy of the document. |
 | `GET /v1/envelopes` | creator | List the creator's envelopes (id, name, status, dates). |
 | `GET /v1/documents` | creator | List the creator's uploaded documents (grouped by hash). |
+| `POST /v1/api-keys` | session only | Mint a creator API key (`ksk_…`, returned exactly once). |
+| `GET /v1/api-keys` | session only | List your API keys (metadata only, never the value). |
+| `DELETE /v1/api-keys/:id` | session only | Revoke a key (effective on its next use). |
 | `GET /v1/sign/:id/:token/info` | signer token | Signer review-page data (name, document, hash). |
 | `GET /v1/envelope/:id/:token/pdf` | signer token | Signer downloads their copy of the document. |
+
+"creator" auth = an API key in `Authorization` OR the browser session. Key management is
+session-only by design: a leaked key can never mint more keys.
 
 Not part of the public agent surface: the operator allowlist admin, the inbound-mail webhook, and any
 operator-specific credit/billing routes. There is **no** server-side verify endpoint — verification is

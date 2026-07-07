@@ -48,6 +48,11 @@ const PUBLIC_ENDPOINTS = [
   'GET /v1/documents',
   'GET /v1/sign/:id/:token/info',
   'GET /v1/envelope/:id/:token/pdf',
+  // F-30.1 — creator API keys (session-managed; the keys themselves authenticate
+  // the creator envelope actions above via the Authorization header).
+  'POST /v1/api-keys',
+  'GET /v1/api-keys',
+  'DELETE /v1/api-keys/:id',
 ];
 
 /**
@@ -146,5 +151,54 @@ describe('API Documentation Alignment', () => {
     // This test just verifies the EXCLUDED_ENDPOINTS list is non-empty
     // and the source file has comments. A human-readable check.
     assert.ok(EXCLUDED_ENDPOINTS.length > 0, 'EXCLUDED_ENDPOINTS should have at least one entry');
+  });
+
+  // ── F-30.4 / AC-139 — OpenAPI drift + docs truth ───────────────────────────
+
+  const OPENAPI = join(ROOT, 'frontend', 'public', 'openapi.json');
+
+  it('openapi.json exists (served at /openapi.json alongside llms.txt)', () => {
+    assert.ok(existsSync(OPENAPI), `openapi.json not found at ${OPENAPI}`);
+  });
+
+  const openapiExists = existsSync(OPENAPI);
+
+  it('every public endpoint appears in openapi.json (and nothing extra) — bidirectional drift', { skip: !openapiExists ? 'openapi.json does not exist yet' : undefined }, () => {
+    const spec = JSON.parse(readFileSync(OPENAPI, 'utf-8')) as {
+      openapi?: string;
+      paths?: Record<string, Record<string, unknown>>;
+    };
+    assert.match(spec.openapi ?? '', /^3\./, 'OpenAPI 3.x');
+    const specSet = new Set<string>();
+    for (const [p, methods] of Object.entries(spec.paths ?? {})) {
+      for (const m of Object.keys(methods)) {
+        if (['get', 'post', 'put', 'patch', 'delete'].includes(m)) {
+          specSet.add(`${m.toUpperCase()} ${p}`);
+        }
+      }
+    }
+    // OpenAPI uses {param}; the canonical list uses :param — normalize.
+    const wanted = new Set(PUBLIC_ENDPOINTS.map((e) => e.replace(/:([^/]+)/g, '{$1}')));
+    for (const w of wanted) {
+      assert.ok(specSet.has(w), `openapi.json is missing "${w}"`);
+    }
+    for (const s of specSet) {
+      assert.ok(wanted.has(s), `openapi.json documents "${s}" which is not a public endpoint`);
+    }
+  });
+
+  it('llms.txt documents ONLY honored auth (bearer keys), never the session-as-Authorization lie', { skip: !llmsExists ? 'llms.txt missing' : undefined }, () => {
+    const t = readFileSync(LLMS_TXT, 'utf-8');
+    assert.ok(!/pass it as the `Authorization` header/.test(t), 'the old session-as-Authorization instruction must be gone');
+    assert.ok(t.includes('ksk_'), 'documents the ksk_ API-key format');
+    assert.ok(t.includes('/account/api-keys'), 'points at where keys are minted');
+  });
+
+  it('llms.txt documents the F-30.3 agent ergonomics (idempotency, webhooks, error codes)', { skip: !llmsExists ? 'llms.txt missing' : undefined }, () => {
+    const t = readFileSync(LLMS_TXT, 'utf-8');
+    for (const needle of ['Idempotency-Key', 'callback_url', 'callback_secret', 'X-Kysigned-Signature', 'openapi.json']) {
+      assert.ok(t.includes(needle), `llms.txt must document ${needle}`);
+    }
+    assert.match(t, /"code"|error code/i, 'documents the machine-readable error codes');
   });
 });

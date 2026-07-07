@@ -18,10 +18,15 @@ npm install -g kysigned-mcp
 
 ## Configure
 
-The MCP server defaults to the hosted instance at `https://kysigned.com`. You can point it at any kysigned deployment (your own self-hosted instance, a staging environment, etc.) via an environment variable:
+The MCP server defaults to the hosted instance at `https://kysigned.com`. Two environment variables:
+
+- `KYSIGNED_ENDPOINT` — point it at any kysigned deployment (your own self-hosted instance, staging, etc.).
+- `KYSIGNED_AUTHORIZATION` — your creator **API key**. Sign in to the instance's dashboard and mint one at `/account/api-keys` (format `ksk_…`, shown exactly once). The key authorizes the creator envelope actions and nothing else — it cannot manage keys or the account.
 
 ```bash
-KYSIGNED_ENDPOINT=https://kysigned.example.com npx -y kysigned-mcp
+KYSIGNED_ENDPOINT=https://kysigned.example.com \
+KYSIGNED_AUTHORIZATION=ksk_your_key_here \
+npx -y kysigned-mcp
 ```
 
 ## Wire it up to Claude Desktop
@@ -33,7 +38,8 @@ Edit your Claude Desktop MCP config (`~/Library/Application Support/Claude/claud
   "mcpServers": {
     "kysigned": {
       "command": "npx",
-      "args": ["-y", "kysigned-mcp"]
+      "args": ["-y", "kysigned-mcp"],
+      "env": { "KYSIGNED_AUTHORIZATION": "ksk_your_key_here" }
     }
   }
 }
@@ -82,7 +88,9 @@ Create a new signing envelope. Uploads a PDF (base64 or URL), defines signers, a
 
 You can pass `pdf_url` instead of `pdf_base64` to fetch the PDF from a URL. Every signer is notified at once.
 
-**Returns:** envelope ID, status URL, verify URL, list of `{ email, name, link }` per signer, and a spam notice for the sender to forward.
+`callback_url` (https only) arms a **signed completion webhook**: the create response includes `callback_secret` (`whs_…`, returned exactly once). At completion the instance POSTs `{ "type": "envelope.completed", … }` to your URL with `X-Kysigned-Signature: t=<unix>,v1=<hex hmac-sha256(callback_secret, "<t>." + rawBody)>` — verify by recomputing the HMAC and rejecting stale timestamps. Deliveries retry (at-least-once), so make the receiver idempotent on `envelope_id`.
+
+**Returns:** envelope ID, status URL, verify URL, list of `{ email, name, link, review_link }` per signer, `callback_secret` when a `callback_url` was supplied, and a spam notice for the sender to forward.
 
 ### `check_envelope_status`
 
@@ -94,10 +102,10 @@ Get the current status of an envelope by ID, including per-signer status and sig
 
 ### `list_envelopes`
 
-List every envelope created by a given sender email address.
+List the envelopes created by the authenticated creator (the key holder). No arguments.
 
 ```json
-{ "email": "you@example.com" }
+{}
 ```
 
 > **Verification is not an MCP tool.** In the evidence-bundle model anyone verifies a
@@ -154,11 +162,11 @@ The agent:
 
 ## Authentication
 
-When pointed at the hosted instance, authentication is via `KYSIGNED_AUTHORIZATION` env var (API key or session token from a credit-holding account).
+Set `KYSIGNED_AUTHORIZATION` to a creator **API key** (`ksk_…`), minted in the instance dashboard at `/account/api-keys`. The MCP sends it as the `Authorization` header; the server resolves it to your creator account (CSRF-exempt bearer mode). Auth failures return `401 { "code": "auth_invalid_key" }`; a key can never manage keys or account credentials (`403 { "code": "auth_key_scope" }`).
 
-When pointed at a self-hosted instance with `senderGate: { strategy: 'allowlist' }`, the operator must pre-allowlist the sender email. See the [kysigned README](https://github.com/kychee-com/kysigned#sender-access-control) for the full enforcement model.
+When pointed at a self-hosted instance with `senderGate: { strategy: 'allowlist' }`, the operator must additionally pre-allowlist the creator email. See the [kysigned README](https://github.com/kychee-com/kysigned#sender-access-control) for the full enforcement model.
 
-Read-only tools (`check_envelope_status`, `list_envelopes`) do not require payment.
+Every error the tools surface carries a stable machine-readable `code` alongside the message (`auth_*`, `payment_*`, `validation_*`, `state_*`, `idempotency_*`, …) — the full surface is documented as OpenAPI at `https://<instance>/openapi.json` and in `https://<instance>/llms.txt`.
 
 ## Source
 
