@@ -5,10 +5,10 @@
 <h1 align="center">kysigned</h1>
 
 <p align="center">
-  <strong>E-signatures at $0.25 an envelope</strong> &mdash; simple, secure signing powered by your email.
+  <strong>E-signatures at $0.25 an envelope</strong> : simple, secure signing powered by your email.
 </p>
 
-kysigned uses **DKIM** — the cryptographic signature your email provider already puts on every message you send — as the signature itself. A signer forwards one email; the result is a self-contained **evidence bundle** (a single PDF) that anyone can verify on their own machine, even offline, even if this service disappears.
+kysigned uses **DKIM**, the cryptographic signature your email provider already puts on every message you send, as the signature itself. A signer forwards one email; the result is a self-contained **evidence bundle** (a single PDF) that anyone can verify on their own machine, even offline, even if this service disappears.
 
 ## Quick Start
 
@@ -34,7 +34,7 @@ runbook and smoke-test checklist.
 
 A forker following this path runs the identical public code on their own run402 project, under their own domain, and produces verifiable bundles end-to-end.
 
-**Agent Native — drive day-to-day signing from any MCP agent.** Once your instance is live, the bundled MCP server (`kysigned-mcp`) exposes the signing operations — `create_envelope`, `check_envelope_status`, `list_envelopes`, `send_reminder`, `void_envelope` — against your endpoint (configurable via `KYSIGNED_ENDPOINT`, defaults to kysigned.com). Configure it in any MCP-capable agent (Claude, Cursor, …):
+**Agent Native: drive day-to-day signing from any MCP agent.** Once your instance is live, the bundled MCP server (`kysigned-mcp`) exposes the signing operations, `create_envelope`, `check_envelope_status`, `list_envelopes`, `send_reminder`, `void_envelope`, against your endpoint (configurable via `KYSIGNED_ENDPOINT`, defaults to kysigned.com). Configure it in any MCP-capable agent (Claude, Cursor, …):
 
 ```json
 {
@@ -46,23 +46,23 @@ Then ask: *"Send the attached PDF to alice@example.com for signature via kysigne
 
 ### Where does your instance live? (no domain needed on day 1)
 
-kysigned deploys on [run402](https://run402.com) — the same pattern as any other repo hosted there. You don't need to register a domain to get started:
+kysigned deploys on [run402](https://run402.com), the same pattern as any other repo hosted there. You don't need to register a domain to get started:
 
-- **Default (no domain):** your run402 project is reachable at a run402-issued subdomain like `<your-project>.run402.com`. Your dashboard, signing pages, and verify page all live there — no DNS to configure, no certificate to renew.
+- **Default (no domain):** your run402 project is reachable at a run402-issued subdomain like `<your-project>.run402.com`. Your dashboard, signing pages, and verify page all live there, no DNS to configure, no certificate to renew.
 - **Bring your own domain (later):** register a domain (e.g., `lawyerxx.com`), point its DNS at run402 per the project settings, and run402 takes over TLS + CDN + routing. Existing signing emails keep working; new envelopes use the new domain.
 - **Static information pages included:** `/faq`, `/pricing`, and `/how-it-works` are served from the same Run402 origin as the app, so the default clone path does not need a second marketing site.
 
-The repo contains no hardcoded reference to a specific domain. References to `kysigned.com` here are illustrative — they refer to the canonical Kychee-operated instance.
+The repo contains no hardcoded reference to a specific domain. References to `kysigned.com` here are illustrative, they refer to the canonical Kychee-operated instance.
 
 ### Operator configuration
 
-An operator is configured entirely through environment / secrets — **no source edits**:
+An operator is configured entirely through environment / secrets, **no source edits**:
 
 | Variable | Purpose |
 |----------|---------|
 | `KYSIGNED_ALLOWED_CREATORS` | comma-list of creator emails or exact-domain wildcards such as `you@example.com,*@example.org` allowed to send |
 | `KYSIGNED_BILLING` | `hosted` to enable the prepaid-credit money-gate; unset = allowlist-gated |
-| `KYSIGNED_UNSUBSCRIBE_MAILTO` | optional — the `List-Unsubscribe` contact on outbound mail |
+| `KYSIGNED_UNSUBSCRIBE_MAILTO` | optional, the `List-Unsubscribe` contact on outbound mail |
 
 `run402 up` generates and sets the Run402 substrate values:
 `RUN402_PROJECT_ID`, `RUN402_SERVICE_KEY`, `RUN402_ANON_KEY`,
@@ -105,7 +105,7 @@ kysigned ships with a built-in **allowlist** (`allowed_senders`) so you decide e
 
 ### Trial signature documents
 
-Want to kick the tires before sending a real document? The repo ships two deliberately-silly trial forms in [`docs/test-assets/`](docs/test-assets/): the **ACME Approval Form 42-B** (`acme-approval.pdf`) and the **ACME Anvil Liability Waiver** (`acme-anvil-waiver.pdf`), both carrying a bold **TEST DOCUMENT — NOT LEGALLY BINDING** watermark. Use either as the first document in a freshly-deployed instance to exercise the forward-to-sign flow end-to-end. Regenerate at any time:
+Want to kick the tires before sending a real document? The repo ships two deliberately-silly trial forms in [`docs/test-assets/`](docs/test-assets/): the **ACME Approval Form 42-B** (`acme-approval.pdf`) and the **ACME Anvil Liability Waiver** (`acme-anvil-waiver.pdf`), both carrying a bold **TEST DOCUMENT, NOT LEGALLY BINDING** watermark. Use either as the first document in a freshly-deployed instance to exercise the forward-to-sign flow end-to-end. Regenerate at any time:
 
 ```bash
 node docs/test-assets/build-acme-approval.mjs
@@ -116,14 +116,14 @@ node docs/test-assets/build-acme-anvil-waiver.mjs
 
 1. A signer receives an email **from `forward-to-sign@<your-domain>`** with the document attached.
 2. They **forward it back** and type **"I sign this document"** as the first line. No account, no app, no password.
-3. Their email provider's **DKIM signature** on that forward *is* the signature — only the provider can produce it, so no one else can forge a message in their name.
+3. Their email provider's **DKIM signature** on that forward *is* the signature, only the provider can produce it, so no one else can forge a message in their name.
 4. kysigned verifies the DKIM signature, confirms the forwarded attachment is **byte-identical** to what was sent, **timestamps** the forwarded email, and records the signer.
 
 When everyone has signed, every party receives one **evidence bundle**.
 
 ## The evidence bundle & verification
 
-The bundle is a single PDF holding the document, a signature page, and **each signer's original DKIM-signed email** — plus the public keys and timestamps needed to check them. It's a clean, unsigned PDF (no certificate, no seal — it opens with no warnings) carrying a printed SHA-256 fingerprint over its evidence set.
+The bundle is a single PDF holding the document, a signature page, and **each signer's original DKIM-signed email**, plus the public keys and timestamps needed to check them. It's a clean, unsigned PDF (no certificate, no seal, it opens with no warnings) carrying a printed SHA-256 fingerprint over its evidence set.
 
 Anyone can verify a bundle at `https://<your-domain>/verify` (drag-and-drop, fully client-side) or with the bundled CLI:
 
@@ -131,7 +131,7 @@ Anyone can verify a bundle at `https://<your-domain>/verify` (drag-and-drop, ful
 node bin/verify-bundle.mjs <bundle.pdf>
 ```
 
-Verification runs **entirely on the verifier's own machine** — offline, and even if your instance no longer exists. **kysigned is not part of the trust set:** the proof rests on the signers' email providers (DKIM), the public key archives, the timestamp authorities, and the math. See [docs/trust-model.md](docs/trust-model.md) for the full trust set and threat model.
+Verification runs **entirely on the verifier's own machine**, offline, and even if your instance no longer exists. **kysigned is not part of the trust set:** the proof rests on the signers' email providers (DKIM), the public key archives, the timestamp authorities, and the math. See [docs/trust-model.md](docs/trust-model.md) for the full trust set and threat model.
 
 Want to try both tools right now, with nothing signed yet? [`docs/test-assets/`](docs/test-assets/) ships ready-made samples: drop `acme-anvil-waiver-signed-bundle.pdf` (a genuine signed record) on `/verify`, and pair `acme-anvil-waiver.pdf` with that bundle or with `acme-anvil-waiver-sign-request.pdf` on `/hashcheck` to confirm an original document. The folder also holds a full set of tampered bundles that must FAIL, each breaking one named check. [docs/test-assets/README.md](docs/test-assets/README.md) lists the expected verdict for every file, and [scripts/verification-tools/](scripts/verification-tools/) replicates every check independently of the app.
 
@@ -166,13 +166,13 @@ cd frontend && npx vitest run
 # MCP
 cd mcp && npm test
 
-# Deployed e2e — set BASE_URL to a running instance
+# Deployed e2e, set BASE_URL to a running instance
 BASE_URL=https://your-instance npm run test:e2e
 ```
 
 ## Billing
 
-**Hosted (kysigned.com):** **$0.25 per envelope**, flat, up to 20 signers. Creators buy prepaid credit packs by card — **$5 buys 20 envelopes** — and credits never expire. **Stripe** is the payment processor; card details never reach kysigned. The money-gate is config-gated (`KYSIGNED_BILLING=hosted`).
+**Hosted (kysigned.com):** **$0.25 per envelope**, flat, up to 20 signers. Creators buy prepaid credit packs by card, **$5 buys 20 envelopes**, and credits never expire. **Stripe** is the payment processor; card details never reach kysigned. The money-gate is config-gated (`KYSIGNED_BILLING=hosted`).
 
 **Self-hosted (this repo):** you pay run402 for infrastructure (compute, email, DB). Gate who can create envelopes with the built-in `allowed_senders` allowlist, or wire your own billing using it as the authorization hook.
 
@@ -180,8 +180,8 @@ BASE_URL=https://your-instance npm run test:e2e
 
 kysigned runs **entirely** on [run402](https://run402.com): routed-HTTP functions for the API, email-triggered durable work for signing replies and bounces, run402's HTTP SQL for the database, and run402 mailboxes for email.
 
-All run402 I/O **defaults to the [`@run402/sdk`](https://www.npmjs.com/package/@run402/sdk)** — the SDK owns the wire translation, so the app keeps no hand-maintained `snake_case` boundary adapters. The two raw-HTTP exceptions are documented and contained: the auth helpers call run402's `/auth/v1/*` endpoints directly (passing the project anon key), and the database pool wraps run402's HTTP SQL surface. Both map run402's `lower_snake_case` wire shape at the boundary.
+All run402 I/O **defaults to the [`@run402/sdk`](https://www.npmjs.com/package/@run402/sdk)**, the SDK owns the wire translation, so the app keeps no hand-maintained `snake_case` boundary adapters. The two raw-HTTP exceptions are documented and contained: the auth helpers call run402's `/auth/v1/*` endpoints directly (passing the project anon key), and the database pool wraps run402's HTTP SQL surface. Both map run402's `lower_snake_case` wire shape at the boundary.
 
 ## License
 
-[Apache-2.0](LICENSE) — the whole repository, with no per-file exceptions. Every dependency is permissive (MIT/Apache-2.0); there is no GPL or other copyleft anywhere in the tree, so forking and commercial use are unrestricted. See [LICENSES.md](LICENSES.md) for the dependency inventory and [LEGAL.md](LEGAL.md) for signature-validity disclaimers and jurisdictional limitations.
+[Apache-2.0](LICENSE), the whole repository, with no per-file exceptions. Every dependency is permissive (MIT/Apache-2.0); there is no GPL or other copyleft anywhere in the tree, so forking and commercial use are unrestricted. See [LICENSES.md](LICENSES.md) for the dependency inventory and [LEGAL.md](LEGAL.md) for signature-validity disclaimers and jurisdictional limitations.
