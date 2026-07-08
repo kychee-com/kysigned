@@ -28,7 +28,7 @@ import { buildSignerCanonicalPdf } from '../pdf/perSignerCanonical.js';
 import { documentBlobKey } from '../pdf/documentKey.js';
 import { purgeEnvelopeBlobs } from '../pdf/blobPurge.js';
 import { listEnvelopeSignatureArtifacts } from '../db/signatureArtifacts.js';
-import { evaluateCreateGate, DEFAULT_ENVELOPE_COST_USD_MICROS } from './createGate.js';
+import { evaluateCreateGate, DEFAULT_ENVELOPE_COST_USD_MICROS, X402_CREATE_ROUTE } from './createGate.js';
 import { estimateBundleSize, sizeRejectionMessage } from './sizeGuard.js';
 import { isUploadTooLarge, uploadTooLargeMessage } from './uploadGuard.js';
 import { checkSignerAddresses } from './signerInboxGuard.js';
@@ -119,6 +119,13 @@ export interface ApiContext {
   /** F8.6: called by void/expire flows to immediately drop the original PDF. */
   deletePdf?: (key: string) => Promise<void>;
   senderGate?: SenderGateConfig;
+  /**
+   * F-30.2 — operator x402 discovery: when set, the credit-gate 402 names the
+   * always-priced create route + its price (machine-readable pointer fields)
+   * so an unfunded agent learns where to pay. Absent (forker default) → the
+   * 402 body is unchanged.
+   */
+  x402Discovery?: { priceUsdMicros: number };
   /**
    * F-3.6 — optional operator allowlist of creator identities (forker
    * org-restriction). Empty/absent = any authenticated, funded creator.
@@ -380,8 +387,15 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
   });
   if (!gate.ok) {
     // The gate verdict carries its own taxonomy code (auth_required / auth_forbidden /
-    // payment_required — F-30.3), matching its 401/403/402 status.
-    return { status: gate.status!, body: { code: gate.code!, error: gate.error } };
+    // payment_required — F-30.3), matching its 401/403/402 status. With operator
+    // x402 config, the 402 (and ONLY the 402) additionally names the paid route
+    // + price (F-30.2 discovery) — still plain JSON, never an x402 challenge.
+    const gateBody: Record<string, unknown> = { code: gate.code!, error: gate.error };
+    if (gate.status === 402 && ctx.x402Discovery) {
+      gateBody['x402_route'] = X402_CREATE_ROUTE;
+      gateBody['x402_price_usd_micros'] = ctx.x402Discovery.priceUsdMicros;
+    }
+    return { status: gate.status!, body: gateBody };
   }
 
   // Get source PDF bytes: `pdf_base64` was decoded + size-guarded above; the

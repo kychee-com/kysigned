@@ -22,6 +22,13 @@
 export const DEFAULT_ENVELOPE_COST_USD_MICROS = 250_000;
 
 /**
+ * F-30.2 — the dedicated always-priced x402 create route's path. Lives here
+ * (not in x402Create.ts) so the router, the create handler's 402 pointer, and
+ * the x402 module share one constant without an import cycle.
+ */
+export const X402_CREATE_ROUTE = '/v1/x402/envelope';
+
+/**
  * Format a USD-micros integer as a human "$0.25" string. The gate's error is
  * surfaced verbatim to the SPA, so it must read in dollars — raw micros
  * ("need 250000") confused creators (Barry QA 2026-06-16). Mirrors the

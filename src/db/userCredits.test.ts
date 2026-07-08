@@ -295,3 +295,38 @@ describe('userCredits.getRecentLedgerEntries', () => {
     assert.equal(recent[1]!.externalRef, 'cs_1');
   });
 });
+
+// ── F-13.7 / AC-135 (spec 0.39.0, 46.5) — wallet-sourced credits are fungible ──
+// The x402 rail writes `source='x402'` rows; nothing downstream may treat them
+// differently from Stripe/trial/admin credits. Pins: debit consumes them, the
+// void refund coexists with the envelope debit, and the same payment id can
+// never credit twice regardless of interleaved activity.
+describe('F-13.7 — x402 wallet-sourced credits debit/refund like any credits (AC-135)', () => {
+  it('credit(x402) → debit(envelope) → refund → duplicate x402 credit dedups', async () => {
+    const pool = createInMemoryPool();
+    const credit = await creditUser(pool, {
+      email: 'agent@x.com', amountUsdMicros: 250_000n,
+      source: 'x402', externalRef: 'pay_1', description: 'x402 payment pay_1',
+    });
+    assert.equal(credit.deduplicated, false);
+    assert.equal(await getCreditBalance(pool, 'agent@x.com'), 250_000n);
+
+    const debit = await debitUser(pool, { email: 'agent@x.com', amountUsdMicros: 250_000n, envelopeId: 'env-1' });
+    assert.equal(debit.ok, true);
+    assert.equal(await getCreditBalance(pool, 'agent@x.com'), 0n);
+
+    const refund = await creditUser(pool, {
+      email: 'agent@x.com', amountUsdMicros: 250_000n,
+      source: 'refund', externalRef: 'env-1', description: 'Refund — voided unsigned envelope env-1',
+    });
+    assert.equal(refund.deduplicated, false);
+    assert.equal(await getCreditBalance(pool, 'agent@x.com'), 250_000n);
+
+    const dup = await creditUser(pool, {
+      email: 'agent@x.com', amountUsdMicros: 250_000n,
+      source: 'x402', externalRef: 'pay_1', description: 'retry',
+    });
+    assert.equal(dup.deduplicated, true, 'the same payment id can never credit twice');
+    assert.equal(await getCreditBalance(pool, 'agent@x.com'), 250_000n);
+  });
+});

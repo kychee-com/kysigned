@@ -443,6 +443,8 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     // F-13 — the credit gate (402/debit/refund), wired only when hosted billing
     // is active; absent for a forker (allowlist-gated, no payment).
     ...(senderGate ? { senderGate } : {}),
+    // F-30.2 — with x402 config the credit-gate 402 names the paid route+price.
+    ...(x402 ? { x402Discovery: { priceUsdMicros: x402.priceUsdMicros } } : {}),
   });
 
   const authCtx = (): AuthHandlerCtx => ({

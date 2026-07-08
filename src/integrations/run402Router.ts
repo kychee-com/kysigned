@@ -19,6 +19,8 @@
  * seam. The provider webhook authenticates itself (its own signature), so it needs no
  * AuthMode here.
  */
+import { X402_CREATE_ROUTE } from '../api/createGate.js';
+
 export type AuthMode = 'public' | 'session' | 'signer-token';
 
 export interface RouteDef {
@@ -86,7 +88,7 @@ export const API_ROUTES: RouteDef[] = [
   // reaches the fn unpaid (the gateway 402-challenges first); reached through
   // the /v1/* catch-all on an unpriced deployment, the handler refuses cleanly
   // (fork-inert without operator x402 config).
-  { method: 'POST', pattern: '/v1/x402/envelope', name: 'x402CreateEnvelope', auth: 'public' },
+  { method: 'POST', pattern: X402_CREATE_ROUTE, name: 'x402CreateEnvelope', auth: 'public' },
 
   // NOTE: /v1/credits/* (balance, checkout) is NOT a public route — it's
   // kysigned.com-proprietary billing, served by the operator's private billing

@@ -1593,3 +1593,67 @@ describe('handleCreateEnvelope — send-failure resilience (crash + ordering)', 
     assert.ok(order.indexOf('debit') > order.indexOf('send:bad@example.com'), 'debit comes after the signer send attempt');
   });
 });
+
+// ── F-30.2 (spec 0.39.0) — the credit-gate 402 discovery pointer (46.4) ─────
+// With operator x402 config present the standard create's 402 NAMES the paid
+// route + price so an unfunded agent learns where to pay; without config the
+// body is exactly today's (fork regression). The pointer is plain JSON — the
+// standard route never emits an x402 protocol challenge (AC-135).
+describe('credit-gate 402 discovery pointer (F-30.2 / AC-134 / AC-135)', () => {
+  const brokeCtx = (db: ReturnType<typeof createMockDb>, email: ReturnType<typeof createMockEmailProvider>, extra: Record<string, unknown> = {}) => ({
+    pool: db.pool,
+    emailProvider: email,
+    baseUrl: 'https://kysigned.com',
+    senderIdentity: 'broke@x.com',
+    senderGate: { getCreditBalance: async () => 0 },
+    ...extra,
+  });
+  const POINTER_BODY = { document_name: 'NDA', pdf_base64: TEST_FIXTURE_PDF_B64, signers: [{ email: 'a@b.com', name: 'A' }] };
+
+  it('with x402 config: 402 carries x402_route + x402_price_usd_micros alongside the unchanged code/message', async () => {
+    const db = createMockDb();
+    const email = createMockEmailProvider();
+    const r = await handleCreateEnvelope(
+      brokeCtx(db, email, { x402Discovery: { priceUsdMicros: 250_000 } }) as never,
+      POINTER_BODY,
+    );
+    assert.equal(r.status, 402);
+    const body = r.body as Record<string, unknown>;
+    assert.equal(body.code, 'payment_required');
+    assert.match(String(body.error), /Insufficient credit/);
+    assert.equal(body.x402_route, '/v1/x402/envelope');
+    assert.equal(body.x402_price_usd_micros, 250_000);
+  });
+
+  it('WITHOUT config the 402 body is byte-identical to today (code + error only — fork regression)', async () => {
+    const db = createMockDb();
+    const email = createMockEmailProvider();
+    const r = await handleCreateEnvelope(brokeCtx(db, email) as never, POINTER_BODY);
+    assert.equal(r.status, 402);
+    assert.deepEqual(Object.keys(r.body as object).sort(), ['code', 'error']);
+  });
+
+  it('the pointer rides ONLY the 402 — a 403 allowlist miss with config on carries no x402 fields', async () => {
+    const db = createMockDb();
+    const email = createMockEmailProvider();
+    const r = await handleCreateEnvelope(
+      brokeCtx(db, email, {
+        allowedCreators: ['someoneelse@x.com'],
+        x402Discovery: { priceUsdMicros: 250_000 },
+      }) as never,
+      POINTER_BODY,
+    );
+    assert.equal(r.status, 403);
+    assert.equal('x402_route' in (r.body as object), false);
+  });
+
+  it('the standard 402 is never an x402 protocol challenge — no `accepts` payload, config on or off (AC-135)', async () => {
+    const db = createMockDb();
+    const email = createMockEmailProvider();
+    for (const extra of [{}, { x402Discovery: { priceUsdMicros: 250_000 } }]) {
+      const r = await handleCreateEnvelope(brokeCtx(db, email, extra) as never, POINTER_BODY);
+      assert.equal(r.status, 402);
+      assert.equal('accepts' in (r.body as object), false, 'plain JSON 402, not an x402 challenge');
+    }
+  });
+});
