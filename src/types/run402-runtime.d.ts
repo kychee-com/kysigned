@@ -4,19 +4,19 @@
  * tiny surface kysigned consumes so:
  *
  *   - tsc (`npm run build`) resolves the dynamic `import('@run402/functions')`
- *     / `import('@run402/sdk')` in the function entries WITHOUT either package
- *     being installed locally, and
- *   - the public, forkable template carries NO `@run402/*` entry in its
- *     `dependencies` (those releases are too fresh for the local npmrc age-gate
- *     to `npm install` cleanly, and `@run402/functions` is auto-bundled into the
- *     deployed function by the run402 build anyway).
+ *     in the function entries WITHOUT the package being installed locally
+ *     (`@run402/functions` is runtime-provided: the run402 platform injects it
+ *     into the deployed function; it is never in `dependencies`), and
+ *   - the `@run402/sdk` surface stays declared even where the installed
+ *     package's own types are absent (fresh checkouts hitting the npmrc
+ *     release-age gate). The SDK itself IS a normal `dependencies` entry.
  *
  * At deploy, `scripts/deploy.mjs` bundles the entries with esbuild, which
  * resolves the REAL packages (the human installs them with `--min-release-age=0`
  * per the documented recipe). Mirrors the `mailauth.d.ts` ambient-shim pattern.
  *
  * Keep these in lock-step with the real package signatures
- * (`@run402/functions@3.5.0`, `@run402/sdk@2.47.1`). Add to the shim only when a
+ * (`@run402/functions@3.7.0`, `@run402/sdk@4.2.0`). Add to the shim only when a
  * non-test module imports a new symbol.
  */
 declare module '@run402/functions' {
@@ -75,6 +75,30 @@ declare module '@run402/functions' {
   export function retryableFunctionRunError(message: string): Error;
   /** Throw to signal a terminal failure — run402 does NOT retry. */
   export function permanentFunctionRunError(message: string): Error;
+
+  // ── F-30.2 tenant x402 payment context (priced routed function routes) ─────
+  /** Gateway-confirmed tenant x402 payment facts, forwarded to the function
+   *  after the gateway verified + settled a priced route payment. Mirrors
+   *  `@run402/functions@3.7.0` `RoutedHttpPaymentContextV1`. */
+  export interface RoutedHttpPaymentContextV1 {
+    scheme: 'x402';
+    paymentId: string;
+    amountUsdMicros: number;
+    payer: string | null;
+    network: string;
+    asset: string | null;
+    payTo: string;
+    transaction: string | null;
+    settledAt: string;
+  }
+  /** Extract the confirmed payment context from a routed request (the runtime
+   *  hands user code a Web `Request`; the context rides the platform-owned
+   *  `x-run402-payment-*` headers). Returns `null` on unpriced routes or when
+   *  any required field is absent/malformed (strict: positive safe-integer
+   *  amount, scheme `x402`, non-empty id/network/payTo/settledAt). */
+  export function getRoutedPaymentContext(
+    source: Request | { headers: { get(name: string): string | null } },
+  ): RoutedHttpPaymentContextV1 | null;
 }
 
 declare module '@run402/sdk' {
