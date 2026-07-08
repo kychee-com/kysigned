@@ -22,7 +22,7 @@ let _verifyWebhook: ((headers: Headers, raw: string, secret: string) => { valid:
 /** Build (once) the wired AppDeps from env + the real run402 runtime. */
 export async function getRuntimeDeps(): Promise<AppDeps> {
   if (_appDeps) return _appDeps;
-  const { adminDb, functions } = await import('@run402/functions');
+  const { adminDb, functions, getRoutedPaymentContext } = await import('@run402/functions');
   const { run402 } = await import('@run402/sdk');
   const env = process.env as Record<string, string | undefined>;
 
@@ -60,7 +60,16 @@ export async function getRuntimeDeps(): Promise<AppDeps> {
     return { runId: handle.run_id, deduplicated: handle.deduplicated ?? false };
   };
 
-  _appDeps = buildAppDeps(env, { adminDb: adminDb(), sdk, createRun });
+  _appDeps = buildAppDeps(env, {
+    adminDb: adminDb(),
+    sdk,
+    createRun,
+    // F-30.2 — the platform's payment-context parser; optional so a runtime
+    // predating tenant x402 still boots (the x402 route then fails closed).
+    ...(typeof getRoutedPaymentContext === 'function'
+      ? { readPaymentContext: (req: Request) => getRoutedPaymentContext(req) }
+      : {}),
+  });
   return _appDeps;
 }
 

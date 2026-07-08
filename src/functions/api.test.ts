@@ -847,3 +847,52 @@ describe('handleRequest — pdf_url SSRF guard (F-16.7 / AC-140)', () => {
     }
   });
 });
+
+// ── F-30.2 — the x402 always-priced create route (spec 0.39.0 / AC-134) ─────
+describe('handleRequest — x402 create dispatch gates (F-30.2)', () => {
+  const SETTLED = {
+    scheme: 'x402' as const,
+    paymentId: 'pay_disp1',
+    amountUsdMicros: 250_000,
+    payer: null,
+    network: 'base',
+    asset: null,
+    payTo: '0x8d671cd12ecf69e0b049a6b55c5b318097b4bc35',
+    transaction: null,
+    settledAt: '2026-07-08T10:00:00.000Z',
+  };
+
+  it('operator has NO x402 config → 404 payment_x402_not_enabled, even with a settled context (fork-inert)', async () => {
+    const res = await handleRequest(
+      req('POST', '/v1/x402/envelope', { headers: { 'content-type': 'application/json' }, body: '{}' }),
+      makeDeps({ readPaymentContext: () => SETTLED } as never),
+    );
+    assert.equal(res.status, 404);
+    assert.equal(((await res.json()) as { code: string }).code, 'payment_x402_not_enabled');
+  });
+
+  it('config on but NO settled context reached the fn → 503 payment_x402_unavailable (fail-closed)', async () => {
+    const res = await handleRequest(
+      req('POST', '/v1/x402/envelope', { headers: { 'content-type': 'application/json' }, body: '{}' }),
+      makeDeps({ x402: { priceUsdMicros: 250_000 }, readPaymentContext: () => null } as never),
+    );
+    assert.equal(res.status, 503);
+    assert.equal(((await res.json()) as { code: string }).code, 'payment_x402_unavailable');
+  });
+
+  it('a settled context dispatches with NO session/key — an Authorization header is ignored, orchestration is reached', async () => {
+    // Body lacks creator_email → the orchestration's 400 proves the request
+    // passed the auth-free dispatch (no 401/403 despite the garbage bearer)
+    // and reached the x402 handler. apiContext stays a thrower: that path
+    // must not build a create ctx before validation.
+    const res = await handleRequest(
+      req('POST', '/v1/x402/envelope', {
+        headers: { 'content-type': 'application/json', authorization: 'Bearer ksk_garbage' },
+        body: '{}',
+      }),
+      makeDeps({ x402: { priceUsdMicros: 250_000 }, readPaymentContext: () => SETTLED } as never),
+    );
+    assert.equal(res.status, 400);
+    assert.equal(((await res.json()) as { code: string }).code, 'validation_creator_email');
+  });
+});

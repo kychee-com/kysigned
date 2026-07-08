@@ -79,6 +79,15 @@ export const API_ROUTES: RouteDef[] = [
   { method: 'GET', pattern: '/v1/envelope/:id/pdf', name: 'ownerPdf', auth: 'session' },
   { method: 'GET', pattern: '/v1/documents', name: 'listDocuments', auth: 'session' },
 
+  // ── F-30.2 — the dedicated always-priced x402 create (spec 0.39.0) ────────
+  // PUBLIC at the router: the gateway settles the payment BEFORE invoking the
+  // fn and the settled context IS the authorization (no session/key/CSRF). On
+  // a deployment whose operator declared the priced route, this path never
+  // reaches the fn unpaid (the gateway 402-challenges first); reached through
+  // the /v1/* catch-all on an unpriced deployment, the handler refuses cleanly
+  // (fork-inert without operator x402 config).
+  { method: 'POST', pattern: '/v1/x402/envelope', name: 'x402CreateEnvelope', auth: 'public' },
+
   // NOTE: /v1/credits/* (balance, checkout) is NOT a public route — it's
   // kysigned.com-proprietary billing, served by the operator's private billing
   // function. The forker app has no service-to-user payment.

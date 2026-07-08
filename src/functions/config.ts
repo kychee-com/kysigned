@@ -46,6 +46,8 @@ import type { ReminderSendCtx } from '../api/envelope.js';
 import type { ExpirationStorage } from '../api/envelope.js';
 import type { TimestampProvider } from '../timestamp/contract.js';
 import type { CreateRun } from './runs.js';
+import type { X402Config } from '../api/x402Create.js';
+import type { RoutedHttpPaymentContextV1 } from '@run402/functions';
 
 import { Buffer } from 'node:buffer';
 import { createHttpDbPool, type Run402AdminDb } from '../integrations/run402Db.js';
@@ -85,6 +87,14 @@ export interface Run402Runtime {
    * the runtime package + an active run402 context); the pure layer only calls it.
    */
   createRun: CreateRun;
+  /**
+   * F-30.2 — `getRoutedPaymentContext` from `@run402/functions`: parse the
+   * gateway-settled tenant x402 payment context off a routed request (the
+   * platform-owned `x-run402-payment-*` headers; clients cannot supply them —
+   * the gateway strips inbound `x-run402-*`). Optional: absent on runtimes
+   * predating tenant x402.
+   */
+  readPaymentContext?: (req: Request) => RoutedHttpPaymentContextV1 | null;
 }
 
 // ── Env ────────────────────────────────────────────────────────────────────
@@ -141,6 +151,20 @@ export interface AppEnv {
   KYSIGNED_BILLING?: string;
   /** Flat per-envelope cost override (USD micros). Default 250_000 = $0.25 (F-13.1). */
   KYSIGNED_ENVELOPE_COST_USD_MICROS?: string;
+  /**
+   * F-30.2 `[service]` — the x402 create route's fixed price (USD micros).
+   * Presence (a positive integer) ENABLES the dedicated always-priced create
+   * (`POST /v1/x402/envelope`); a forker leaves it unset → the route answers
+   * `payment_x402_not_enabled` (fork-inert, F-13 posture). Must equal the
+   * priced-route `pricing.amount_usd_micros` the operator deploy declares.
+   */
+  KYSIGNED_X402_PRICE_USD_MICROS?: string;
+  /**
+   * F-30.2 `[service]` — optional expected payout wallet. When set, a settled
+   * context whose `payTo` differs fails closed (`payment_x402_mismatch`) —
+   * belt-and-suspenders against payout drift.
+   */
+  KYSIGNED_X402_PAY_TO?: string;
   /**
    * F-6.2a — `'true'` enforces the SPF/DMARC anti-spoof REJECTION on a hard FAIL.
    * Default (unset) = record-only: the SES verdicts are still persisted (AC-62),
@@ -254,6 +278,10 @@ export interface AppDeps {
   fetchRawMime: (messageId: string) => Promise<string | null>;
   /** F-29 — create a run402 durable function run (background work, cron-less). */
   createRun: CreateRun;
+  /** F-30.2 — operator x402 config; presence enables the always-priced create route. */
+  x402?: X402Config;
+  /** F-30.2 — parse the gateway-settled payment context off a routed request (runtime-injected). */
+  readPaymentContext?: (req: Request) => RoutedHttpPaymentContextV1 | null;
 
   // per-request / per-sweep ctx factories
   apiContext: (creatorEmail: string) => ApiContext;
@@ -349,6 +377,21 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     ? parseInt(env.KYSIGNED_DELIVERY_BACKSTOP_HOURS, 10)
     : 24;
   const deliveryBackstop = `${Number.isFinite(backstopHours) && backstopHours > 0 ? backstopHours : 24}h`;
+
+  // F-30.2 `[service]` — the x402 always-priced create. A positive price enables
+  // the route; anything else leaves it inert (forker default, F-13 posture). The
+  // payment-context parser rides the injected runtime (absent on pre-tenant-x402
+  // runtimes → the route fails closed `payment_x402_unavailable`).
+  const x402Price = env.KYSIGNED_X402_PRICE_USD_MICROS
+    ? parseInt(env.KYSIGNED_X402_PRICE_USD_MICROS, 10)
+    : 0;
+  const x402: X402Config | undefined =
+    Number.isSafeInteger(x402Price) && x402Price > 0
+      ? {
+          priceUsdMicros: x402Price,
+          ...(env.KYSIGNED_X402_PAY_TO ? { expectedPayTo: env.KYSIGNED_X402_PAY_TO } : {}),
+        }
+      : undefined;
 
   // F-18.1 — session lifetime (days). Set by kysigned.com to 30; a forker leaving
   // it unset falls to the session.ts default. The upstream run402 refresh-token
@@ -544,6 +587,8 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     deliveryBackstop,
     ...(testResetSecret ? { testResetSecret } : {}),
     ...(testResetPattern ? { testResetPattern } : {}),
+    ...(x402 ? { x402 } : {}),
+    ...(runtime.readPaymentContext ? { readPaymentContext: runtime.readPaymentContext } : {}),
     apiContext,
     authCtx,
     adminCtx,

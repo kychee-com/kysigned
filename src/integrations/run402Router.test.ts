@@ -147,3 +147,16 @@ describe('matchRoute', () => {
     }
   });
 });
+
+describe('matchRoute — F-30.2 x402 create route (spec 0.39.0)', () => {
+  it('maps POST /v1/x402/envelope to x402CreateEnvelope as a PUBLIC route (payment is the authorization)', () => {
+    const m = matchRoute('POST', '/v1/x402/envelope');
+    assert.equal(m?.name, 'x402CreateEnvelope');
+    assert.equal(m?.auth, 'public');
+  });
+  it('only POST exists on the x402 path — no sibling actions ride the paid route', () => {
+    assert.equal(matchRoute('GET', '/v1/x402/envelope'), null);
+    assert.equal(matchRoute('DELETE', '/v1/x402/envelope'), null);
+    assert.equal(matchRoute('POST', '/v1/x402/envelope/abc'), null);
+  });
+});

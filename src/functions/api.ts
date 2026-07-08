@@ -37,6 +37,8 @@ import { csrfOk, resolveSession } from '../api/auth/session.js';
 import { resolveApiKey } from '../api/auth/apiKeyAuth.js';
 import { handleMintApiKey, handleListApiKeys, handleRevokeApiKey } from '../api/apiKeys.js';
 import { withCreateIdempotency } from '../api/idempotentCreate.js';
+import { handleX402CreateEnvelope, defaultX402Seams } from '../api/x402Create.js';
+import { buildHostedSenderGate } from '../api/billingGate.js';
 import { handleHealth } from '../api/health.js';
 import {
   handleAuthMagicLink,
@@ -291,6 +293,29 @@ export async function handleRequest(req: Request, deps: RequestDeps): Promise<Re
     case 'passkeyDelete': {
       const r = await handlePasskeyDelete(passkeyCtx(deps), actorSessionId!, params.id!);
       if (r.status === 204) return new Response(null, { status: 204 });
+      return json(r.body, r.status);
+    }
+
+    // ── F-30.2 — the x402 always-priced create (public: payment IS the auth) ──
+    case 'x402CreateEnvelope': {
+      // Fork-inert: without operator x402 config the path (reached through the
+      // /v1/* catch-all on unpriced deployments) answers a clean coded 404.
+      if (!deps.x402) {
+        return json({ error: 'x402 payments are not enabled on this instance', code: 'payment_x402_not_enabled' }, 404);
+      }
+      const cfg = deps.x402;
+      // The gateway-settled context (platform-owned headers; clients stripped
+      // at the gateway). No session/key/CSRF is consulted on this route.
+      const payment = deps.readPaymentContext ? deps.readPaymentContext(req) : null;
+      const body = await readJsonBody(req);
+      // The paid create ALWAYS runs credit-backed at the route's price (DD-29):
+      // the settled payment credits the ledger, the create debits it — even on
+      // a fork whose global billing mode is unset.
+      const seams = defaultX402Seams(deps.pool, cfg, (creatorEmail) => ({
+        ...deps.apiContext(creatorEmail),
+        senderGate: buildHostedSenderGate(deps.pool, cfg.priceUsdMicros),
+      }));
+      const r = await handleX402CreateEnvelope(cfg, payment, seams, body as Record<string, unknown>);
       return json(r.body, r.status);
     }
 
