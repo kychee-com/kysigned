@@ -53,6 +53,9 @@ const PUBLIC_ENDPOINTS = [
   'POST /v1/api-keys',
   'GET /v1/api-keys',
   'DELETE /v1/api-keys/:id',
+  // F-30.2 — the always-priced x402 create (operator-dependent: kysigned.com on;
+  // a fork without x402 config answers payment_x402_not_enabled).
+  'POST /v1/x402/envelope',
 ];
 
 /**

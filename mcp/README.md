@@ -166,6 +166,8 @@ Set `KYSIGNED_AUTHORIZATION` to a creator **API key** (`ksk_…`), minted in the
 
 When pointed at a self-hosted instance with `senderGate: { strategy: 'allowlist' }`, the operator must additionally pre-allowlist the creator email. See the [kysigned README](https://github.com/kychee-com/kysigned#sender-access-control) for the full enforcement model.
 
+**Wallet payment (x402), no key at all:** on instances that enable it (kysigned.com does), an x402-capable agent can skip keys and accounts entirely and pay the flat per-envelope price per call at `POST /v1/x402/envelope` (plain HTTP — the MCP tools themselves stay key-authenticated). The flow — x402 402 challenge, pay-and-retry, `creator_email`, exactly-once semantics — is documented in `https://<instance>/llms.txt` ("Machine payment (x402)") and `/openapi.json`.
+
 Every error the tools surface carries a stable machine-readable `code` alongside the message (`auth_*`, `payment_*`, `validation_*`, `state_*`, `idempotency_*`, …) — the full surface is documented as OpenAPI at `https://<instance>/openapi.json` and in `https://<instance>/llms.txt`.
 
 ## Source

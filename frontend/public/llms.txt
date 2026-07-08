@@ -66,12 +66,43 @@ account, in one of two ways:
   `ksk_…` API key). See "Agent tools (MCP)" below.
 - Signer endpoints (`/v1/sign/:id/:token/info`, `/v1/envelope/:id/:token/pdf`) use the per-signer
   token from the signing-request email — no account needed.
+- **Wallet payment (x402) — no account at all.** Where the operator has enabled it (kysigned.com
+  has), `POST /v1/x402/envelope` needs NO key and NO session: the payment is the authorization. See
+  "Machine payment (x402)" below.
+
+## Machine payment (x402)
+
+Operator-dependent: enabled on kysigned.com; a fork without x402 config answers
+`404 { "code": "payment_x402_not_enabled" }` on this route.
+
+An agent holding a wallet can create an envelope with no account, no card, and no API key by paying
+the flat per-envelope price per call:
+
+1. `POST /v1/x402/envelope` with the standard create body PLUS `creator_email` (required — the
+   deliverable address the creator record, creation/completion mail, and the evidence bundle attach
+   to). An unpaid call is answered by the platform with a standard **x402 402 challenge** (payment
+   requirements: the per-envelope price in USD micros, the operator's payout wallet, mainnet
+   networks) — the x402 protocol shape, not this API's `{error, code}` envelope.
+2. Pay with any x402-capable client (sign the payment authorization per the challenge) and retry
+   with the `X-PAYMENT` header. The platform verifies and settles BEFORE the endpoint runs.
+3. The settled payment credits the creator ledger EXACTLY ONCE (keyed on the stable payment id) and
+   the create debits it → `201` with the same response shape as `POST /v1/envelope`. Retrying with
+   the same settled payment replays the SAME 201 — one payment, one envelope, no double-charge.
+
+Discovery: an UNFUNDED `POST /v1/envelope` returns
+`402 { "code": "payment_required", "x402_route": "/v1/x402/envelope", "x402_price_usd_micros": <price> }`
+so you can fall over to the paid route programmatically. Dashboard continuity: sign in later with
+the `creator_email` you supplied (magic link / passkey) and the envelope + its wallet-sourced ledger
+entries are in the dashboard like any creator's. The MCP itself stays key-authenticated — the x402
+route is plain HTTP for x402 clients.
 
 ## Machine-readable errors
 
 Every `/v1` error response is `{ "error": "<human message>", "code": "<stable code>" }`. Codes are a
-fixed taxonomy mapped to the status contract: `auth_*` (401/403), `csrf_*` (403), `payment_required`
-(402), `validation_*` (400), `state_*` (409 lifecycle conflicts, e.g. editing a sealed envelope),
+fixed taxonomy mapped to the status contract: `auth_*` (401/403), `csrf_*` (403), `payment_*`
+(the credit-gate `payment_required` 402; the x402 route's `payment_x402_not_enabled` 404 /
+`payment_x402_mismatch` 409 / `payment_x402_unavailable` 503), `validation_*` (400), `state_*`
+(409 lifecycle conflicts, e.g. editing a sealed envelope),
 `not_found` (404), `rate_size_*` (413/400 size guards), `idempotency_*` (Idempotency-Key semantics),
 `internal_*` (5xx). Branch on `code`, display `error`.
 
@@ -156,6 +187,7 @@ reference verifier in the public repo.
 | `POST /v1/auth/magic-link` | none | Email the creator a one-time sign-in link. |
 | `POST /v1/auth/token` | none | Exchange a magic-link (or passkey) for a creator session. |
 | `POST /v1/envelope` | creator | Create an envelope from a PDF + signers; emails each request. |
+| `POST /v1/x402/envelope` | x402 payment | Machine-paid create: pay per envelope with a wallet, no account (operator-dependent). |
 | `GET /v1/envelope/:id` | creator | Envelope status + per-signer state and signed times. |
 | `POST /v1/envelope/:id/remind` | creator | Remind all pending signers. |
 | `POST /v1/envelope/:id/void` | creator | Cancel an active envelope and notify signers. |
