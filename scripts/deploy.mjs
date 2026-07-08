@@ -140,6 +140,12 @@ export async function buildForkerReleaseSpec({
   bundle = bundleRun402Function,
   loadSite = defaultLoadSite,
   loadMigrationSet = loadMigrations,
+  // F-30.2 — optional x402 machine payment: a positive price (USD micros)
+  // declares the always-priced create route below AND should match the fn's
+  // KYSIGNED_X402_PRICE_USD_MICROS secret (one value drives both). Requires a
+  // resolvable org payout wallet on run402 (else the apply fails
+  // PAYOUT_WALLET_REQUIRED). Default 0 → no priced route, fully inert.
+  x402PriceUsdMicros = 0,
 } = {}) {
   const source = await bundle(API_FN);
   const functionsReplace = {
@@ -153,8 +159,22 @@ export async function buildForkerReleaseSpec({
     secrets: { require: ['RUN402_SERVICE_KEY', 'RUN402_ANON_KEY'] },
     functions: { replace: functionsReplace },
     // Every /v1/* request → the api function; every other path falls through to the
-    // static SPA (index.html SPA-fallback) run402 serves after a route miss.
-    routes: { replace: [{ pattern: '/v1/*', target: { type: 'function', name: API_FN.name } }] },
+    // static SPA (index.html SPA-fallback) run402 serves after a route miss. The
+    // optional x402 create is an EXACT route, so it precedes the catch-all
+    // (run402 precedence: exact > longest-prefix > catch-all).
+    routes: {
+      replace: [
+        ...(Number.isFinite(x402PriceUsdMicros) && x402PriceUsdMicros > 0
+          ? [{
+              pattern: '/v1/x402/envelope',
+              methods: ['POST'],
+              target: { type: 'function', name: API_FN.name },
+              pricing: { mode: 'always', amount_usd_micros: x402PriceUsdMicros, pay_to: 'org_default_payout' },
+            }]
+          : []),
+        { pattern: '/v1/*', target: { type: 'function', name: API_FN.name } },
+      ],
+    },
   };
   const site = await loadSite();
   if (site) spec.site = { replace: site };
@@ -259,6 +279,9 @@ async function stripMailboxFooters() {
 async function main() {
   const dryRun = process.argv.includes('--dry-run');
   const projectId = process.env.RUN402_PROJECT_ID;
+  // F-30.2 — optional x402 opt-in: the same env that enables the app's handler
+  // + 402 pointer also prices the route (one value drives both). Unset → 0 → inert.
+  const x402PriceUsdMicros = Number.parseInt(process.env.KYSIGNED_X402_PRICE_USD_MICROS ?? '', 10) || 0;
 
   if (dryRun) {
     console.log('DRY RUN — bundling the api function + assembling the release spec (nothing is applied)…');
@@ -267,6 +290,7 @@ async function main() {
       signingMailboxId: 'mbx_DRYRUN',
       // The SPA file set isn't needed to prove the function/trigger/migration shape.
       loadSite: async () => null,
+      x402PriceUsdMicros,
     });
     assertForkerSpecShape(spec);
     const fn = spec.functions.replace[API_FN.name];
@@ -294,7 +318,7 @@ async function main() {
   }
 
   console.log(`Bundling the api function + assembling the release for project ${projectId}…`);
-  const spec = await buildForkerReleaseSpec({ projectId, signingMailboxId });
+  const spec = await buildForkerReleaseSpec({ projectId, signingMailboxId, x402PriceUsdMicros });
   assertForkerSpecShape(spec);
   const fn = spec.functions.replace[API_FN.name];
   console.log(`  • ${API_FN.name} — ${(fn.source.length / 1024).toFixed(0)} KiB; triggers: ${fn.triggers.map((t) => `${t.id}(${t.type})`).join(', ')}`);

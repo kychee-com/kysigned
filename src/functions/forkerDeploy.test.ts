@@ -75,3 +75,45 @@ describe('#114 — forker deploy.mjs assembles the F-29.6 cron-less shape', () =
     assert.throws(() => assertForkerSpecShape(stale), /expected exactly 1 function|cron-less violated/i);
   });
 });
+
+// ── F-30.2 (spec 0.39.0 / 46.6) — optional x402 priced route, forker parity ──
+// The mechanism is [both]: a forker opts in with KYSIGNED_X402_PRICE_USD_MICROS
+// (and needs an org payout wallet on run402); the default emits NO pricing
+// anywhere (fork-inert, F-13 posture).
+describe('F-30.2 — optional x402 priced route in the forker release spec', () => {
+  const base = {
+    projectId: 'prj_test',
+    signingMailboxId: 'mbx_test',
+    bundle: fakeBundle,
+    loadSite: fakeSite,
+    loadMigrationSet: fakeMigrations,
+  };
+
+  it('default (no x402 config) → routes are exactly the /v1/* catch-all', async () => {
+    const spec = await buildForkerReleaseSpec({ ...base });
+    const routes = spec.routes.replace as Array<{ pattern: string }>;
+    assert.deepEqual(routes.map((r) => r.pattern), ['/v1/*']);
+    assert.equal(JSON.stringify(spec).includes('"pricing"'), false, 'no pricing object anywhere');
+  });
+
+  it('x402PriceUsdMicros > 0 → the exact POST priced route precedes the catch-all (mode:always, org_default_payout)', async () => {
+    const spec = await buildForkerReleaseSpec({ ...base, x402PriceUsdMicros: 250_000 });
+    assert.ok(assertForkerSpecShape(spec), 'the cron-less invariant still holds with the priced route');
+    const routes = spec.routes.replace as Array<Record<string, unknown>>;
+    assert.deepEqual(routes[0], {
+      pattern: '/v1/x402/envelope',
+      methods: ['POST'],
+      target: { type: 'function', name: 'kysigned-api' },
+      pricing: { mode: 'always', amount_usd_micros: 250_000, pay_to: 'org_default_payout' },
+    });
+    assert.equal((routes[routes.length - 1] as { pattern: string }).pattern, '/v1/*', 'catch-all stays last');
+  });
+
+  it('a non-positive price emits no pricing (0, negative, NaN)', async () => {
+    for (const bad of [0, -5, Number.NaN]) {
+      const spec = await buildForkerReleaseSpec({ ...base, x402PriceUsdMicros: bad });
+      assert.equal(JSON.stringify(spec).includes('"pricing"'), false, `price=${bad}`);
+      assert.equal((spec.routes.replace as Array<{ pattern: string }>).length, 1);
+    }
+  });
+});
