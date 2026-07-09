@@ -273,7 +273,9 @@ server.registerTool(
           'Your spending-intent key: a retry with the same key replays the same envelope without paying twice. Omitted → one is generated and returned as spending_intent_key.',
         ),
     },
-    annotations: { title: 'Create envelope (wallet-paid)', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    // destructiveHint: paying real funds is irreversible — hosts gate
+    // confirmation on destructive tools, which is exactly what AC-146 wants.
+    annotations: { title: 'Create envelope (wallet-paid)', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
   },
   async (params) => {
     try {

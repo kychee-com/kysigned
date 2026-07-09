@@ -351,3 +351,47 @@ describe('create_envelope_x402 — AC-144/AC-145 over the tool surface, NO auth 
     }
   });
 });
+
+// ── 49.5 — spend disclosure a host can gate on + schema-level custody (AC-146) ─
+describe('spend disclosure + custody hard lines (AC-146)', () => {
+  it('create_envelope_x402 is annotated so hosts can demand confirmation: destructiveHint (irreversible real-money spend) + wallet-paid title', async () => {
+    const { tools } = await client.listTools();
+    const t = tools.find((x) => x.name === 'create_envelope_x402')!;
+    assert.equal(t.annotations?.readOnlyHint, false);
+    assert.equal(t.annotations?.destructiveHint, true, 'paying real funds is gate-worthy — hosts confirm destructive tools');
+    assert.match(String(t.annotations?.title), /wallet-paid/i);
+    assert.match(String(t.description), /SPENDS REAL FUNDS/);
+    assert.match(String(t.description), /never a tool argument|never appears in output/i);
+  });
+
+  it('wallet_status stays read-only and never gate-worthy', async () => {
+    const { tools } = await client.listTools();
+    const t = tools.find((x) => x.name === 'wallet_status')!;
+    assert.equal(t.annotations?.readOnlyHint, true);
+    assert.notEqual(t.annotations?.destructiveHint, true);
+  });
+
+  it('no wallet-tool schema accepts key material anywhere (the only *key* input is the spending-intent idempotency_key)', async () => {
+    const { tools } = await client.listTools();
+    const names: string[] = [];
+    const walk = (schema: unknown, path: string): void => {
+      if (!schema || typeof schema !== 'object') return;
+      const props = (schema as { properties?: Record<string, unknown> }).properties;
+      if (props) {
+        for (const [name, sub] of Object.entries(props)) {
+          names.push(name);
+          walk(sub, `${path}.${name}`);
+        }
+      }
+      const items = (schema as { items?: unknown }).items;
+      if (items) walk(items, `${path}[]`);
+    };
+    for (const toolName of ['wallet_status', 'create_envelope_x402']) {
+      walk(tools.find((x) => x.name === toolName)!.inputSchema, toolName);
+    }
+    for (const n of names) {
+      assert.doesNotMatch(n, /private|secret|mnemonic|seed|wallet_key/i, `suspicious schema property: ${n}`);
+      if (/key/i.test(n)) assert.equal(n, 'idempotency_key', `unexpected key-like property: ${n}`);
+    }
+  });
+});
