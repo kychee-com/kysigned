@@ -104,7 +104,7 @@ jobs:
 
       - name: Test
         working-directory: mcp
-        run: node --test --import tsx src/index.test.ts
+        run: node --test --import tsx src/*.test.ts
 
       - name: Bump version
         id: bump
