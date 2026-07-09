@@ -107,9 +107,11 @@ the banked credit covers it, no new payment.
 `amount_usd_micros`, `asset`, `pay_to`, `settlement_reference` (tx hash), `settled_at` — so you can
 reconcile the spend with the envelope. A `tracking` block notes that `status_url` needs creator auth.
 
-**Insufficient funds.** If a paid retry returns `402 { "code": "TENANT_X402_PAYMENT_INVALID", ...
-"execution reverted" }`, your wallet lacks enough USDC on Base mainnet for the quoted price — fund it
-and retry. (This error is emitted by the run402 gateway before this endpoint runs.)
+**Insufficient funds.** If a paid retry returns `402 { "code": "payment_insufficient_funds", ... }`,
+your wallet lacks enough USDC on Base mainnet for the quoted price. Its `next_actions` carries
+`{ "type": "fund_wallet", "network", "asset", "minimum_amount_usd_micros" }` — fund the wallet
+accordingly and retry. (Emitted by the run402 gateway before this endpoint runs; the raw facilitator
+reason and the required vs available amounts are under `details`.)
 
 Discovery: an UNFUNDED `POST /v1/envelope` returns
 `402 { "code": "payment_required", "x402_route": "/v1/x402/envelope", "x402_price_usd_micros": <price> }`
