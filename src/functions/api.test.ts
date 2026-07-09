@@ -575,18 +575,19 @@ describe('handleRequest — bearer API keys (F-30.1 / AC-131)', () => {
     );
   });
 
-  it('an unsafe (POST) route with a valid bearer key and NO CSRF header is CSRF-EXEMPT (no 403)', async () => {
+  it('an unsafe (POST) route with a valid bearer key and NO CSRF header is CSRF-EXEMPT, and an unexpected dispatch throw becomes a coded 500 (TR-018 / AC-137)', async () => {
     const { pool } = keyPool();
     // remindEnvelope hits reminderSendCtx (a thrower in makeDeps) AFTER the gate —
-    // reaching the thrower proves the gate passed; a 401/403 means it did not.
-    await assert.rejects(
-      handleRequest(
-        req('POST', '/v1/envelope/env-1/remind', { headers: { authorization: `Bearer ${RAW_KEY}` } }),
-        makeDeps({ pool }),
-      ),
-      /unexpected ctx build: reminderSendCtx/,
-      'gate must pass the bearer POST through to dispatch (CSRF-exempt)',
+    // reaching the thrower proves the gate passed (a 401/403 would mean it did not).
+    // The top-level error boundary then turns that unexpected throw into a clean,
+    // taxonomy-coded 500 (`internal_error`) — never an uncoded platform error (TR-018).
+    const res = await handleRequest(
+      req('POST', '/v1/envelope/env-1/remind', { headers: { authorization: `Bearer ${RAW_KEY}` } }),
+      makeDeps({ pool }),
     );
+    assert.equal(res.status, 500, 'gate passed the bearer POST through to dispatch (CSRF-exempt)');
+    const body = (await res.json()) as { code?: string };
+    assert.equal(body.code, 'internal_error', 'unexpected throw → coded 500, never an uncoded platform error');
   });
 
   it('an unknown key → 401 with the machine-readable code auth_invalid_key (never a CSRF 403)', async () => {

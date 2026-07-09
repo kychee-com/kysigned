@@ -151,7 +151,7 @@ export function ApiKeysPage() {
             onChange={(e) => setLabel(e.target.value)}
             placeholder='Label (e.g. "mcp agent")'
             maxLength={100}
-            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            className="flex-1 min-h-[44px] border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
             data-testid="apikeys-label"
           />
           <button

@@ -174,6 +174,25 @@ const BEARER_ROUTES: ReadonlySet<string> = new Set([
 ]);
 
 export async function handleRequest(req: Request, deps: RequestDeps): Promise<Response> {
+  // TR-018 / AC-137 — top-level error boundary. An unexpected throw from the auth
+  // gate or ANY dispatched handler becomes a clean, taxonomy-coded 500
+  // (`internal_error`), never the run402 platform's uncoded "Internal function
+  // error". The error is logged for ops; the targeted guards still return the
+  // correct 4xx for known conditions (F-015 → 409, F-017 → 400) — this only
+  // backstops genuinely-unexpected failures so the /v1 error contract can never
+  // regress to an un-coded body (system-test Cycle 14: F-015/F-017 were two
+  // instances of an uncaught throw surfacing as an uncoded platform 500).
+  try {
+    return await dispatchRequest(req, deps);
+  } catch (err) {
+    let path = req.url;
+    try { path = new URL(req.url).pathname; } catch { /* non-parseable url — log the raw value */ }
+    console.error(`[api] unhandled error on ${req.method} ${path}:`, err);
+    return json({ error: 'Internal error', code: 'internal_error' }, 500);
+  }
+}
+
+async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Response> {
   const method = req.method.toUpperCase();
   const url = new URL(req.url);
   const path = url.pathname;

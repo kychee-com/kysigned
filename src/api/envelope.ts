@@ -23,6 +23,7 @@ import {
   setEnvelopeAutoClose,
 } from '../db/envelopes.js';
 import { computePdfHash, decodePdfBase64, fetchPdfFromUrl, PdfUrlError } from '../pdf/hash.js';
+import { isPdfParseable } from '../pdf/validate.js';
 import { validatePublicHttpsUrl } from '../net/urlGuard.js';
 import { buildSignerCanonicalPdf } from '../pdf/perSignerCanonical.js';
 import { documentBlobKey } from '../pdf/documentKey.js';
@@ -118,6 +119,12 @@ export interface ApiContext {
   storePdf?: (key: string, data: Uint8Array) => Promise<void>;
   /** F8.6: called by void/expire flows to immediately drop the original PDF. */
   deletePdf?: (key: string) => Promise<void>;
+  /**
+   * F-16.7 — server-side `pdf_url` fetch seam (SSRF-guarded). Defaults to the
+   * real `fetchPdfFromUrl`; injectable so tests exercise the fetched-bytes path
+   * (e.g. F-017: a successful fetch of a non-PDF resource) without real network.
+   */
+  fetchPdf?: (url: string) => Promise<Uint8Array>;
   senderGate?: SenderGateConfig;
   /**
    * F-30.2 — operator x402 discovery: when set, the credit-gate 402 names the
@@ -404,7 +411,7 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
   // blocked/failed fetch is a clean named 400, never a 500 or an internal echo.
   if (!sourceBytes) {
     try {
-      sourceBytes = await fetchPdfFromUrl(req.pdf_url!);
+      sourceBytes = await (ctx.fetchPdf ?? fetchPdfFromUrl)(req.pdf_url!);
     } catch (e) {
       if (e instanceof PdfUrlError) {
         return { status: 400, body: { error: e.message, code: 'validation_pdf_url' } };
@@ -433,6 +440,18 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
         ceiling_bytes: sizeEst.ceilingBytes,
       },
     };
+  }
+
+  // F-017 / AC-140 / AC-137 — a fetched/decoded blob that is NOT a parseable PDF
+  // (a `pdf_url` pointing at a README, or a non-PDF `pdf_base64`) must be a clean,
+  // taxonomy-coded 400, never the uncoded 500 that `PDFDocument.load` throws deep
+  // in per-signer assembly. Both input paths converge on `sourceBytes` here — after
+  // the cheap size guard, before any assembly / DB write. NOT an SSRF concern (the
+  // F-16.7 guard already refused private/loopback/redirecting hosts above).
+  if (!(await isPdfParseable(sourceBytes))) {
+    return req.pdf_base64
+      ? { status: 400, body: { error: 'pdf_base64 did not contain a valid PDF.', code: 'validation_pdf' } }
+      : { status: 400, body: { error: 'pdf_url did not return a valid PDF.', code: 'validation_pdf_url' } };
   }
 
   // F-3.3 / F-4 — assemble the canonical envelope PDF: page 1 = kysigned cover
@@ -846,6 +865,23 @@ export async function handleVoidEnvelope(
   if (!envelope) return { status: 404, body: { error: 'Envelope not found', code: 'not_found' } };
   if (envelope.sender_email !== senderIdentity) {
     return { status: 403, body: { error: 'Not the envelope sender', code: 'auth_forbidden' } };
+  }
+
+  // F-015 / AC-137 — a void is only valid on an OPEN, still-active envelope.
+  // Voiding an already-terminal envelope (voided / expired / completed) — or a
+  // manual-seal all-signed `awaiting_seal` — must be a clean, taxonomy-coded 409,
+  // NOT the uncoded 500 that `voidEnvelope`'s `WHERE status='active'` 0-row throw
+  // (db/envelopes.ts) used to surface. Mirrors the signer-edit sibling's 409.
+  // (Refusing an all-signed envelope is also consistent with the auto-close
+  // all-signed refusal below — the signatures are collected either way.)
+  if (envelope.status !== 'active') {
+    return {
+      status: 409,
+      body: {
+        error: `Envelope is ${envelope.status} and can no longer be voided.`,
+        code: 'state_not_active',
+      },
+    };
   }
 
   // F-24.1 — an AUTO-close envelope that is all-signed WILL auto-distribute (the

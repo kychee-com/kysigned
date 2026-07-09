@@ -300,6 +300,39 @@ describe('Envelope API — from spec acceptance criteria', () => {
       assert.ok(result.body.document_hash); // SHA-256 computed
     });
 
+    // F-017 (system-test Cycle 14): a fetched/decoded blob that is NOT a valid PDF
+    // must be a clean, taxonomy-coded 400 — never the uncoded 500 that pdf-lib's
+    // PDFDocument.load throws deep in per-signer assembly. NOT an SSRF case.
+    it('rejects a non-PDF pdf_url with a coded 400 (validation_pdf_url), not an uncoded 500 (F-017)', async () => {
+      const result = await handleCreateEnvelope(
+        {
+          pool: db.pool, emailProvider: email, baseUrl: 'https://kysigned.com', senderIdentity: '0xSender',
+          // A successful fetch of a real, public, non-PDF resource (e.g. a README).
+          fetchPdf: async () => new TextEncoder().encode('# Not a PDF\n\nJust markdown.\n'),
+        },
+        {
+          document_name: 'NDA',
+          pdf_url: 'https://raw.githubusercontent.com/kychee-com/kysigned/main/README.md',
+          signers: [{ email: 'a@b.com', name: 'A' }],
+        }
+      );
+      assert.equal(result.status, 400);
+      assert.equal(result.body.code, 'validation_pdf_url');
+    });
+
+    it('rejects a non-PDF pdf_base64 with a coded 400 (validation_pdf), not an uncoded 500 (F-017)', async () => {
+      const result = await handleCreateEnvelope(
+        { pool: db.pool, emailProvider: email, baseUrl: 'https://kysigned.com', senderIdentity: '0xSender' },
+        {
+          document_name: 'NDA',
+          pdf_base64: Buffer.from('this is plainly not a pdf').toString('base64'),
+          signers: [{ email: 'a@b.com', name: 'A' }],
+        }
+      );
+      assert.equal(result.status, 400);
+      assert.equal(result.body.code, 'validation_pdf');
+    });
+
     // F1: "API response includes a list of individual signing links per signer"
     it('should return unique signing links per signer', async () => {
       const result = await handleCreateEnvelope(
@@ -930,6 +963,38 @@ describe('Envelope API — from spec acceptance criteria', () => {
       assert.equal(result.status, 200);
       assert.equal(result.body.status, 'voided');
       assert.equal(email.sent.length, 1); // void notification
+    });
+
+    // F-015 (system-test Cycle 14, AC-137): voiding an ALREADY-voided envelope
+    // must be a clean, taxonomy-coded 409 — not the uncoded 500 that
+    // `voidEnvelope`'s `WHERE status='active'` 0-row throw used to surface.
+    it('returns a coded 409 (never an uncoded 500) when voiding an already-voided envelope (F-015 / AC-137)', async () => {
+      await handleCreateEnvelope(
+        { pool: db.pool, emailProvider: email, baseUrl: 'https://x.com', senderIdentity: '0xSender' },
+        { document_name: 'NDA', pdf_base64: TEST_FIXTURE_PDF_B64, signers: [{ email: 'a@b.com', name: 'A' }] }
+      );
+      const envId = db.envelopes[0].id;
+      const first = await handleVoidEnvelope({ pool: db.pool, emailProvider: email }, envId, '0xSender');
+      assert.equal(first.status, 200, 'first void succeeds');
+      assert.equal(first.body.status, 'voided');
+      // Second void: MUST return a clean coded 409, not throw an uncoded 500.
+      const second = await handleVoidEnvelope({ pool: db.pool, emailProvider: email }, envId, '0xSender');
+      assert.equal(second.status, 409);
+      assert.equal(second.body.code, 'state_not_active', 'carries a state_* taxonomy code');
+    });
+
+    it('returns a coded 409 when voiding an already-terminal (expired / completed) envelope (F-015 / AC-137)', async () => {
+      for (const status of ['expired', 'completed'] as const) {
+        await handleCreateEnvelope(
+          { pool: db.pool, emailProvider: email, baseUrl: 'https://x.com', senderIdentity: '0xSender' },
+          { document_name: 'NDA', pdf_base64: TEST_FIXTURE_PDF_B64, signers: [{ email: 'a@b.com', name: 'A' }] }
+        );
+        const env = db.envelopes[db.envelopes.length - 1];
+        env.status = status;
+        const result = await handleVoidEnvelope({ pool: db.pool, emailProvider: email }, env.id, '0xSender');
+        assert.equal(result.status, 409, `${status} → 409`);
+        assert.equal(result.body.code, 'state_not_active', `${status} → state_not_active`);
+      }
     });
 
     it('rejects (409) cancelling an AUTO-close envelope once everyone has signed (F-24.1, Barry QA)', async () => {

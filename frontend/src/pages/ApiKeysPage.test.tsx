@@ -136,6 +136,9 @@ describe('ApiKeysPage (F-30.1 / AC-132)', () => {
     );
     await waitFor(() => expect(screen.getByTestId('apikeys-row-k-1')).toBeInTheDocument());
     expect(screen.getByTestId('apikeys-create').className).toContain('min-h-[44px]');
+    // UX-025 (system-test Cycle 14): the "Label" input must also meet the 44px
+    // minimum — it measured 217×38px on mobile, shorter than the button beside it.
+    expect(screen.getByTestId('apikeys-label').className).toContain('min-h-[44px]');
     expect(container.querySelectorAll('.text-gray-400').length).toBe(0);
   });
 });
