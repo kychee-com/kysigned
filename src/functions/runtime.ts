@@ -14,6 +14,7 @@
 import { buildAppDeps, type AppDeps, type Run402SdkClient } from './config.js';
 import { buildRunHandlers, RetryableRunError, PermanentRunError } from './runHandlers.js';
 import type { CreateRun } from './runs.js';
+import { parsePaymentContextFromHeaders } from './paymentContextFallback.js';
 
 let _appDeps: AppDeps | null = null;
 let _runDispatch: ((input: unknown) => Promise<Response>) | null = null;
@@ -64,11 +65,16 @@ export async function getRuntimeDeps(): Promise<AppDeps> {
     adminDb: adminDb(),
     sdk,
     createRun,
-    // F-30.2 — the platform's payment-context parser; optional so a runtime
-    // predating tenant x402 still boots (the x402 route then fails closed).
-    ...(typeof getRoutedPaymentContext === 'function'
-      ? { readPaymentContext: (req: Request) => getRoutedPaymentContext(req) }
-      : {}),
+    // F-30.2 — read the gateway-settled payment context. Prefer the platform
+    // helper; FALL BACK to parsing the platform-owned headers ourselves when
+    // the injected `@run402/functions` predates it (the platform bundles its
+    // own copy at deploy time — a stale copy turned a settled $0.25 into a
+    // 503 on 2026-07-09). The headers are gateway-injected post-settlement
+    // (client x-run402-* stripped), so both paths read the same trust anchor.
+    readPaymentContext:
+      typeof getRoutedPaymentContext === 'function'
+        ? (req: Request) => getRoutedPaymentContext(req)
+        : (req: Request) => parsePaymentContextFromHeaders(req.headers),
   });
   return _appDeps;
 }
