@@ -117,8 +117,10 @@ Discovery: an UNFUNDED `POST /v1/envelope` returns
 `402 { "code": "payment_required", "x402_route": "/v1/x402/envelope", "x402_price_usd_micros": <price> }`
 so you can fall over to the paid route programmatically. Dashboard continuity: sign in later with
 the `creator_email` you supplied (magic link / passkey) and the envelope + its wallet-sourced ledger
-entries are in the dashboard like any creator's. The MCP itself stays key-authenticated — the x402
-route is plain HTTP for x402 clients.
+entries are in the dashboard like any creator's. The x402 route is plain HTTP for any x402 client —
+and `kysigned-mcp` drives it first-class: its `wallet_status` + `create_envelope_x402` tools pay
+from the host-local run402 wallet with NO API key (see "Agent tools (MCP)"); the five ops tools
+stay key-authenticated.
 
 ## Machine-readable errors
 
@@ -192,13 +194,25 @@ The full surface is also machine-readable as OpenAPI 3.1 at `/openapi.json`.
 
 ## Agent tools (MCP)
 
-`npx kysigned-mcp` exposes five tools — configure with `KYSIGNED_ENDPOINT` + `KYSIGNED_AUTHORIZATION`:
+`npx kysigned-mcp` exposes seven tools. The five ops tools are key-authenticated — configure
+`KYSIGNED_ENDPOINT` + `KYSIGNED_AUTHORIZATION`:
 
 - **create_envelope** — `POST /v1/envelope` (`document_name`, `pdf_base64` | `pdf_url`, `signers[]`, `message?`)
 - **check_envelope_status** — `GET /v1/envelope/:id`
 - **list_envelopes** — `GET /v1/envelopes` (the creator's own envelopes)
 - **send_reminder** — `POST /v1/envelope/:id/remind`
 - **void_envelope** — `POST /v1/envelope/:id/void`
+
+The wallet pair needs NO key — it pays from the host-local run402 allowance wallet (`run402 init`;
+the private key is never a tool argument and never appears in output):
+
+- **wallet_status** — read-only payment readiness: address, network, asset, balance, the live
+  per-envelope price (read from the x402 route's own challenge), funding guidance when short.
+- **create_envelope_x402** — the wallet-paid create (annotated destructive so hosts confirm the
+  spend): runs the free preflight FIRST, then a balance gate — an invalid request or short balance
+  never charges — then pays via x402 and returns the envelope + `payment` receipt + `tracking`
+  note. Retries are safe: pass `idempotency_key` (or reuse the returned `spending_intent_key`) and
+  a retry replays the same envelope without paying twice.
 
 Verification is intentionally NOT a tool — the bundle verifies client-side at `/verify` or with the
 reference verifier in the public repo.

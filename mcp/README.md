@@ -79,9 +79,9 @@ Cursor Settings → MCP → Add New Server:
 
 ## Tools
 
-The server exposes 5 tools — all signing operations against a running kysigned instance. (Provisioning a new instance is a deploy-time concern — see the [main README](../README.md) — not an MCP tool.) All take JSON arguments and return JSON results.
+The server exposes 7 tools — the five key-authenticated signing operations plus a **no-key wallet pair** (`wallet_status`, `create_envelope_x402`) that pays per envelope from the host-local run402 wallet. (Provisioning a new instance is a deploy-time concern — see the [main README](../README.md) — not an MCP tool.) All take JSON arguments and return JSON results.
 
-Each tool carries MCP **annotations** so a host can tell them apart: `check_envelope_status` and `list_envelopes` are read-only; `create_envelope` and `send_reminder` send email (and create consumes a creator credit); `void_envelope` is **destructive** (irreversible cancellation). A non-2xx API response or a transport failure comes back as an MCP result with `isError: true`, carrying the HTTP status and the stable error `code` (e.g. `[402] payment_required: …`), so agents branch correctly instead of treating a failure as success.
+Each tool carries MCP **annotations** so a host can tell them apart: `check_envelope_status`, `list_envelopes`, and `wallet_status` are read-only; `create_envelope` and `send_reminder` send email (and create consumes a creator credit); `void_envelope` is **destructive** (irreversible cancellation); `create_envelope_x402` is also marked **destructive** because it spends real funds — hosts that gate destructive tools will ask before it pays. A non-2xx API response or a transport failure comes back as an MCP result with `isError: true`, carrying the HTTP status and the stable error `code` (e.g. `[402] payment_required: …`), so agents branch correctly instead of treating a failure as success.
 
 ### `create_envelope`
 
@@ -148,6 +148,38 @@ Void an active envelope. All pending signers receive a cancellation notice. Void
 { "envelope_id": "abc123-..." }
 ```
 
+### `wallet_status` — no key needed
+
+Report the local run402 wallet's payment readiness for wallet-paid creation: wallet address, network, asset, on-chain balance, the live per-envelope price (read from the x402 route's own 402 challenge — never hardcoded), whether the balance covers it, and funding guidance when short. Read-only; never creates or spends. No arguments.
+
+```json
+{}
+```
+
+If no wallet exists it returns `configured: false` with the expected file path and the fix (`run402 init`). On an instance whose operator has not wired x402, it returns an error explaining the route is not payable.
+
+### `create_envelope_x402` — wallet-paid create, no key needed
+
+Create an envelope **paying the per-envelope price from the host-local run402 allowance wallet** (created by `run402 init`; on kysigned.com the price is $0.25 in USDC on Base mainnet). No `KYSIGNED_AUTHORIZATION` and no pre-existing account: the payment itself establishes the creator record for `creator_email` — creation/completion mail and the evidence bundle land there, and signing in with that address later (magic link) opens the dashboard for the envelope.
+
+**Arguments:** the same create body as `create_envelope`, plus:
+
+```json
+{
+  "creator_email": "agent-owner@example.com",
+  "document_name": "Mutual NDA",
+  "pdf_base64": "JVBERi0xLjQKJ...",
+  "signers": [{ "email": "alice@example.com", "name": "Alice" }],
+  "idempotency_key": "my-spending-intent-1"
+}
+```
+
+`creator_email` is **required**. `idempotency_key` is your spending-intent key — a retry with the same key replays the same envelope **without paying twice**; omit it and a generated key is returned as `spending_intent_key`.
+
+**Pay-safe order** (an invalid request or a short balance never charges): the tool first runs the instance's **free preflight** (`POST /v1/envelope/preflight` — the create's own deterministic validation), then checks the wallet balance against the live price, and only then pays via the x402 challenge/pay/retry flow. **Returns:** the envelope fields plus the `payment` receipt (stable `payment_id`, amount, network, asset, payee, settlement reference, settlement time), the `tracking` note (status links need creator auth), and `spending_intent_key`. Payment failures come back machine-readably — a post-payment validation failure banks the money as account credit for `creator_email` (`payment_banked: true` + recovery `next_actions`; never lost), and insufficient on-chain funds surface the platform's stable `payment_insufficient_funds` code with a `fund_wallet` next action.
+
+**Custody:** the wallet is read from the host's local run402 configuration only. A private key is never a tool argument, never an environment variable of this server, and never appears in any tool output or error.
+
 ## Usage examples
 
 ### Example 1 — agent sends an NDA from a local file
@@ -184,7 +216,7 @@ Set `KYSIGNED_AUTHORIZATION` to a creator **API key** (`ksk_…`), minted in the
 
 When pointed at a self-hosted instance with `senderGate: { strategy: 'allowlist' }`, the operator must additionally pre-allowlist the creator email. See the [kysigned README](https://github.com/kychee-com/kysigned#sender-access-control) for the full enforcement model.
 
-**Wallet payment (x402), no key at all:** on instances that enable it (kysigned.com does), an x402-capable agent can skip keys and accounts entirely and pay the flat per-envelope price per call at `POST /v1/x402/envelope` (plain HTTP — the MCP tools themselves stay key-authenticated). The flow — x402 402 challenge, pay-and-retry, `creator_email`, exactly-once semantics — is documented in `https://<instance>/llms.txt` ("Machine payment (x402)") and `/openapi.json`.
+**Wallet payment (x402), no key at all:** on instances that enable it (kysigned.com does), an agent can skip keys and accounts entirely — `wallet_status` + `create_envelope_x402` (above) pay the flat per-envelope price from the host-local run402 allowance wallet, first-class inside the MCP. The same rail is also plain HTTP for non-MCP x402 clients at `POST /v1/x402/envelope`; the flow — x402 402 challenge, pay-and-retry, `creator_email`, exactly-once semantics — is documented in `https://<instance>/llms.txt` ("Machine payment (x402)") and `/openapi.json`.
 
 Every error the tools surface carries a stable machine-readable `code` alongside the message (`auth_*`, `payment_*`, `validation_*`, `state_*`, `idempotency_*`, …) — the full surface is documented as OpenAPI at `https://<instance>/openapi.json` and in `https://<instance>/llms.txt`.
 
