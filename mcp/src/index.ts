@@ -22,7 +22,8 @@ function authedHeaders(): Record<string, string> {
   return headers;
 }
 
-const server = new McpServer({
+/** Exported for the contract suite (driven over an in-memory transport). */
+export const server = new McpServer({
   name: 'kysigned',
   version: '0.1.0',
 });
