@@ -56,6 +56,9 @@ const PUBLIC_ENDPOINTS = [
   // F-30.2 — the always-priced x402 create (operator-dependent: kysigned.com on;
   // a fork without x402 config answers payment_x402_not_enabled).
   'POST /v1/x402/envelope',
+  // #129 — free deterministic pre-validation of a create body (no charge/create);
+  // agents validate inputs before paying the x402 create.
+  'POST /v1/envelope/preflight',
 ];
 
 /**

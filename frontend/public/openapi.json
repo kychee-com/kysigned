@@ -171,13 +171,25 @@
         ],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/X402CreateEnvelopeRequest" } } } },
         "responses": {
-          "201": { "description": "Created (identical shape to POST /v1/envelope)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateEnvelopeResponse" } } } },
-          "400": { "$ref": "#/components/responses/Error" },
-          "402": { "description": "x402 payment challenge for an unpaid call — emitted by the platform (x402 protocol payment-requirements shape, not the {error, code} envelope). Pay per the challenge and retry." },
+          "201": { "description": "Created. Identical to POST /v1/envelope PLUS a `payment` receipt (payment_id, network, amount_usd_micros, asset, pay_to, settlement_reference, settled_at) and a `tracking` block (status_url requires creator auth; wallet-only creators sign in to creator_email to track). Reconcile the spend via `payment.payment_id` / `settlement_reference`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateEnvelopeResponse" } } } },
+          "400": { "description": "Deterministic validation failed (plus-alias signer, bad email, unparseable/oversize PDF, …). If the payment already settled, the response carries `payment_banked: true` + `credit_email` + `next_actions` — the money became recoverable account credit for creator_email, not a loss. Call POST /v1/envelope/preflight (free) BEFORE paying to avoid this.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "402": { "description": "x402 payment challenge for an unpaid call — emitted by the platform (x402 protocol payment-requirements shape, not the {error, code} envelope). Pay per the challenge and retry. A paid retry that returns 402 TENANT_X402_PAYMENT_INVALID with 'execution reverted' means the wallet lacks enough USDC on Base mainnet for the quoted price — fund it and retry." },
           "404": { "$ref": "#/components/responses/Error" },
           "409": { "$ref": "#/components/responses/Error" },
           "413": { "$ref": "#/components/responses/Error" },
           "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/envelope/preflight": {
+      "post": {
+        "summary": "Validate a create body for FREE (no charge, no create) — check inputs before paying the x402 create",
+        "description": "Runs the same deterministic create validations (creator_email shape, signer addresses incl. the plus-alias rule, document_name, PDF presence/size/parseability for pdf_base64) without creating or charging. Use it before POST /v1/x402/envelope so a request that would be rejected does not consume the on-chain payment (run402 settles before the app validates). A PASS means these checks won't reject the paid create. creator_email is optional (omit it for a keyed/session create). pdf_url is not fetched here.",
+        "security": [],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/X402CreateEnvelopeRequest" } } } },
+        "responses": {
+          "200": { "description": "Inputs pass deterministic validation: { \"ok\": true }" },
+          "400": { "$ref": "#/components/responses/Error" }
         }
       }
     },

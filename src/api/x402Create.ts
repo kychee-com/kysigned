@@ -158,5 +158,67 @@ export async function handleX402CreateEnvelope(
   const callerKey = typeof callerIdempotencyKey === 'string' ? callerIdempotencyKey.trim() : '';
   const createKey = callerKey ? `x402:idem:${callerKey}` : `x402:${payment.paymentId}`;
   const { creator_email: _consumed, ...createBody } = body;
-  return seams.runCreate(creatorEmail, createKey, createBody);
+
+  const result = await seams.runCreate(creatorEmail, createKey, createBody);
+  const receipt = paymentReceipt(payment);
+  const resultBody = result.body && typeof result.body === 'object' ? (result.body as Record<string, unknown>) : { value: result.body };
+
+  if (result.status === 201) {
+    // #133 — return a durable payment receipt so a wallet agent can reconcile the
+    // spend with the envelope. #131 — the status_url needs creator auth, which a
+    // wallet-only creator does not have; point them at the creator_email sign-in.
+    return {
+      status: 201,
+      body: {
+        ...resultBody,
+        payment: receipt,
+        tracking: {
+          status_url_auth: 'creator',
+          creator_email: creatorEmail,
+          note:
+            `status_url requires creator authentication. As a wallet-only creator, sign in to ` +
+            `${creatorEmail} (request a magic link at POST /v1/auth/magic-link) to track this envelope in ` +
+            `the dashboard; the creation email, completion notice, and the evidence bundle are all sent to ` +
+            `${creatorEmail}.`,
+        },
+      },
+    };
+  }
+
+  // #129 — the payment settled on-chain and was BANKED as an account credit for
+  // creator_email BEFORE this deterministic create failure (plus-alias signer,
+  // bad email, unparseable/oversize PDF, …). The money is not lost: surface it
+  // so the agent can recover it, and DON'T pay again to fix input.
+  return {
+    status: result.status,
+    body: {
+      ...resultBody,
+      payment_banked: true,
+      payment: receipt,
+      credit_email: creatorEmail,
+      next_actions: [
+        {
+          type: 'use_banked_credit',
+          why:
+            `Your $${(payment.amountUsdMicros / 1_000_000).toFixed(2)} payment settled and was banked as ` +
+            `account credit for ${creatorEmail} (it was NOT lost). Fix the input, then sign in to ${creatorEmail} ` +
+            `(magic link) and create via the authenticated POST /v1/envelope — the banked credit covers it, no new ` +
+            `payment needed. Tip: call POST /v1/envelope/preflight (free) to validate inputs BEFORE paying.`,
+        },
+      ],
+    },
+  };
+}
+
+/** #133 — the client-facing payment receipt built from the gateway-confirmed context. */
+function paymentReceipt(payment: RoutedHttpPaymentContextV1): Record<string, unknown> {
+  return {
+    payment_id: payment.paymentId,
+    network: payment.network,
+    amount_usd_micros: payment.amountUsdMicros,
+    asset: payment.asset,
+    pay_to: payment.payTo,
+    settlement_reference: payment.transaction,
+    settled_at: payment.settledAt,
+  };
 }

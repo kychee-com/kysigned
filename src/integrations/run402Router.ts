@@ -65,6 +65,11 @@ export const API_ROUTES: RouteDef[] = [
 
   // ── envelopes (creator, session) — note the SINGULAR /v1/envelope ───────
   { method: 'POST', pattern: '/v1/envelope', name: 'createEnvelope', auth: 'session' },
+  // #129 — FREE deterministic pre-validation of a create body (no charge, no
+  // create). Public so a wallet/x402 agent can validate inputs BEFORE paying the
+  // x402 create (which settles before app validation runs). Unambiguous: no
+  // other POST /v1/envelope/<one-segment> route exists.
+  { method: 'POST', pattern: '/v1/envelope/preflight', name: 'createPreflight', auth: 'public' },
   // Plural list (the creator's own envelopes, session-scoped) — distinct from the
   // singular create/get above and from /v1/documents (which groups by upload hash).
   { method: 'GET', pattern: '/v1/envelopes', name: 'listEnvelopes', auth: 'session' },

@@ -38,6 +38,7 @@ import { resolveApiKey } from '../api/auth/apiKeyAuth.js';
 import { handleMintApiKey, handleListApiKeys, handleRevokeApiKey } from '../api/apiKeys.js';
 import { withCreateIdempotency } from '../api/idempotentCreate.js';
 import { handleX402CreateEnvelope, defaultX402Seams } from '../api/x402Create.js';
+import { handleCreatePreflight } from '../api/createPreflight.js';
 import { buildHostedSenderGate } from '../api/billingGate.js';
 import { handleHealth } from '../api/health.js';
 import {
@@ -312,6 +313,13 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
     case 'passkeyDelete': {
       const r = await handlePasskeyDelete(passkeyCtx(deps), actorSessionId!, params.id!);
       if (r.status === 204) return new Response(null, { status: 204 });
+      return json(r.body, r.status);
+    }
+
+    // ── #129 — free create pre-validation (public; no charge, no create) ──
+    case 'createPreflight': {
+      const body = await readJsonBody(req);
+      const r = await handleCreatePreflight(body as Record<string, unknown>);
       return json(r.body, r.status);
     }
 

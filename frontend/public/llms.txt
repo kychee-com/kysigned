@@ -93,6 +93,24 @@ Optional retry control: send your own `Idempotency-Key` header on the paid call 
 same key replays the same envelope (the create dedupes on your key); without one, dedupe keys on the
 settled payment id. The ledger credit is always exactly-once per settled payment either way.
 
+**Validate before you pay (avoid a wasted charge).** run402 settles the payment BEFORE this endpoint
+runs, so a paid create that then fails deterministic validation (a plus-alias signer, a bad email, an
+unparseable/oversize PDF) still consumes the charge. Call `POST /v1/envelope/preflight` FIRST — it's
+free (no charge, no create) and runs the same input validation, returning `{ "ok": true }` or the
+same `validation_*` / `rate_size_*` error. Pay only once preflight passes. If you skip preflight and a
+paid create fails validation, the response carries `payment_banked: true`, `credit_email`, and
+`next_actions`: the money became recoverable account credit for `creator_email` (NOT lost) — fix the
+input, sign in to `creator_email` (magic link), and create via the authenticated `POST /v1/envelope`;
+the banked credit covers it, no new payment.
+
+**Payment receipt.** A successful `201` includes a `payment` block — `payment_id`, `network`,
+`amount_usd_micros`, `asset`, `pay_to`, `settlement_reference` (tx hash), `settled_at` — so you can
+reconcile the spend with the envelope. A `tracking` block notes that `status_url` needs creator auth.
+
+**Insufficient funds.** If a paid retry returns `402 { "code": "TENANT_X402_PAYMENT_INVALID", ...
+"execution reverted" }`, your wallet lacks enough USDC on Base mainnet for the quoted price — fund it
+and retry. (This error is emitted by the run402 gateway before this endpoint runs.)
+
 Discovery: an UNFUNDED `POST /v1/envelope` returns
 `402 { "code": "payment_required", "x402_route": "/v1/x402/envelope", "x402_price_usd_micros": <price> }`
 so you can fall over to the paid route programmatically. Dashboard continuity: sign in later with

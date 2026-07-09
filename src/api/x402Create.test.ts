@@ -124,7 +124,23 @@ describe('handleX402CreateEnvelope — orchestration (F-30.2 / AC-134 / AC-141)'
     const { credited, created, seams } = recordingSeams();
     const r = await handleX402CreateEnvelope(CONFIG, PAYMENT, seams, { ...BODY });
     assert.equal(r.status, 201);
-    assert.deepEqual(r.body, { id: 'env-1' });
+    const body = r.body as Record<string, unknown>;
+    assert.equal(body.id, 'env-1'); // the create's own fields pass through
+    // #133 — the 201 carries a durable payment receipt from the settled context.
+    assert.deepEqual(body.payment, {
+      payment_id: 'pay_abc123',
+      network: 'base',
+      amount_usd_micros: 250_000,
+      asset: PAYMENT.asset,
+      pay_to: PAYMENT.payTo,
+      settlement_reference: PAYMENT.transaction,
+      settled_at: PAYMENT.settledAt,
+    });
+    // #131 — the status_url is creator-auth-only; wallet creators get a sign-in handoff.
+    const tracking = body.tracking as Record<string, unknown>;
+    assert.equal(tracking.status_url_auth, 'creator');
+    assert.equal(tracking.creator_email, 'agent@example.com');
+    assert.match(String(tracking.note), /magic link|sign in/i);
 
     // Zero-onboarding: the creator record identity is the normalized supplied
     // email — that is what a later dashboard sign-in (AC-141) resolves to.
@@ -169,16 +185,26 @@ describe('handleX402CreateEnvelope — orchestration (F-30.2 / AC-134 / AC-141)'
     assert.equal(created.length, 0);
   });
 
-  it('a non-201 from the inner create passes through verbatim — the credit stays on the ledger for the corrected retry', async () => {
+  it('#129 — a post-payment deterministic failure banks the settled payment as a recoverable credit + returns next_actions, keeping the original code', async () => {
     const { credited, seams } = recordingSeams({
-      runCreate: async () => ({ status: 400, body: { error: 'bad pdf', code: 'validation_pdf' } }),
+      runCreate: async () => ({ status: 400, body: { error: 'plus-alias', code: 'validation_plus_alias' } }),
     });
     const r = await handleX402CreateEnvelope(CONFIG, PAYMENT, seams, { ...BODY });
     assert.equal(r.status, 400);
-    assert.equal((r.body as { code: string }).code, 'validation_pdf');
-    // Money is preserved: the payment was settled on-chain, so the credit row
-    // stays; a corrected retry with the SAME proof dedups the credit and the
-    // gate then sees the balance.
+    const body = r.body as Record<string, unknown>;
+    // the original validation code is preserved (not masked)
+    assert.equal(body.code, 'validation_plus_alias');
+    // but the response now tells the agent the money was banked, not lost
+    assert.equal(body.payment_banked, true);
+    assert.equal(body.credit_email, 'agent@example.com');
+    assert.deepEqual(body.payment, {
+      payment_id: 'pay_abc123', network: 'base', amount_usd_micros: 250_000,
+      asset: PAYMENT.asset, pay_to: PAYMENT.payTo, settlement_reference: PAYMENT.transaction, settled_at: PAYMENT.settledAt,
+    });
+    const next = body.next_actions as Array<{ type: string; why: string }>;
+    assert.equal(next[0]!.type, 'use_banked_credit');
+    assert.match(next[0]!.why, /banked|preflight/i);
+    // Money is preserved: the payment settled on-chain, so the credit row stays.
     assert.equal(credited.length, 1);
   });
 });
