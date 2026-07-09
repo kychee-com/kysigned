@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 process.env.KYSIGNED_ENDPOINT = 'https://contract.test';
 process.env.KYSIGNED_AUTHORIZATION = 'ksk_contract_key';
 
-const { server } = await import('./index.js');
+const { server } = await import('./server.js');
 const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
 const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
 
@@ -57,11 +57,12 @@ beforeEach(() => {
   queue = [];
 });
 
+type ToolCall = { content: Array<{ type: string; text: string }>; isError?: boolean };
+async function callToolFull(name: string, args: Record<string, unknown>): Promise<ToolCall> {
+  return (await client.callTool({ name, arguments: args })) as ToolCall;
+}
 async function callTool(name: string, args: Record<string, unknown>): Promise<string> {
-  const res = (await client.callTool({ name, arguments: args })) as {
-    content: Array<{ type: string; text: string }>;
-  };
-  return res.content[0]!.text;
+  return (await callToolFull(name, args)).content[0]!.text;
 }
 
 describe('tool registration', () => {
@@ -73,13 +74,14 @@ describe('tool registration', () => {
     );
   });
 
-  it('create_envelope requires document_name + signers; pdf fields, callback_url, message stay optional', async () => {
+  it('create_envelope schema is in lockstep with the API/docs — #121 (document_name+signers required; expiry_days + auto_close present)', async () => {
     const { tools } = await client.listTools();
     const create = tools.find((t) => t.name === 'create_envelope')!;
     const schema = create.inputSchema as { required?: string[]; properties: Record<string, unknown> };
     assert.deepEqual([...(schema.required ?? [])].sort(), ['document_name', 'signers']);
-    for (const opt of ['pdf_base64', 'pdf_url', 'callback_url', 'message']) {
-      assert.ok(opt in schema.properties, `optional field ${opt} present in the schema`);
+    // The previously-dropped documented fields must now be in the schema.
+    for (const opt of ['pdf_base64', 'pdf_url', 'callback_url', 'message', 'expiry_days', 'auto_close']) {
+      assert.ok(opt in schema.properties, `documented field ${opt} present in the schema`);
     }
   });
 
@@ -91,6 +93,17 @@ describe('tool registration', () => {
     }
     const list = tools.find((t) => t.name === 'list_envelopes')!.inputSchema as { required?: string[] };
     assert.deepEqual(list.required ?? [], []);
+  });
+
+  it('#124 — tools carry annotations distinguishing reads, side-effects, and destructive actions', async () => {
+    const { tools } = await client.listTools();
+    const ann = (n: string) => (tools.find((t) => t.name === n) as { annotations?: Record<string, unknown> }).annotations ?? {};
+    assert.equal(ann('check_envelope_status').readOnlyHint, true);
+    assert.equal(ann('list_envelopes').readOnlyHint, true);
+    assert.equal(ann('create_envelope').readOnlyHint, false);
+    assert.equal(ann('send_reminder').readOnlyHint, false);
+    assert.equal(ann('void_envelope').readOnlyHint, false);
+    assert.equal(ann('void_envelope').destructiveHint, true, 'void is marked destructive');
   });
 });
 
@@ -143,14 +156,35 @@ describe('create_envelope', () => {
     assert.equal(parsed.envelope_id, 'env-1');
   });
 
-  it('surfaces the API error message on a non-ok response (human message, not the code)', async () => {
+  it('#119 — a non-ok API response is an isError result preserving status + stable code + message', async () => {
     queue.push({ status: 402, body: { error: 'Insufficient credit — your balance is $0.00', code: 'payment_required' } });
-    const text = await callTool('create_envelope', {
+    const r = await callToolFull('create_envelope', {
       document_name: 'X',
       pdf_base64: 'JVBERi0=',
       signers: [{ email: 'a@b.co', name: 'A' }],
     });
-    assert.equal(text, 'Error: Insufficient credit — your balance is $0.00');
+    assert.equal(r.isError, true);
+    assert.match(r.content[0]!.text, /402/);
+    assert.match(r.content[0]!.text, /payment_required/);
+    assert.match(r.content[0]!.text, /Insufficient credit/);
+  });
+
+  it('#121/#122 — providing neither PDF source fails locally (isError) with no network call', async () => {
+    const r = await callToolFull('create_envelope', { document_name: 'X', signers: [{ email: 'a@b.co', name: 'A' }] });
+    assert.equal(r.isError, true);
+    assert.match(r.content[0]!.text, /exactly one of pdf_base64 or pdf_url/);
+    assert.equal(calls.length, 0, 'no network call for a local validation failure');
+  });
+
+  it('#121/#122 — providing BOTH PDF sources fails locally (isError) with no network call', async () => {
+    const r = await callToolFull('create_envelope', {
+      document_name: 'X',
+      pdf_base64: 'JVBERi0=',
+      pdf_url: 'https://example.test/doc.pdf',
+      signers: [{ email: 'a@b.co', name: 'A' }],
+    });
+    assert.equal(r.isError, true);
+    assert.equal(calls.length, 0);
   });
 });
 
@@ -169,9 +203,29 @@ describe('check_envelope_status', () => {
     assert.deepEqual(JSON.parse(text), envelope);
   });
 
-  it('surfaces the API error message', async () => {
+  it('AC-125 — per-signer delivery_status passes through verbatim (pending / undeliverable / delivered), distinct from signing status', async () => {
+    const envelope = {
+      envelope_id: 'env-1',
+      status: 'active',
+      signers: [
+        { email: 'pending@x.com', status: 'pending', delivery_status: 'pending' },
+        { email: 'bounced@x.com', status: 'pending', delivery_status: 'undeliverable' },
+        { email: 'done@x.com', status: 'signed', delivery_status: 'delivered' },
+      ],
+    };
+    queue.push({ status: 200, body: envelope });
+    const parsed = JSON.parse(await callTool('check_envelope_status', { envelope_id: 'env-1' })) as typeof envelope;
+    assert.equal(parsed.signers[1]!.delivery_status, 'undeliverable');
+    assert.equal(parsed.signers[1]!.status, 'pending', 'delivery_status is distinct from signing status');
+    assert.equal(parsed.signers[2]!.delivery_status, 'delivered');
+  });
+
+  it('#119 — a non-ok response is a coded isError result', async () => {
     queue.push({ status: 404, body: { error: 'Envelope not found', code: 'not_found' } });
-    assert.equal(await callTool('check_envelope_status', { envelope_id: 'nope' }), 'Error: Envelope not found');
+    const r = await callToolFull('check_envelope_status', { envelope_id: 'nope' });
+    assert.equal(r.isError, true);
+    assert.match(r.content[0]!.text, /404/);
+    assert.match(r.content[0]!.text, /not_found/);
   });
 });
 
@@ -186,9 +240,12 @@ describe('list_envelopes', () => {
     assert.deepEqual(JSON.parse(text), body);
   });
 
-  it('surfaces the API error message', async () => {
+  it('#119 — a non-ok response is a coded isError result', async () => {
     queue.push({ status: 401, body: { error: 'Authentication required', code: 'auth_invalid_key' } });
-    assert.equal(await callTool('list_envelopes', {}), 'Error: Authentication required');
+    const r = await callToolFull('list_envelopes', {});
+    assert.equal(r.isError, true);
+    assert.match(r.content[0]!.text, /401/);
+    assert.match(r.content[0]!.text, /auth_invalid_key/);
   });
 });
 
@@ -201,9 +258,12 @@ describe('send_reminder', () => {
     assert.equal(text, 'Sent reminders to 2 pending signer(s).');
   });
 
-  it('surfaces the API error message (e.g. a state conflict)', async () => {
-    queue.push({ status: 409, body: { error: 'Envelope is not active', code: 'state_envelope_inactive' } });
-    assert.equal(await callTool('send_reminder', { envelope_id: 'env-7' }), 'Error: Envelope is not active');
+  it('#119 — a state-conflict is a coded isError result', async () => {
+    queue.push({ status: 409, body: { error: 'Envelope is not active', code: 'state_not_active' } });
+    const r = await callToolFull('send_reminder', { envelope_id: 'env-7' });
+    assert.equal(r.isError, true);
+    assert.match(r.content[0]!.text, /409/);
+    assert.match(r.content[0]!.text, /state_not_active/);
   });
 });
 
@@ -216,20 +276,25 @@ describe('void_envelope', () => {
     assert.equal(text, 'Envelope env-7 has been voided.');
   });
 
-  it('surfaces the API error message', async () => {
+  it('#119 — a scope 403 is a coded isError result', async () => {
     queue.push({ status: 403, body: { error: 'API key not allowed for this action', code: 'auth_key_scope' } });
-    assert.equal(await callTool('void_envelope', { envelope_id: 'env-7' }), 'Error: API key not allowed for this action');
+    const r = await callToolFull('void_envelope', { envelope_id: 'env-7' });
+    assert.equal(r.isError, true);
+    assert.match(r.content[0]!.text, /403/);
+    assert.match(r.content[0]!.text, /auth_key_scope/);
   });
 });
 
-describe('Authorization passthrough', () => {
-  it('omits the Authorization header entirely when KYSIGNED_AUTHORIZATION is unset (never sends an empty one)', async () => {
+describe('#122 — missing-auth fast-fail (no wasted network call)', () => {
+  it('when KYSIGNED_AUTHORIZATION is unset, tools fail locally (isError) with actionable guidance and NO fetch', async () => {
     const saved = process.env.KYSIGNED_AUTHORIZATION;
     delete process.env.KYSIGNED_AUTHORIZATION;
     try {
-      queue.push({ status: 401, body: { error: 'Authentication required', code: 'auth_required' } });
-      await callTool('list_envelopes', {});
-      assert.equal('Authorization' in calls[0]!.headers, false);
+      const r = await callToolFull('list_envelopes', {});
+      assert.equal(r.isError, true);
+      assert.match(r.content[0]!.text, /KYSIGNED_AUTHORIZATION is not set/);
+      assert.match(r.content[0]!.text, /\/account\/api-keys/);
+      assert.equal(calls.length, 0, 'no network call was made');
     } finally {
       process.env.KYSIGNED_AUTHORIZATION = saved;
     }

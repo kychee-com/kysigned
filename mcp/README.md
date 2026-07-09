@@ -29,6 +29,20 @@ KYSIGNED_AUTHORIZATION=ksk_your_key_here \
 npx -y kysigned-mcp
 ```
 
+`KYSIGNED_ENDPOINT` may include a trailing slash or a path prefix — it is normalized once at startup. If `KYSIGNED_AUTHORIZATION` is missing, the tools fail locally with actionable guidance instead of sending an unauthenticated request.
+
+### Diagnostics (for humans configuring a host)
+
+The bin is normally launched by an MCP host, but you can run it directly while wiring one up:
+
+```bash
+kysigned-mcp --version   # print the version
+kysigned-mcp --help      # usage, env vars, and a host config example
+kysigned-mcp doctor      # check the endpoint URL, auth presence, and /v1/health reachability
+```
+
+On normal startup a one-line masked banner (`kysigned-mcp <version> endpoint=… auth=ksk_…abcd`) is written to **stderr** so stdout stays clean for the MCP protocol.
+
 ## Wire it up to Claude Desktop
 
 Edit your Claude Desktop MCP config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
@@ -67,6 +81,8 @@ Cursor Settings → MCP → Add New Server:
 
 The server exposes 5 tools — all signing operations against a running kysigned instance. (Provisioning a new instance is a deploy-time concern — see the [main README](../README.md) — not an MCP tool.) All take JSON arguments and return JSON results.
 
+Each tool carries MCP **annotations** so a host can tell them apart: `check_envelope_status` and `list_envelopes` are read-only; `create_envelope` and `send_reminder` send email (and create consumes a creator credit); `void_envelope` is **destructive** (irreversible cancellation). A non-2xx API response or a transport failure comes back as an MCP result with `isError: true`, carrying the HTTP status and the stable error `code` (e.g. `[402] payment_required: …`), so agents branch correctly instead of treating a failure as success.
+
 ### `create_envelope`
 
 Create a new signing envelope. Uploads a PDF (base64 or URL), defines signers, and returns the envelope ID + per-signer signing links.
@@ -81,12 +97,14 @@ Create a new signing envelope. Uploads a PDF (base64 or URL), defines signers, a
     { "email": "alice@example.com", "name": "Alice" },
     { "email": "bob@example.com",   "name": "Bob"   }
   ],
+  "message": "Please countersign our mutual NDA.",
   "callback_url": "https://your.app/webhooks/kysigned",
-  "expiry_days": 14
+  "expiry_days": 14,
+  "auto_close": true
 }
 ```
 
-You can pass `pdf_url` instead of `pdf_base64` to fetch the PDF from a URL. Every signer is notified at once.
+Provide **exactly one** of `pdf_base64` or `pdf_url` (the server fetches `pdf_url` for you) — the tool rejects zero or both locally before any network call. Optional fields: `message` (included in the signing-request email), `expiry_days` (omit for the operator default), `auto_close` (`false` = manual seal after all signers sign). Signer `email`s are validated locally and capped at 20. Every signer is notified at once.
 
 `callback_url` (https only) arms a **signed completion webhook**: the create response includes `callback_secret` (`whs_…`, returned exactly once). At completion the instance POSTs `{ "type": "envelope.completed", … }` to your URL with `X-Kysigned-Signature: t=<unix>,v1=<hex hmac-sha256(callback_secret, "<t>." + rawBody)>` — verify by recomputing the HMAC and rejecting stale timestamps. Deliveries retry (at-least-once), so make the receiver idempotent on `envelope_id`.
 
