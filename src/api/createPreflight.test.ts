@@ -7,6 +7,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { handleCreatePreflight } from './createPreflight.js';
+import { handleCreateEnvelope } from './envelope.js';
+import type { CreateEnvelopeRequest } from './envelope.js';
 
 // A minimal valid PDF (same fixture the create tests use, truncated header ok for shape checks).
 const TINY_PDF_B64 =
@@ -69,4 +71,69 @@ describe('handleCreatePreflight — #129 free pre-payment validation', () => {
     assert.equal(r.status, 400);
     assert.equal((r.body as { code: string }).code, 'rate_size_pdf');
   });
+});
+
+// ── AC-142 parity pin (49.1) — a preflight verdict must MATCH the real create ──
+// The preflight's promise is "a PASS means these checks will not reject the paid
+// create", which silently breaks if the create's deterministic validation gains
+// or changes a code the preflight doesn't mirror. Drive BOTH handlers with the
+// same defective body and assert the same 400 + the same taxonomy code. The
+// create context uses THROWING stubs: every parity body must be rejected before
+// any DB/email work, so a stub firing means the create stopped rejecting it.
+describe('preflight ↔ create parity (AC-142)', () => {
+  const throwingCtx = {
+    pool: {
+      query: async () => {
+        throw new Error('parity body reached the DB — create no longer rejects it');
+      },
+      end: async () => {},
+    },
+    emailProvider: {
+      send: async () => {
+        throw new Error('parity body reached email — create no longer rejects it');
+      },
+    },
+    baseUrl: 'https://kysigned.com',
+    senderIdentity: 'creator@example.com',
+  } as unknown as Parameters<typeof handleCreateEnvelope>[0];
+
+  // creator_email is x402-route-only — the standard create never sees it, so the
+  // shared parity bodies omit it (the preflight treats it as optional).
+  const { creator_email: _drop, ...SHARED } = OK;
+
+  const CASES: Array<{ name: string; body: Record<string, unknown>; code: string }> = [
+    { name: 'neither pdf source', body: (({ pdf_base64: _p, ...rest }) => rest)({ ...SHARED }), code: 'validation_pdf' },
+    { name: 'missing document_name', body: { ...SHARED, document_name: '' }, code: 'validation_document_name' },
+    { name: 'no signers', body: { ...SHARED, signers: [] }, code: 'validation_signers' },
+    {
+      name: 'plus-alias signer',
+      body: { ...SHARED, signers: [{ email: 'agent-smoke+signer@kychee.com', name: 'S' }] },
+      code: 'validation_plus_alias',
+    },
+    {
+      name: 'oversize pdf_base64',
+      body: { ...SHARED, pdf_base64: Buffer.alloc(3_548_000, 0x41).toString('base64') },
+      code: 'rate_size_pdf',
+    },
+    {
+      name: 'decodable but non-PDF pdf_base64',
+      body: { ...SHARED, pdf_base64: Buffer.from('not a pdf at all', 'utf8').toString('base64') },
+      code: 'validation_pdf',
+    },
+  ];
+
+  for (const c of CASES) {
+    it(`${c.name} → the SAME 400 ${c.code} from preflight and create`, async () => {
+      const pre = await handleCreatePreflight({ ...c.body });
+      const create = await handleCreateEnvelope(throwingCtx, { ...c.body } as unknown as CreateEnvelopeRequest);
+      assert.equal(pre.status, 400, 'preflight status');
+      assert.equal(create.status, 400, 'create status');
+      assert.equal((pre.body as { code: string }).code, c.code, 'preflight code');
+      assert.equal(
+        (create.body as { code?: string }).code,
+        (pre.body as { code: string }).code,
+        'create code must equal preflight code',
+      );
+    });
+  }
 });
