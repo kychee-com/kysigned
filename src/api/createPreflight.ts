@@ -16,6 +16,7 @@ import { checkSignerAddresses } from './signerInboxGuard.js';
 import { isUploadTooLarge, uploadTooLargeMessage } from './uploadGuard.js';
 import { decodePdfBase64 } from '../pdf/hash.js';
 import { isPdfParseable } from '../pdf/validate.js';
+import type { DbPool } from '../db/pool.js';
 
 export interface PreflightResult {
   status: number;
@@ -24,14 +25,43 @@ export interface PreflightResult {
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-export async function handleCreatePreflight(body: Record<string, unknown>): Promise<PreflightResult> {
+export async function handleCreatePreflight(body: Record<string, unknown>, pool?: DbPool): Promise<PreflightResult> {
   // creator_email is OPTIONAL here (a keyed/session create supplies none); when
   // present it must be deliverable — same shape the x402 create requires.
   const rawEmail = body['creator_email'];
+  let normalizedEmail = '';
   if (rawEmail !== undefined) {
     const email = typeof rawEmail === 'string' ? rawEmail.trim().toLowerCase() : '';
     if (!EMAIL_RE.test(email)) {
       return { status: 400, body: { code: 'validation_creator_email', error: 'creator_email must be a deliverable address.' } };
+    }
+    normalizedEmail = email;
+  }
+
+  // AC-144 spending-intent replay lookup: the x402 rail is ALWAYS-priced at the
+  // platform (settle-pre-invoke), so a client that simply re-sends a paid
+  // create pays a SECOND time before the server can replay the stored envelope.
+  // Given creator_email + the caller's intent key, a stored 201 under
+  // `x402:idem:<key>` means this intent already produced an envelope — report
+  // it (replay-first, mirroring withCreateIdempotency: even a now-different or
+  // now-invalid retry payload must not trigger a new charge; the paid path
+  // would 409 it, after taking the money).
+  const rawIntent = body['idempotency_key'];
+  const intentKey = typeof rawIntent === 'string' ? rawIntent.trim() : '';
+  if (pool && intentKey && normalizedEmail) {
+    const existing = await pool.query(
+      `SELECT response_status, response_body
+         FROM idempotency_keys
+        WHERE creator_email = $1 AND idempotency_key = $2`,
+      [normalizedEmail, `x402:idem:${intentKey}`],
+    );
+    const row = existing.rows[0] as { response_status: number | null; response_body: unknown } | undefined;
+    if (row && row.response_status === 201) {
+      // jsonb arrives as an object OR a serialized string (prod HttpDbPool
+      // wire shape) — tolerate both, same as the replay in idempotentCreate.
+      const envelope =
+        typeof row.response_body === 'string' ? (JSON.parse(row.response_body) as unknown) : row.response_body;
+      return { status: 200, body: { ok: true, already_created: true, envelope: envelope as Record<string, unknown> } };
     }
   }
 
@@ -69,5 +99,7 @@ export async function handleCreatePreflight(body: Record<string, unknown>): Prom
     }
   }
 
-  return { status: 200, body: { ok: true } };
+  // With an intent key, say explicitly that no envelope exists for it yet —
+  // the caller uses this to decide "safe to pay".
+  return { status: 200, body: { ok: true, ...(intentKey ? { already_created: false } : {}) } };
 }

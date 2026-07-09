@@ -211,8 +211,10 @@ the private key is never a tool argument and never appears in output):
 - **create_envelope_x402** — the wallet-paid create (annotated destructive so hosts confirm the
   spend): runs the free preflight FIRST, then a balance gate — an invalid request or short balance
   never charges — then pays via x402 and returns the envelope + `payment` receipt + `tracking`
-  note. Retries are safe: pass `idempotency_key` (or reuse the returned `spending_intent_key`) and
-  a retry replays the same envelope without paying twice.
+  note. Retries are safe: pass `idempotency_key` (or reuse the returned `spending_intent_key`) —
+  the preflight's intent lookup answers `already_created` and the tool returns the stored envelope
+  with `replayed: true`, paying nothing (the route is always-priced, so a blind re-send would
+  settle a second payment).
 
 Verification is intentionally NOT a tool — the bundle verifies client-side at `/verify` or with the
 reference verifier in the public repo.

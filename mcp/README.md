@@ -174,7 +174,7 @@ Create an envelope **paying the per-envelope price from the host-local run402 al
 }
 ```
 
-`creator_email` is **required**. `idempotency_key` is your spending-intent key — a retry with the same key replays the same envelope **without paying twice**; omit it and a generated key is returned as `spending_intent_key`.
+`creator_email` is **required**. `idempotency_key` is your spending-intent key — a retry with the same key replays the same envelope **without paying twice**: before paying, the tool asks the instance's free preflight whether that intent already produced an envelope, and if so returns it with `replayed: true` and no charge (the x402 route is always-priced, so blindly re-sending would settle a second payment). Omit the key and a generated one is returned as `spending_intent_key` — reuse it to retry safely.
 
 **Pay-safe order** (an invalid request or a short balance never charges): the tool first runs the instance's **free preflight** (`POST /v1/envelope/preflight` — the create's own deterministic validation), then checks the wallet balance against the live price, and only then pays via the x402 challenge/pay/retry flow. **Returns:** the envelope fields plus the `payment` receipt (stable `payment_id`, amount, network, asset, payee, settlement reference, settlement time), the `tracking` note (status links need creator auth), and `spending_intent_key`. Payment failures come back machine-readably — a post-payment validation failure banks the money as account credit for `creator_email` (`payment_banked: true` + recovery `next_actions`; never lost), and insufficient on-chain funds surface the platform's stable `payment_insufficient_funds` code with a `fund_wallet` next action.
 

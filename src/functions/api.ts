@@ -316,10 +316,11 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
       return json(r.body, r.status);
     }
 
-    // ── #129 — free create pre-validation (public; no charge, no create) ──
+    // ── #129 — free create pre-validation (public; no charge, no create).
+    // The pool powers the AC-144 spending-intent replay lookup (49.8). ──
     case 'createPreflight': {
       const body = await readJsonBody(req);
-      const r = await handleCreatePreflight(body as Record<string, unknown>);
+      const r = await handleCreatePreflight(body as Record<string, unknown>, deps.pool);
       return json(r.body, r.status);
     }
 

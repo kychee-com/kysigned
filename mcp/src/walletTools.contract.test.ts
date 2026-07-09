@@ -71,12 +71,14 @@ function createFlowSeams(opts: {
   paidUnavailable?: boolean;
 }) {
   const unpaidCalls: string[] = [];
+  const preflightBodies: Array<Record<string, unknown>> = [];
   const paidCalls: Array<{ url: string; headers: Record<string, string>; body: Record<string, unknown> }> = [];
   let factoryCalls = 0;
   const fetchFn: typeof fetch = async (url, init) => {
     const u = String(url);
     unpaidCalls.push(u);
     if (u.endsWith('/v1/envelope/preflight')) {
+      preflightBodies.push(init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {});
       const p = opts.preflight ?? { status: 200, body: { ok: true } };
       return new Response(JSON.stringify(p.body), { status: p.status, headers: { 'content-type': 'application/json' } });
     }
@@ -97,7 +99,7 @@ function createFlowSeams(opts: {
       return opts.paidUnavailable ? null : paidFetch;
     },
   });
-  return { s, unpaidCalls, paidCalls, factory: () => factoryCalls };
+  return { s, unpaidCalls, preflightBodies, paidCalls, factory: () => factoryCalls };
 }
 
 const CREATE_ARGS = {
@@ -228,13 +230,38 @@ describe('create_envelope_x402 — AC-144/AC-145 over the tool surface, NO auth 
     assert.ok(flow.unpaidCalls.some((u) => u.endsWith('/v1/envelope/preflight')));
   });
 
-  it('honors a caller-supplied idempotency_key verbatim (AC-144 retry control)', async () => {
+  it('honors a caller-supplied idempotency_key verbatim (AC-144 retry control) and sends it to preflight', async () => {
     const flow = createFlowSeams({ paid: { status: 201, body: PAID_201 } });
     setWalletSeamsForTests(flow.s);
     const r = await call('create_envelope_x402', { ...CREATE_ARGS, idempotency_key: 'agent-intent-7' });
     const out = JSON.parse(r.content[0]!.text) as Record<string, unknown>;
     assert.equal(out['spending_intent_key'], 'agent-intent-7');
     assert.equal(flow.paidCalls[0]!.headers['Idempotency-Key'], 'agent-intent-7');
+    // the preflight body carried the intent key → the server ran the AC-144 replay lookup
+    assert.equal(flow.preflightBodies[0]!['idempotency_key'], 'agent-intent-7');
+  });
+
+  it('AC-144 retry: preflight already_created → the stored envelope comes back replayed, NOTHING is paid', async () => {
+    const flow = createFlowSeams({
+      preflight: {
+        status: 200,
+        body: {
+          ok: true,
+          already_created: true,
+          envelope: { envelope_id: 'env-prev', status_url: 'https://wallet-contract.test/status/env-prev' },
+        },
+      },
+    });
+    setWalletSeamsForTests(flow.s);
+    const r = await call('create_envelope_x402', { ...CREATE_ARGS, idempotency_key: 'agent-intent-7' });
+    assert.ok(!r.isError, r.content[0]!.text);
+    const out = JSON.parse(r.content[0]!.text) as Record<string, unknown>;
+    assert.equal(out['replayed'], true);
+    assert.equal(out['envelope_id'], 'env-prev');
+    assert.equal(out['spending_intent_key'], 'agent-intent-7');
+    assert.equal(flow.factory(), 0, 'a replayed intent must never construct the paid fetch');
+    assert.equal(flow.paidCalls.length, 0);
+    assert.ok(!flow.unpaidCalls.some((u) => u.endsWith('/v1/x402/envelope')), 'no challenge probe either');
   });
 
   it('a preflight validation failure surfaces the coded error and NEVER attempts payment (AC-144 ordering)', async () => {

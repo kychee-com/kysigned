@@ -73,6 +73,83 @@ describe('handleCreatePreflight — #129 free pre-payment validation', () => {
   });
 });
 
+// ── AC-144 spending-intent replay lookup (49.8) ─────────────────────────────
+// The x402 rail is ALWAYS-priced at the platform (settle-pre-invoke), so a
+// tool-level retry that simply re-sends pays a SECOND time before the server
+// can replay the stored envelope (discovered live, 49.7). The free preflight
+// therefore exposes the intent lookup: given creator_email + idempotency_key,
+// a stored 201 under x402:idem:<key> returns already_created + the envelope —
+// the caller (kysigned-mcp) returns it WITHOUT paying.
+describe('preflight spending-intent replay lookup (AC-144)', () => {
+  function poolWith(row: { response_status: number | null; response_body: unknown } | undefined) {
+    const queries: Array<{ text: string; values: unknown[] }> = [];
+    return {
+      queries,
+      pool: {
+        async query(text: string, values?: unknown[]) {
+          queries.push({ text, values: values ?? [] });
+          return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+        },
+        async end() {},
+      },
+    };
+  }
+
+  it('a stored 201 for (creator_email, x402:idem:<key>) → already_created + the stored envelope (prod string wire shape)', async () => {
+    const { pool, queries } = poolWith({
+      response_status: 201,
+      response_body: JSON.stringify({ envelope_id: 'env-9', status_url: 'https://x/status/env-9' }),
+    });
+    const r = await handleCreatePreflight(
+      { ...OK, creator_email: '  Agent@Example.com ', idempotency_key: 'intent-1' },
+      pool as never,
+    );
+    assert.equal(r.status, 200);
+    const body = r.body as { ok: boolean; already_created: boolean; envelope: { envelope_id: string } };
+    assert.equal(body.ok, true);
+    assert.equal(body.already_created, true);
+    assert.equal(body.envelope.envelope_id, 'env-9');
+    // scoped to the NORMALIZED email + the prefixed key
+    assert.deepEqual(queries[0]!.values, ['agent@example.com', 'x402:idem:intent-1']);
+  });
+
+  it('no stored row → normal validation + already_created:false', async () => {
+    const { pool } = poolWith(undefined);
+    const r = await handleCreatePreflight({ ...OK, idempotency_key: 'intent-2' }, pool as never);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { ok: true, already_created: false });
+  });
+
+  it('an in-flight or non-201 row is NOT replayable → already_created:false', async () => {
+    const { pool } = poolWith({ response_status: null, response_body: null });
+    const r = await handleCreatePreflight({ ...OK, idempotency_key: 'intent-3' }, pool as never);
+    assert.equal((r.body as { already_created?: boolean }).already_created, false);
+  });
+
+  it('replay-first: a stored 201 wins even when the retry payload is now invalid (spend-safety mirrors the paid path)', async () => {
+    const { pool } = poolWith({ response_status: 201, response_body: { envelope_id: 'env-10' } });
+    const r = await handleCreatePreflight(
+      { creator_email: 'agent@example.com', idempotency_key: 'intent-4', document_name: '' },
+      pool as never,
+    );
+    assert.equal(r.status, 200);
+    assert.equal((r.body as { already_created: boolean }).already_created, true);
+  });
+
+  it('without a pool (old callers) or without creator_email, the lookup is skipped and validation runs as before', async () => {
+    const noPool = await handleCreatePreflight({ ...OK, idempotency_key: 'intent-5' });
+    assert.equal(noPool.status, 200);
+    assert.equal((noPool.body as { already_created?: boolean }).already_created, false);
+
+    const { creator_email: _drop, ...noEmail } = OK;
+    const { pool, queries } = poolWith({ response_status: 201, response_body: { envelope_id: 'env-11' } });
+    const r = await handleCreatePreflight({ ...noEmail, idempotency_key: 'intent-6' }, pool as never);
+    assert.equal(queries.length, 0, 'no lookup without a creator_email to scope by');
+    assert.equal(r.status, 200);
+    assert.equal((r.body as { already_created?: boolean }).already_created, false);
+  });
+});
+
 // ── AC-142 parity pin (49.1) — a preflight verdict must MATCH the real create ──
 // The preflight's promise is "a PASS means these checks will not reject the paid
 // create", which silently breaks if the create's deterministic validation gains

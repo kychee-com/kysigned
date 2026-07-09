@@ -183,8 +183,8 @@
     },
     "/v1/envelope/preflight": {
       "post": {
-        "summary": "Validate a create body for FREE (no charge, no create) — check inputs before paying the x402 create",
-        "description": "Runs the same deterministic create validations (creator_email shape, signer addresses incl. the plus-alias rule, document_name, PDF presence/size/parseability for pdf_base64) without creating or charging. Use it before POST /v1/x402/envelope so a request that would be rejected does not consume the on-chain payment (run402 settles before the app validates). A PASS means these checks won't reject the paid create. creator_email is optional (omit it for a keyed/session create). pdf_url is not fetched here.",
+        "summary": "Validate a create body for FREE (no charge, no create) — check inputs and replay-check a spending intent before paying the x402 create",
+        "description": "Runs the same deterministic create validations (creator_email shape, signer addresses incl. the plus-alias rule, document_name, PDF presence/size/parseability for pdf_base64) without creating or charging. Use it before POST /v1/x402/envelope so a request that would be rejected does not consume the on-chain payment (run402 settles before the app validates). A PASS means these checks won't reject the paid create. creator_email is optional (omit it for a keyed/session create). pdf_url is not fetched here. Spending-intent replay check: include creator_email + the idempotency_key you will send on the paid call — if that intent already produced an envelope, the 200 returns { ok: true, already_created: true, envelope: <the stored create result> } and you MUST NOT pay again (the route is always-priced, so re-sending a completed intent settles a second payment; the money would be banked as credit, not lost, but the right move is to not pay). With a key and no prior envelope the 200 carries already_created: false.",
         "security": [],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/X402CreateEnvelopeRequest" } } } },
         "responses": {

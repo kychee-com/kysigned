@@ -300,16 +300,40 @@ server.registerTool(
 
       const endpoint = getEndpoint();
       const { idempotency_key, ...createBody } = params;
+      const intentKey = typeof idempotency_key === 'string' && idempotency_key.trim() ? idempotency_key.trim() : randomUUID();
 
-      // 2) FREE preflight — the create's own deterministic validation, before any charge (AC-142/AC-144).
+      // 2) FREE preflight — the create's own deterministic validation, before
+      // any charge (AC-142/AC-144). Carries the spending-intent key so the
+      // server's replay lookup can answer "this intent already produced an
+      // envelope" — the x402 rail is always-priced, so re-sending a completed
+      // intent would settle a SECOND payment before the server could replay.
       const pre = await seams.fetchFn(`${endpoint}/v1/envelope/preflight`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(createBody),
+        body: JSON.stringify({ ...createBody, idempotency_key: intentKey }),
       });
       if (pre.status !== 200) {
         const body = await pre.text();
         return textResult(`Error: preflight rejected the request (nothing was charged): ${body}`, true);
+      }
+      const preBody = (await pre.json().catch(() => ({}))) as Record<string, unknown>;
+      if (preBody['already_created'] === true) {
+        const envelope =
+          preBody['envelope'] && typeof preBody['envelope'] === 'object'
+            ? (preBody['envelope'] as Record<string, unknown>)
+            : {};
+        return textResult(
+          JSON.stringify(
+            {
+              ...envelope,
+              replayed: true,
+              spending_intent_key: intentKey,
+              note: 'This spending intent already produced this envelope — nothing was paid or created on this call.',
+            },
+            null,
+            2,
+          ),
+        );
       }
 
       // 3) Readiness gate — challenge terms vs on-chain balance, before any charge (AC-145).
@@ -336,7 +360,6 @@ server.registerTool(
           true,
         );
       }
-      const intentKey = typeof idempotency_key === 'string' && idempotency_key.trim() ? idempotency_key.trim() : randomUUID();
       const res = await paidFetch(`${endpoint}${X402_CREATE_PATH}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': intentKey },
