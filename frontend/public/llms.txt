@@ -89,6 +89,10 @@ the flat per-envelope price per call:
    the create debits it → `201` with the same response shape as `POST /v1/envelope`. Retrying with
    the same settled payment replays the SAME 201 — one payment, one envelope, no double-charge.
 
+Optional retry control: send your own `Idempotency-Key` header on the paid call — a retry with the
+same key replays the same envelope (the create dedupes on your key); without one, dedupe keys on the
+settled payment id. The ledger credit is always exactly-once per settled payment either way.
+
 Discovery: an UNFUNDED `POST /v1/envelope` returns
 `402 { "code": "payment_required", "x402_route": "/v1/x402/envelope", "x402_price_usd_micros": <price> }`
 so you can fall over to the paid route programmatically. Dashboard continuity: sign in later with

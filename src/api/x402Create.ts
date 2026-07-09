@@ -88,6 +88,7 @@ export async function handleX402CreateEnvelope(
   payment: RoutedHttpPaymentContextV1 | null,
   seams: X402CreateSeams,
   body: Record<string, unknown>,
+  callerIdempotencyKey?: string | null,
 ): Promise<CreateResult> {
   // Config is on but no gateway-settled context reached us: the route is not
   // actually priced on this deployment (manifest/config drift) or the platform
@@ -148,8 +149,14 @@ export async function handleX402CreateEnvelope(
     };
   }
 
-  // The standard create, keyed on the payment id: a same-proof retry (the
-  // gateway resolves it to the SAME payment id) replays the same 201.
+  // Create idempotency key (#128 — run402 paid-function idempotency): honor a
+  // CALLER-supplied key when present so an agent's retry framework dedupes the
+  // create by its own spending-intent key; otherwise the settled payment_id (a
+  // same-proof retry resolves to the SAME payment_id → same 201). The ledger
+  // CREDIT stays payment_id-keyed either way, so money is exactly-once per
+  // settled payment regardless of the create key.
+  const callerKey = typeof callerIdempotencyKey === 'string' ? callerIdempotencyKey.trim() : '';
+  const createKey = callerKey ? `x402:idem:${callerKey}` : `x402:${payment.paymentId}`;
   const { creator_email: _consumed, ...createBody } = body;
-  return seams.runCreate(creatorEmail, `x402:${payment.paymentId}`, createBody);
+  return seams.runCreate(creatorEmail, createKey, createBody);
 }

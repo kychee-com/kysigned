@@ -137,6 +137,26 @@ describe('handleX402CreateEnvelope — orchestration (F-30.2 / AC-134 / AC-141)'
     assert.equal(created[0]!.body.document_name, 'Paid doc');
   });
 
+  it('honors a caller-supplied idempotency key as the create key (agent retry control), else falls back to payment_id', async () => {
+    // #128 — run402 paid-function idempotency: an agent can send Idempotency-Key
+    // so its retry framework dedupes the create by its own spending-intent key,
+    // not only by the settled payment_id. The ledger credit stays payment_id-keyed.
+    const withKey = recordingSeams();
+    await handleX402CreateEnvelope(CONFIG, PAYMENT, withKey.seams, { ...BODY }, 'agent-intent-42');
+    assert.equal(withKey.created[0]!.key, 'x402:idem:agent-intent-42');
+    // money dedupe is still per settled payment
+    assert.deepEqual(withKey.credited, [{ email: 'agent@example.com', paymentId: 'pay_abc123' }]);
+
+    const noKey = recordingSeams();
+    await handleX402CreateEnvelope(CONFIG, PAYMENT, noKey.seams, { ...BODY });
+    assert.equal(noKey.created[0]!.key, 'x402:pay_abc123');
+
+    // blank / whitespace key is ignored (falls back to payment_id)
+    const blank = recordingSeams();
+    await handleX402CreateEnvelope(CONFIG, PAYMENT, blank.seams, { ...BODY }, '   ');
+    assert.equal(blank.created[0]!.key, 'x402:pay_abc123');
+  });
+
   it('credit failure → 500 internal_x402_credit and the create NEVER runs', async () => {
     const { created, seams } = recordingSeams({
       creditPayment: async () => {

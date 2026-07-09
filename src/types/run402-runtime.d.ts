@@ -16,8 +16,9 @@
  * per the documented recipe). Mirrors the `mailauth.d.ts` ambient-shim pattern.
  *
  * Keep these in lock-step with the real package signatures
- * (`@run402/functions@3.7.0`, `@run402/sdk@4.2.0`). Add to the shim only when a
- * non-test module imports a new symbol.
+ * (`@run402/functions@3.7.1`, `@run402/sdk@4.2.1`). Add to the shim only when a
+ * non-test module imports a new symbol. (The 3.7.1 caller idempotency key rides
+ * the `x-run402-idempotency-key` request header — read directly, no new import.)
  */
 declare module '@run402/functions' {
   /** Service-role HTTP SQL client (BYPASSRLS). */

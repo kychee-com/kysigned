@@ -334,7 +334,14 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
         ...deps.apiContext(creatorEmail),
         senderGate: buildHostedSenderGate(deps.pool, cfg.priceUsdMicros),
       }));
-      const r = await handleX402CreateEnvelope(cfg, payment, seams, body as Record<string, unknown>);
+      // #128 — run402 paid-function idempotency: honor a caller-supplied key.
+      // Prefer the platform-forwarded, gateway-trusted `x-run402-idempotency-key`
+      // (set by run402 when it starts propagating it on billed routes); fall back
+      // to a plain `idempotency-key` the gateway passes through today. Absent →
+      // the handler keys on the settled payment_id.
+      const idemKey =
+        req.headers.get('x-run402-idempotency-key') ?? req.headers.get('idempotency-key');
+      const r = await handleX402CreateEnvelope(cfg, payment, seams, body as Record<string, unknown>, idemKey);
       return json(r.body, r.status);
     }
 
