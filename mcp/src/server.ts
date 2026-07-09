@@ -17,6 +17,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { VERSION } from './version.js';
 import { normalizeEndpoint, apiRequest, textResult, type McpToolResult } from './http.js';
+import { getWalletStatus, defaultWalletSeams, X402RouteError, type WalletSeams } from './wallet.js';
 
 /** The configured instance, normalized per call (env may change between calls in tests). */
 export function getEndpoint(): string {
@@ -166,6 +167,45 @@ server.registerTool(
     });
     if (!r.ok) return r.result;
     return textResult(`Sent reminders to ${r.data['reminded']} pending signer(s).`);
+  },
+);
+
+// ── wallet seams (F-30.5) — injectable for tests, real run402 stack otherwise ─
+let walletSeamsOverride: WalletSeams | undefined;
+/** TEST-ONLY: inject fake wallet seams (pass undefined to restore the real ones). */
+export function setWalletSeamsForTests(seams?: WalletSeams): void {
+  walletSeamsOverride = seams;
+}
+function walletSeams(): WalletSeams {
+  return walletSeamsOverride ?? defaultWalletSeams();
+}
+
+/** Map wallet-path failures to the MCP error contract (`Error: <message>`). */
+function walletError(err: unknown): McpToolResult {
+  if (err instanceof X402RouteError) return textResult(`Error: ${err.message}`, true);
+  return textResult(`Error: ${err instanceof Error ? err.message : String(err)}`, true);
+}
+
+// ── wallet_status (read-only; part of the NO-KEY wallet-paid path, F-30.5) ───
+server.registerTool(
+  'wallet_status',
+  {
+    description:
+      'Report the local run402 wallet\'s payment readiness for wallet-paid envelope creation: wallet address, ' +
+      'network, asset, on-chain balance, the live per-envelope price (read from the x402 route\'s own challenge), ' +
+      'and whether the balance covers it (with funding guidance when short). Read-only — never creates or spends. ' +
+      'Needs no API key: the wallet-paid path works without KYSIGNED_AUTHORIZATION; the wallet is the host-local ' +
+      'run402 allowance wallet (created by `run402 init`; its key is never a tool argument and never appears in output).',
+    inputSchema: {},
+    annotations: { title: 'Wallet status', readOnlyHint: true, openWorldHint: true },
+  },
+  async () => {
+    try {
+      const status = await getWalletStatus(getEndpoint(), walletSeams());
+      return textResult(JSON.stringify(status, null, 2));
+    } catch (err) {
+      return walletError(err);
+    }
   },
 );
 

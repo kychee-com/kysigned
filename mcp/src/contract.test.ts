@@ -66,11 +66,11 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
 }
 
 describe('tool registration', () => {
-  it('exposes exactly the five ops tools', async () => {
+  it('exposes the five key-authenticated ops tools + the wallet pair (F-30.5)', async () => {
     const { tools } = await client.listTools();
     assert.deepEqual(
       tools.map((t) => t.name).sort(),
-      ['check_envelope_status', 'create_envelope', 'list_envelopes', 'send_reminder', 'void_envelope'],
+      ['check_envelope_status', 'create_envelope', 'list_envelopes', 'send_reminder', 'void_envelope', 'wallet_status'],
     );
   });
 
