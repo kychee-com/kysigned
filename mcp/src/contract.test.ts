@@ -70,7 +70,15 @@ describe('tool registration', () => {
     const { tools } = await client.listTools();
     assert.deepEqual(
       tools.map((t) => t.name).sort(),
-      ['check_envelope_status', 'create_envelope', 'list_envelopes', 'send_reminder', 'void_envelope', 'wallet_status'],
+      [
+        'check_envelope_status',
+        'create_envelope',
+        'create_envelope_x402',
+        'list_envelopes',
+        'send_reminder',
+        'void_envelope',
+        'wallet_status',
+      ],
     );
   });
 

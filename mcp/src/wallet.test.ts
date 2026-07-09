@@ -95,6 +95,7 @@ function seams(overrides: Partial<WalletSeams> = {}): WalletSeams {
     allowancePath: async () => 'C:/fake/home/.config/run402/allowance.json',
     fetchFn: fetchReturning(challenge402()),
     readBalanceAtomic: async () => 300_000n,
+    paidFetchFactory: async () => null,
     ...overrides,
   };
 }

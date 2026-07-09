@@ -95,10 +95,17 @@ export interface WalletSeams {
   readAllowanceAddress(): Promise<string | null>;
   /** Where the allowance file lives (for actionable "not configured" guidance). */
   allowancePath(): Promise<string>;
-  /** Fetch used for the unpaid challenge probe. */
+  /** Fetch used for the unpaid challenge probe and the free preflight. */
   fetchFn: typeof fetch;
   /** On-chain ERC-20 balance of `address` in atomic units. */
   readBalanceAtomic(q: { network: string; asset: string; address: string }): Promise<bigint>;
+  /**
+   * The x402-paying fetch (signs and retries 402 challenges from the local
+   * allowance wallet). Null when no wallet is configured or the payment stack
+   * is unavailable — callers must treat null as "cannot pay", never fall back
+   * to an unpaid fetch for the paid call.
+   */
+  paidFetchFactory(): Promise<typeof fetch | null>;
 }
 
 export type WalletStatus =
@@ -188,6 +195,12 @@ export function defaultWalletSeams(): WalletSeams {
     async allowancePath() {
       const { NodeCredentialsProvider } = await import('@run402/sdk/node');
       return new NodeCredentialsProvider().getAllowancePath();
+    },
+    async paidFetchFactory() {
+      // The SDK's x402 wrapper over the same allowance wallet (DD-30): signs
+      // 402 challenges; null when unconfigured or the payment libs are absent.
+      const { setupPaidFetch } = await import('@run402/sdk/node');
+      return setupPaidFetch();
     },
     fetchFn: (input, init) => globalThis.fetch(input, init),
     async readBalanceAtomic({ network, asset, address }) {
