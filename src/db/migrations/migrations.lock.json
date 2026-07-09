@@ -1,0 +1,14 @@
+{
+  "_comment": "APPEND-ONLY. Migrations are immutable once shipped: prod records them by name and never re-applies, so editing a file silently drifts prod (issue #115). To change the schema, ADD a new NNN_*.sql migration and regenerate this lock via scripts/gen-migrations-lock.mjs. The integrity test (integrity.test.ts) fails if any shipped file changes. Hashes are over LF-normalized content (CRLF-safe).",
+  "migrations": {
+    "001_schema.sql": "sha256:146b839f3a19c9ff69fb8e066d0771c2a4f336c68da1a8a849781439f3042bf3",
+    "002_drop_signing_order.sql": "sha256:81216411e99d51176df0226460b25082ecb126f25457a470cd351f089ee7cabd",
+    "003_family_b.sql": "sha256:cc33a788951ff50f1722e78fd9bbf97f5dfbcad45bba34e5b7f12131a2bfe986",
+    "004_signup_grant.sql": "sha256:3f5d912244f3695d744ea6e2dd153e850ee1db244d01b81e480a24c7e3063b25",
+    "005_email_triggers.sql": "sha256:e8f84ccaca741ee3612550c01581d7ca6278553b48fd5c6c2f6989bd7449938b",
+    "006_api_keys.sql": "sha256:9cc14e7bc9a4b28f2b902a2295bde32e30a0c38fa0eb58b4ea00056d4bf1afdf",
+    "007_idempotency_keys.sql": "sha256:92a95e63a3b6e9d326dde79c392f897d588af5b74b84df3627027dfbdce2b100",
+    "008_envelope_webhooks.sql": "sha256:cfc10f9d8401a6fa47ad63090b7231ab72ddbcb7c694ee3f550f2c86578fa663",
+    "009_credit_ledger_source_agnostic.sql": "sha256:bdb2530d80ac7efe5d5e9158b401ac9d46999616240b925ff9417e3ba4733232"
+  }
+}
