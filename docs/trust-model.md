@@ -11,6 +11,15 @@ anchors its time, and packages everything into a self-contained PDF — the
 **signing record** — that anyone can re-verify with public math and public
 archives, with no reliance on kysigned.
 
+The best-known objection to DKIM-as-evidence is deliberate rotate-and-publish
+(Matthew Green's proposal, implemented by tools like `dkim-rotate`): providers
+publish their old private keys so that bare DKIM signatures on old mail become
+deniable. kysigned assumes exactly that world. Evidence is anchored at signing
+time, so a key published later cannot forge or deny a record sealed before
+publication; what rotate-and-publish kills is after-the-fact DNS checking, which
+this design never uses. See "Leaked or rotated-published DKIM key" and "Provider
+key-rotation race" in §3.
+
 ---
 
 ## 1. The trust set
@@ -68,7 +77,7 @@ mirrors this at length under "Why two timestamp anchors."
 
 Each item is a threat, then what stops it (and any residual risk).
 
-- **Leaked or rotated-published DKIM key.** A provider's old private key leaks, or
+- **Leaked or rotated-published DKIM key (the `dkim-rotate` model).** A provider's old private key leaks, or
   a later-published key is used to forge a historical "signature". *Defence:* every
   signature is joined to a **timestamp-in-window** check — the key must appear in
   the public archive within a window covering the signed email's anchored time, so

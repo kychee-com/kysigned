@@ -10,6 +10,8 @@
 
 kysigned uses **DKIM**, the cryptographic signature your email provider already puts on every message you send, as the signature itself. A signer forwards one email; the result is a self-contained **evidence bundle** (a single PDF) that anyone can verify on their own machine, even offline, even if this service disappears.
 
+DKIM alone isn't durable evidence, so kysigned never relies on it alone: each signature is timestamped twice at receipt, and its DKIM key is pinned in a public timestamped archive. Later key rotation, or even a provider publishing its old private keys, can't retroactively forge or deny a signature (details: [docs/trust-model.md](docs/trust-model.md)).
+
 ## Quick Start
 
 ### 1. Sign a document right now (no setup)
