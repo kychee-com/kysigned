@@ -15,6 +15,7 @@ import {
   confirmBitcoinAnchorsWeb,
   confirmKeyArchiveWeb,
   TIER_LABEL,
+  applyOnlineConfirmations,
   type BundleVerdict,
   type SignerVerdict,
   type BitcoinAnchor,
@@ -220,43 +221,23 @@ export function VerifyPage({
         const v = await verify(bytes)
         setVerdict(v)
         setStatus('done')
-        if (v.signers.some((s) => s.bitcoinAnchor.status === 'pending')) {
-          confirm(bytes)
-            .then((anchors) =>
-              setVerdict((cur) =>
-                cur
-                  ? { ...cur, signers: cur.signers.map((s) => ({ ...s, bitcoinAnchor: anchors[s.index] ?? s.bitcoinAnchor })) }
-                  : cur,
-              ),
-            )
-            .catch(() => {
-              /* stays pending — offline, or not yet committed to a Bitcoin block */
-            })
-        }
-        // AUTO-RUN the key-archive presence check too (F-10.7), same pattern: the
-        // offline verdict shows the key `pending` (grey); this upgrades it to green
-        // "key in public archive" when the exact key is found. Additive — it never
-        // changes the verdict, and degrades to pending offline / when unreachable.
-        if (v.signers.some((s) => s.checks.keyAuthenticity === 'pending-online')) {
-          confirmKey(bytes)
-            .then((keys) =>
-              setVerdict((cur) =>
-                cur
-                  ? {
-                      ...cur,
-                      signers: cur.signers.map((s) => {
-                        const k = keys[s.index]
-                        return k
-                          ? { ...s, checks: { ...s.checks, keyAuthenticity: k.keyAuthenticity }, keyObservedAt: k.observedAt }
-                          : s
-                      }),
-                    }
-                  : cur,
-              ),
-            )
-            .catch(() => {
-              /* stays pending — offline or the archive is unreachable */
-            })
+        // AUTO-RUN both online confirmations (Bitcoin anchor + key-archive provenance
+        // GATE) and fold them in together, DETERMINISTICALLY recomputing the tier
+        // (F-32 / AC-152). The archive lookup is the provenance gate: an exact-key
+        // match lifts the signer toward PROVIDER KEY CONFIRMED / PROVEN (DURABLE); a
+        // different published key FAILS it; absent/unreachable stays pending (the
+        // offline INTEGRITY VERIFIED tier is never downgraded on unreachability).
+        const needsBitcoin = v.signers.some((s) => s.bitcoinAnchor.status === 'pending')
+        const needsKey = v.signers.some((s) => s.checks.keyAuthenticity === 'pending-online')
+        if (needsBitcoin || needsKey) {
+          Promise.allSettled([
+            needsBitcoin ? confirm(bytes) : Promise.resolve({} as Record<number, BitcoinAnchor>),
+            needsKey ? confirmKey(bytes) : Promise.resolve({} as Record<number, KeyArchiveConfirmation>),
+          ]).then(([b, k]) => {
+            const bitcoin = b.status === 'fulfilled' ? b.value : {}
+            const keyArchive = k.status === 'fulfilled' ? k.value : {}
+            setVerdict((cur) => (cur ? applyOnlineConfirmations(structuredClone(cur), { bitcoin, keyArchive }) : cur))
+          })
         }
       } catch {
         setStatus('error')

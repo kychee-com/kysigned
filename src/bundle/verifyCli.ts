@@ -8,6 +8,7 @@ import { verifyBundle, type BundleVerdict, type SignerVerdict, type VerifyBundle
 import { confirmKeyArchiveWeb, type ConfirmKeyArchiveDeps } from './confirmKeyArchive.js';
 import { confirmBitcoinAnchorsWeb, type ConfirmBitcoinDeps } from './confirmBitcoin.js';
 import { TIER_LABEL } from './assuranceTier.js';
+import { applyOnlineConfirmations } from './applyConfirmations.js';
 
 function fmtTime(sec: number | null): string {
   if (!sec) return 'time pending online confirmation';
@@ -133,20 +134,15 @@ export async function runVerifyCli(
   }
   const verdict = await verifyBundle(pdfBytes, deps);
   if (!offline) {
-    // Real defaults (DD-17): the OTS calendar/Bitcoin source AND the archive lookup run
-    // for real unless a test injects a fake. Both additive — neither gates the verdict.
-    const [anchors, keys] = await Promise.all([
+    // Real defaults (DD-17): the OTS/Bitcoin source AND the archive lookup run for
+    // real unless a test injects a fake. The archive lookup is now the F-32.3
+    // provenance GATE (a different key → FAILED), and both confirmations
+    // deterministically recompute the tiers (F-32 / AC-152).
+    const [bitcoin, keyArchive] = await Promise.all([
       confirmBitcoinAnchorsWeb(pdfBytes, bitcoinDeps ?? {}),
       confirmKeyArchiveWeb(pdfBytes, archiveDeps ?? {}),
     ]);
-    for (const s of verdict.signers) {
-      if (anchors[s.index]) s.bitcoinAnchor = anchors[s.index];
-      const k = keys[s.index];
-      if (k) {
-        s.checks.keyAuthenticity = k.keyAuthenticity;
-        s.keyObservedAt = k.observedAt;
-      }
-    }
+    applyOnlineConfirmations(verdict, { bitcoin, keyArchive });
   }
   return { exitCode: exitCodeFor(verdict), report: formatVerdict(verdict), verdict };
 }

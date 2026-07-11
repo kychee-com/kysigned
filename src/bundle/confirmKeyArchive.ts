@@ -16,17 +16,34 @@ import { extractEmbeddedFileMapWeb } from './extractWeb.js';
 import { signerIndices } from './evidenceOrder.js';
 import type { KeysJson } from './keysJson.js';
 import type { KeyAuthStatus } from './verifyTypes.js';
+import type { DimensionState } from './assuranceTier.js';
 
 export type ConfirmKeyArchiveDeps = DkimArchiveDeps;
 
 export interface KeyArchiveConfirmation {
   /** `archive-confirmed` = the exact key is present in the public archive; else `pending-online`. */
   keyAuthenticity: KeyAuthStatus;
+  /**
+   * The F-32.3 provider-key provenance GATE result (DD-33/DD-35):
+   *   - `confirmed`: the archive holds the EXACT `(domain, selector, key)` (independent DNS observation);
+   *   - `failed`: the archive holds record(s) for that exact `(domain, selector)` but a DIFFERENT key —
+   *     the bundle's key contradicts what the provider actually published (a forgery signal);
+   *   - `pending`: no record for that `(domain, selector)`, the archive is unreachable/offline, or no
+   *     embedded key to compare (never a failure on mere absence/unreachability).
+   */
+  keyProvenance: DimensionState;
   /** The archive's observation/registration time (ISO-8601), when confirmed; else null. */
   observedAt: string | null;
+  /** The archive's last-observed-live time for the exact key (F-32.4 validity window); else null. */
+  lastSeenAt: string | null;
 }
 
-const PENDING: KeyArchiveConfirmation = { keyAuthenticity: 'pending-online', observedAt: null };
+const PENDING: KeyArchiveConfirmation = {
+  keyAuthenticity: 'pending-online',
+  keyProvenance: 'pending',
+  observedAt: null,
+  lastSeenAt: null,
+};
 
 /** The base64 `p=` public key from a DKIM TXT value (`v=DKIM1; k=rsa; p=<b64>`) or a bare `p=<b64>`, whitespace-stripped. */
 function extractPublicKey(value: string | null | undefined): string {
@@ -50,14 +67,24 @@ export async function confirmKeyArchive(
   if (!want) return PENDING; // no embedded key to compare against → cannot confirm
   try {
     const { found, records } = await lookupArchivedKey(domain, selector, deps);
-    if (!found) return PENDING;
+    if (!found) return PENDING; // nothing archived for this (domain, selector) yet
     // Require the EXACT key (the archive may hold an older/rotated key at the same
     // selector); comparing the `p=` public key never yields a false confirm.
     const match = records.find((r) => extractPublicKey(r.value) === want);
-    if (!match) return PENDING;
-    return { keyAuthenticity: 'archive-confirmed', observedAt: match.firstSeenAt ?? match.lastSeenAt ?? null };
+    if (match) {
+      return {
+        keyAuthenticity: 'archive-confirmed',
+        keyProvenance: 'confirmed',
+        observedAt: match.firstSeenAt ?? match.lastSeenAt ?? null,
+        lastSeenAt: match.lastSeenAt ?? match.firstSeenAt ?? null,
+      };
+    }
+    // Records EXIST for this exact (domain, selector) but none carry the bundle's key:
+    // the provider published a DIFFERENT key here → the bundle's key is not the
+    // provider's (a forgery signal). Gate the verdict to FAILED (F-32.3, DD-35).
+    return { keyAuthenticity: 'pending-online', keyProvenance: 'failed', observedAt: null, lastSeenAt: null };
   } catch {
-    return PENDING; // archive unreachable / offline → pending, never an error (additive)
+    return PENDING; // archive unreachable / offline → pending, never an error
   }
 }
 

@@ -28,6 +28,8 @@ import type { TimestampProof, VerifyResult } from '../timestamp/contract.js';
 export type { BundleVerdict, SignerVerdict, KeyAuthStatus, BitcoinAnchorStatus, BitcoinAnchor, VerifyBundleDeps } from './verifyTypes.js';
 export { TIER_LABEL } from './assuranceTier.js';
 export type { AssuranceTier, AssuranceDimensions, DimensionState } from './assuranceTier.js';
+export { applyOnlineConfirmations } from './applyConfirmations.js';
+export type { OnlineConfirmations } from './applyConfirmations.js';
 
 // The explicit "Confirm on Bitcoin" action (F-10.6) — offline-first: called only
 // when the user clicks confirm, so the default page load stays fully offline.

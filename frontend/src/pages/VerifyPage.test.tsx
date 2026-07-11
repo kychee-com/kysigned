@@ -136,19 +136,32 @@ describe('VerifyPage — client-side verifier (AC-27)', () => {
     expect(pending).toMatch(/normal/i)
   })
 
-  it('auto-runs the key-archive check → green "key in public archive" with the registration time (F-10.7 / AC-101)', async () => {
+  it('auto-runs the key-archive GATE → exact key confirmed within the window UPGRADES the tier to PROVIDER KEY CONFIRMED (F-32.3 / AC-152)', async () => {
     await uploadWith(
       verdict(),
       async () => ({}),
-      async () => ({ 1: { keyAuthenticity: 'archive-confirmed', observedAt: '2026-06-29T11:42:02.820Z' } }),
+      async () => ({
+        1: { keyAuthenticity: 'archive-confirmed', keyProvenance: 'confirmed', observedAt: '2026-06-29T11:42:02.820Z', lastSeenAt: '2026-06-29T11:42:02.820Z' },
+      }),
     )
     await waitFor(() => expect(screen.getByText(/key in public archive/i)).toBeInTheDocument())
     expect(screen.getByText(/registered 2026-06-29/i)).toBeInTheDocument()
-    expect(screen.getByTestId('overall-verdict')).toHaveTextContent('INTEGRITY VERIFIED') // additive — verdict unchanged
+    // The provenance gate confirmed the exact key → the tier deterministically upgrades.
+    await waitFor(() => expect(screen.getByTestId('overall-verdict')).toHaveTextContent('PROVIDER KEY CONFIRMED'))
+  })
+
+  it('the key-archive gate FAILS the verdict when the archive publishes a DIFFERENT key (forgery signal, F-32.3 / AC-157)', async () => {
+    await uploadWith(
+      verdict(),
+      async () => ({}),
+      async () => ({ 1: { keyAuthenticity: 'pending-online', keyProvenance: 'failed', observedAt: null, lastSeenAt: null } }),
+    )
+    await waitFor(() => expect(screen.getByTestId('overall-verdict')).toHaveTextContent('Not verified'))
+    expect(screen.getByText(/provider key mismatch/i)).toBeInTheDocument()
   })
 
   it('a key-archive check that stays pending leaves the badge grey, never red (AC-102)', async () => {
-    await uploadWith(verdict(), async () => ({}), async () => ({ 1: { keyAuthenticity: 'pending-online', observedAt: null } }))
+    await uploadWith(verdict(), async () => ({}), async () => ({ 1: { keyAuthenticity: 'pending-online', keyProvenance: 'pending', observedAt: null, lastSeenAt: null } }))
     await waitFor(() => expect(screen.getByTestId('overall-verdict')).toHaveTextContent('INTEGRITY VERIFIED'))
     expect(screen.getByText(/key archive pending/i)).toBeInTheDocument()
     // Pending here is an additive/optional corroboration, not a failure — copy reassures.

@@ -95,13 +95,13 @@ describe('signed bundle fixture — LIVE CLI online (gated; real archive + real 
     async () => {
       const { exitCode, report } = await runVerifyCli(bundle); // online, no fakes
       assert.equal(exitCode, 0, report);
-      // Phase A/B: the online step confirms the archive-presence + Bitcoin badges, but
-      // the tier stays INTEGRITY VERIFIED until the provenance GATE (51.6) + validity
-      // window (51.7) recompute it online — they will raise this to PROVIDER KEY
-      // CONFIRMED / PROVEN (DURABLE).
-      assert.match(report, /OVERALL: INTEGRITY VERIFIED/, report);
+      // With the gate (51.6) + window (51.7): the real kysigned.com key is in the
+      // archive (provenance confirmed), the .ots is Bitcoin-block-confirmed (durable),
+      // and the signing time is within the observed-live window → PROVEN (DURABLE).
+      assert.match(report, /OVERALL: PROVEN \(DURABLE\)/, report);
       assert.match(report, /Key archive: confirmed/, report);
       assert.match(report, /Bitcoin timestamp: confirmed \(block \d+/, report);
+      assert.match(report, /Provider key: confirmed/, report);
     },
   );
 });
