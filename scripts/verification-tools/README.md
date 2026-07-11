@@ -31,14 +31,14 @@ An independent verifier following the spec produces byte-identical results from
 these, so they are shared, not reinvented. What this toolkit reproduces independently
 is the **verdict orchestration**: the fingerprint hashing, the per-signer
 reconstruction and hash compares, the original-document hash `A`, the intent check,
-and how they combine into PROVEN / FAILED.
+and how they combine into the assurance tier (INTEGRITY VERIFIED / FAILED offline).
 
 ## Run it
 
 ```bash
 # from the kysigned repo root (tsx is a devDependency):
 
-# verify a single bundle — prints a report, exits 0 (PROVEN) / 1 (FAILED)
+# verify a single bundle — prints a report + tier, exits 0 (any non-FAILED tier) / 1 (FAILED)
 node --import tsx scripts/verification-tools/verify-independent.mjs <bundle.pdf>
 
 # self-test against every committed fixture — exits 0 if all reproduce the expected
@@ -46,9 +46,14 @@ node --import tsx scripts/verification-tools/verify-independent.mjs <bundle.pdf>
 node --import tsx scripts/verification-tools/self-test.mjs
 ```
 
-Both are fully **offline**. (The committed RFC 3161 `.tsr` token verifies offline; the
-Bitcoin anchor and the public key-archive lookup are additive ONLINE steps, below,
-that never change the PROVEN / FAILED verdict.)
+Both run **fully offline**, so this toolkit's ceiling is the **INTEGRITY VERIFIED** tier
+(F-32): it settles the four hard checks (DKIM, document match, intent line, embedded
+`.tsr` timestamp) from the bundle alone. The two higher tiers — **PROVIDER KEY CONFIRMED**
+and **PROVEN (DURABLE)** — require ONLINE evidence (the public key-archive provenance gate
+and a confirmed Bitcoin anchor) that a deliberately-offline reproduction does not fetch; the
+web verifier and the reference CLI settle those. Offline, all three surfaces agree at
+INTEGRITY VERIFIED for a genuine bundle (the AC-152 parity, under the same offline
+conditions) and at FAILED for a tampered one.
 
 ## The algorithm, step by step
 
@@ -73,18 +78,27 @@ Given a signing-record (bundle) PDF, the toolkit:
    - **Intent line** — the first non-empty line of the forward (text/plain, or the
      text/html part for HTML-only forwards) is exactly `I sign this document`.
    - **Timestamp** — the RFC 3161 `.tsr` token commits to `SHA-256(signer-<n>.eml)`.
-   - A signer is **PROVEN** iff all four hold.
-5. The bundle is **PROVEN** iff there are no structural errors, the fingerprint
-   matches, and every signer is PROVEN.
+   - A signer reaches **INTEGRITY VERIFIED** (this toolkit's offline ceiling) iff all four
+     hold; any hard-check failure is **FAILED**.
+5. The bundle's tier is the weakest signer's tier: **INTEGRITY VERIFIED** iff there are no
+   structural errors, the fingerprint matches, and every signer is INTEGRITY VERIFIED;
+   **FAILED** otherwise.
 
-### Additive online steps (never gate the verdict)
+### The online tiers (settled by the web verifier / CLI, not this offline toolkit)
 
-- **Bitcoin anchor (OpenTimestamps)** — upgrade `proofs/signer-<n>.ots` against the
-  public OTS calendars + a Bitcoin block source; "confirmed" shows the block height
-  and time. Pending/offline never fails the verdict.
-- **Key-archive presence** — look up `(domain, selector, key)` in the public DKIM
-  archive (`archive.prove.email`); "confirmed" shows the registration time. Absent /
-  unreachable shows "pending", never red, and never gates the verdict.
+These upgrade a genuine bundle ABOVE INTEGRITY VERIFIED. This toolkit is offline (AC-114), so
+it does not fetch them; the web and CLI verifiers do, and they are the reason a genuine record
+reaches the top tier.
+
+- **Provider-key gate (archive)** — look up the bundle's EXACT `(domain, selector, key)` in
+  the public DKIM archive (`archive.prove.email`, which fetches the provider's DNS itself). An
+  exact match confirms provenance → **PROVIDER KEY CONFIRMED**. A DIFFERENT key recorded for
+  that `(domain, selector)` is a forged key and makes the verdict **FAILED** — this step CAN
+  change the verdict; it is not merely additive. Unreachable / not-yet-recorded is `pending`
+  and never fails.
+- **Bitcoin anchor (OpenTimestamps)** — confirm `proofs/signer-<n>.ots` in a real Bitcoin
+  block; with a signing time within the key's observed-live window this reaches **PROVEN
+  (DURABLE)**. Pending/offline never fails the verdict.
 
 kysigned is **not** in the trust set: the verdict comes only from the embedded
 evidence (the signer's email provider via DKIM, the public key archives, the

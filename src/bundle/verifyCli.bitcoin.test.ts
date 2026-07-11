@@ -22,7 +22,7 @@ function verdict(anchor: BitcoinAnchor, proven = true): BundleVerdict {
         index: 1,
         proven,
         tier,
-        assurance: { keyProvenance: 'pending', timestampDurability: 'pending', keyValidity: 'inconclusive' },
+        assurance: { keyProvenance: 'pending', timestampDurability: 'pending', keyValidity: 'pending' },
         email: 'alice@example.com',
         signingDomain: 'example.com',
         verbatimIntent: 'I sign this document',

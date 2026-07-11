@@ -260,7 +260,7 @@ export async function verifyBundle(pdfBytes: Uint8Array, deps: VerifyBundleDeps 
         tsrTimeSec,
         bitcoinTimeSec,
       }),
-      keyValidity: 'inconclusive',
+      keyValidity: 'pending', // not checkable until provenance confirms online (F-020: mirrors durability's offline `pending`)
     };
     const hard = { dkim: dkimOk, attachment: attOk, intent: intent.valid, timestamp: tsOk };
     const tier = computeSignerTier(hard, assurance);

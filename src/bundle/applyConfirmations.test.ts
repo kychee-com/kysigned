@@ -11,13 +11,13 @@ import type { KeyArchiveConfirmation } from './confirmKeyArchive.js';
 
 const SIGN_SEC = 1_780_000_000;
 
-// A genuine offline verdict: integrity-verified, all dimensions pending/inconclusive.
+// A genuine offline verdict: integrity-verified, all online-only dimensions pending.
 function baseSigner(over: Partial<SignerVerdict> = {}): SignerVerdict {
   return {
     index: 1,
     proven: true,
     tier: 'INTEGRITY_VERIFIED',
-    assurance: { keyProvenance: 'pending', timestampDurability: 'pending', keyValidity: 'inconclusive' },
+    assurance: { keyProvenance: 'pending', timestampDurability: 'pending', keyValidity: 'pending' },
     email: 'alice@gmail.com',
     signingDomain: 'gmail.com',
     verbatimIntent: 'I sign this document',

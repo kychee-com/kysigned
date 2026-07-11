@@ -183,7 +183,7 @@ describe('verifyBundle — assurance tiers (F-32.1, #137)', () => {
     assert.deepEqual(s.assurance, {
       keyProvenance: 'pending',
       timestampDurability: 'pending', // fake OTS has no Bitcoin block → provisional, not durable
-      keyValidity: 'inconclusive',
+      keyValidity: 'pending', // not checkable until provenance confirms online (F-020)
     });
   });
 

@@ -10,9 +10,9 @@ const T = 1_780_000_000;
 const iso = (sec: number) => new Date(sec * 1000).toISOString();
 
 describe('validityFromWindow (F-32.4)', () => {
-  it('provenance not confirmed → inconclusive (validity is only meaningful once the key is provider-confirmed)', () => {
-    assert.equal(validityFromWindow(T, iso(T + 100), 'pending'), 'inconclusive');
-    assert.equal(validityFromWindow(T, iso(T + 100), 'failed'), 'inconclusive');
+  it('provenance not confirmed → pending (not yet checkable; mirrors durability offline — F-020)', () => {
+    assert.equal(validityFromWindow(T, iso(T + 100), 'pending'), 'pending');
+    assert.equal(validityFromWindow(T, iso(T + 100), 'failed'), 'pending');
   });
 
   it('signing time at/within the last-observed-live window → confirmed', () => {

@@ -13,9 +13,11 @@
  * requiring `T >= first-observed` would reject every genuine bundle (the exact trap
  * the earlier presence-only model was created to escape — DD-16 → DD-33/DD-35).
  *
- * Outside the window (or unknown) is `inconclusive` (caps below PROVEN (DURABLE)),
- * not `failed`: it denies the long-term claim without hard-rejecting a bundle over
- * an archive gap. Validity is only meaningful once provenance is confirmed.
+ * Before provenance is confirmed (offline / archive pending) validity is `pending`
+ * (not yet checkable) — matching the timestamp-durability dimension so the three
+ * surfaces label it identically. Once provenance IS confirmed, a signing time outside
+ * the window (or unknown) is `inconclusive` (caps below PROVEN (DURABLE)), not `failed`:
+ * it denies the long-term claim without hard-rejecting a bundle over an archive gap.
  */
 import type { DimensionState } from './assuranceTier.js';
 
@@ -27,8 +29,10 @@ export function validityFromWindow(
   lastSeenAtIso: string | null,
   keyProvenance: DimensionState,
 ): DimensionState {
-  // Only meaningful once we know the key was the provider's (provenance confirmed).
-  if (keyProvenance !== 'confirmed') return 'inconclusive';
+  // Not yet checkable until provenance is confirmed → `pending` (mirrors the durability
+  // dimension's offline state so web/CLI/toolkit label it identically — F-020). The
+  // `inconclusive` results below are reserved for a CHECKED-but-cannot-confirm window.
+  if (keyProvenance !== 'confirmed') return 'pending';
   if (signingTimeSec == null || !lastSeenAtIso) return 'inconclusive';
   const lastSeenMs = Date.parse(lastSeenAtIso);
   if (Number.isNaN(lastSeenMs)) return 'inconclusive';

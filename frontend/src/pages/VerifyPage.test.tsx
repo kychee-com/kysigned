@@ -15,7 +15,7 @@ function signer(over: Partial<SignerVerdict> = {}): SignerVerdict {
     index: 1,
     proven,
     tier: proven ? 'INTEGRITY_VERIFIED' : 'FAILED',
-    assurance: { keyProvenance: 'pending', timestampDurability: 'confirmed', keyValidity: 'inconclusive' },
+    assurance: { keyProvenance: 'pending', timestampDurability: 'confirmed', keyValidity: 'pending' },
     email: 'alice@example.com',
     signingDomain: 'example.com',
     verbatimIntent: 'I sign this document',

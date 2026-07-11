@@ -22,6 +22,12 @@ import { extractSigningText, extractPdfAttachments } from '../api/signing/mimeEx
 import { assembleCanonicalPdf } from '../pdf/assembleCanonicalPdf.js';
 import { validateSigningIntent, firstIntentLineVerbatim } from '../api/signing/signingIntent.js';
 import type { TimestampProof, VerifyResult } from '../timestamp/contract.js';
+// STATIC imports (F-018 / AC-27): the offline `.tsr` verification MUST ship in the verify
+// chunk. A dynamic import() here becomes a separate Vite chunk that 404s offline, so a valid
+// bundle would fail closed. pkijs/WebCrypto are pure-crypto (no network at import), so bundling
+// them eagerly keeps the default page load fully offline while making verification work offline.
+import { verifyWith } from '../timestamp/contract.js';
+import { createRfc3161Provider } from '../timestamp/rfc3161/provider.js';
 
 // Re-export the verdict types so the SPA imports everything from this one
 // browser-safe entry point (never reaching the mailauth-bound verify.ts).
@@ -51,8 +57,6 @@ export { extractEmbeddedFileMapWeb } from './extractWeb.js';
  * establishes the timestamp commitment, which is enough to catch a tampered proof.
  */
 async function defaultVerifyTimestampWeb(proof: TimestampProof, hash: Uint8Array): Promise<VerifyResult> {
-  const { createRfc3161Provider } = await import('../timestamp/rfc3161/provider.js');
-  const { verifyWith } = await import('../timestamp/contract.js');
   return verifyWith([createRfc3161Provider({})], proof, hash);
 }
 
@@ -284,7 +288,7 @@ export async function verifyBundleWeb(pdfBytes: Uint8Array, deps: VerifyBundleDe
         tsrTimeSec,
         bitcoinTimeSec: bitcoinAnchor.timeSec ?? null,
       }),
-      keyValidity: 'inconclusive',
+      keyValidity: 'pending', // not checkable until provenance confirms online (F-020: mirrors durability's offline `pending`)
     };
     const tier = computeSignerTier({ dkim: dkimOk, attachment: attOk, intent: intent.valid, timestamp: tsOk }, assurance);
     signers.push({

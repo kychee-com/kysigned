@@ -130,7 +130,10 @@ function KeyArchiveBadge({ s }: { s: SignerVerdict }) {
 }
 
 // A dimension fact (F-32): confirmed = green, failed = red, pending/inconclusive =
-// neutral grey (an upgradeable state, deliberately NOT alarming).
+// neutral grey (deliberately NOT alarming). The state is shown VERBATIM — the same word
+// the CLI and the independent toolkit print — so the three surfaces agree (F-020). Offline
+// an online-only dimension is `pending` (mirrors the model); `inconclusive` appears only
+// for a checked-but-cannot-confirm result (e.g. a signing time outside the observed window).
 function DimFact({ label, state }: { label: string; state: string }) {
   const tone =
     state === 'confirmed'
@@ -138,10 +141,9 @@ function DimFact({ label, state }: { label: string; state: string }) {
       : state === 'failed'
         ? 'text-red-700'
         : 'text-gray-500'
-  const shown = state === 'inconclusive' ? 'pending' : state
   return (
     <span className="text-xs text-gray-600">
-      {label}: <span className={tone}>{shown}</span>
+      {label}: <span className={tone}>{state}</span>
     </span>
   )
 }

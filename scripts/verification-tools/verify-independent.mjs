@@ -225,11 +225,11 @@ export async function verifyBundleIndependently(pdfBytes) {
 
     // F-32 assurance tier, reimplemented INDEPENDENTLY (this toolkit imports none
     // of the engines). This surface is offline-and-.tsr-only: it confirms no
-    // Bitcoin anchor and holds no archive record, so provider-key provenance and
-    // the key-validity window are pending/inconclusive and durable timestamp
-    // assurance is pending — the tier therefore caps at INTEGRITY VERIFIED, which
+    // Bitcoin anchor and holds no archive record, so provider-key provenance, the
+    // key-validity window, and durable-timestamp assurance are all `pending` (not yet
+    // checkable offline — F-020) — the tier therefore caps at INTEGRITY VERIFIED, which
     // is exactly what the web/CLI engines report under the same offline pin.
-    const assurance = { keyProvenance: 'pending', timestampDurability: 'pending', keyValidity: 'inconclusive' };
+    const assurance = { keyProvenance: 'pending', timestampDurability: 'pending', keyValidity: 'pending' };
     const tier = signerTier({ dkim: dkimOk, attachment: attOk, intent: intent.valid, timestamp: tsOk }, assurance);
     signers.push({
       index: n,
