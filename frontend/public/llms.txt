@@ -260,7 +260,11 @@ The bundle is an ordinary PDF anyone can verify with no account and no server:
   OpenTimestamps time proofs, and confirms each signer signed THIS document.
 - **CLI**: a reference verifier ships in the public repository.
 
-A clean "verified" verdict means: these signers, this document, at this time — provable forever.
+The verdict is one of four honest assurance tiers, not a yes/no. Offline, anyone reaches INTEGRITY
+VERIFIED (valid signatures, matching document, intent line, timestamp present). Going online confirms
+the exact provider key against the public archive (PROVIDER KEY CONFIRMED) and a Bitcoin-anchored,
+un-back-datable time within the key's observed-live window (PROVEN DURABLE). A key an operator merely
+claimed was the provider's fails the archive gate instead of passing as proven.
 
 ## Fork your own
 

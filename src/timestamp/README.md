@@ -37,8 +37,10 @@ later verifies it — in a different process, or in the browser.
 OpenTimestamps is the trustless Bitcoin/math anchor but is *pending* until a block confirms
 (~hours); RFC 3161 is the synchronous, court/eIDAS-recognised TSA token that covers exactly that
 confirmation gap. The chain anchor, in turn, can't be back-dated, so it backstops a misbehaving
-TSA. The two establish the same fact through independent trust roots, so a verifier can rely on
-either alone — and a forker can run either provider on its own, or swap in their own.
+TSA. The two are complementary rather than interchangeable: kysigned's verdict treats the TSA
+token alone as a *provisional* time and requires the Bitcoin confirmation (agreeing with the token)
+for its durable tier — see the bundle verifier's assurance tiers. A forker can still run either
+provider on its own, or swap in their own `TimestampProvider`.
 
 ## Usage
 

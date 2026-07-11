@@ -117,13 +117,13 @@ record for trying `/verify` and `/hashcheck` against real production evidence.
 | `acme-approval.pdf`                   | Trial contract template 1: the ACME Approval Form 42-B                                                              | Your first trial envelope (see the repo README)                       |
 | `acme-anvil-waiver.pdf`               | Trial contract template 2: the ACME Anvil Liability Waiver. Byte-identical to the document inside the signed bundle | Trial envelopes; the `/hashcheck` original (left input)               |
 | `acme-anvil-waiver-sign-request.pdf`  | The sign-request package (cover ++ document) exactly as a signer received it                                        | `/hashcheck` right side (content-level match)                         |
-| `acme-anvil-waiver-signed-bundle.pdf` | A genuine completed signing record from the live kysigned.com flow. Creator and signer are both `info@kysigned.com` | `/verify` (expect PROVEN); `/hashcheck` right side (byte-exact match) |
+| `acme-anvil-waiver-signed-bundle.pdf` | A genuine completed signing record from the live kysigned.com flow. Creator and signer are both `info@kysigned.com` | `/verify` (expect PROVEN (DURABLE) online, INTEGRITY VERIFIED offline); `/hashcheck` right side (byte-exact match) |
 
 Expected results:
 
 | Drop this                                   | On           | Expected result                                                                             |
 | ------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------- |
-| `acme-anvil-waiver-signed-bundle.pdf`       | `/verify`    | PROVEN. One signer, `info@kysigned.com`, signing domain `kysigned.com`; fingerprint matches |
+| `acme-anvil-waiver-signed-bundle.pdf`       | `/verify`    | PROVEN (DURABLE) online, INTEGRITY VERIFIED offline. One signer, `info@kysigned.com`, signing domain `kysigned.com`; fingerprint matches |
 | `acme-anvil-waiver.pdf` + the signed bundle | `/hashcheck` | MATCH (byte-exact). The original equals the bundle's embedded `document-original.pdf`       |
 | `acme-anvil-waiver.pdf` + the sign-request  | `/hashcheck` | MATCH (content). The document inside the sign-request is the original                       |
 | `acme-approval.pdf` + the signed bundle     | `/hashcheck` | MISMATCH. A different document is inside                                                    |

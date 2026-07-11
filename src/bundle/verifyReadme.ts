@@ -55,9 +55,25 @@ For each signer-<n>.eml:
   4. Validate proofs/signer-<n>.tsr against the TSA chain and proofs/signer-<n>.ots
      against the Bitcoin chain (upgrading a pending OpenTimestamps proof when
      online) to establish the signing time T.
-  5. Key-authenticity join: confirm the archive's Bitcoin-timestamped observation
-     window for (domain, selector, key) contains T (when the archive is reachable).
-  => PROVEN if all hold; FAILED (with the failing check named) otherwise.
+  5. Key-provenance gate: look up (domain, selector) in the public archive and confirm
+     the EXACT embedded key is the one the archive recorded (the archive fetches the
+     provider's DNS itself). A DIFFERENT key for that (domain, selector) is a forged key
+     and FAILS the verdict; an unreachable archive or a not-yet-recorded key is "pending"
+     and does not fail. When confirmed, the durable tier also requires the signing time T
+     to be at or before the key's last-seen-live time in the archive (plus a grace
+     margin) -- a one-sided UPPER bound (a T before the key was first seen is fine).
+  => The verdict is one of four assurance tiers, not a yes/no:
+     - FAILED: a check above did not hold, or the archive published a different key than
+       the one embedded (a forged key).
+     - INTEGRITY VERIFIED: steps 1-4 hold offline, but the key's provenance is not yet
+       confirmed (archive pending). Internally consistent and unaltered, but not yet
+       proven to be the provider's own key.
+     - PROVIDER KEY CONFIRMED: plus step 5 confirmed the exact key was the provider's
+       real published key.
+     - PROVEN (DURABLE): plus the OpenTimestamps proof is Bitcoin-block-confirmed and
+       agrees with the RFC 3161 token, and T is within the key's observed-live window.
+     A genuine record is INTEGRITY VERIFIED offline and rises to PROVEN (DURABLE) online
+     once its Bitcoin anchor settles; a forged key FAILS.
 
 Then recompute the verification code: SHA-256 over document-original.pdf, each
 signer-<n>.eml, the proofs/ files, and keys.json, concatenated in that order,
