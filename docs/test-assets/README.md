@@ -118,12 +118,14 @@ record for trying `/verify` and `/hashcheck` against real production evidence.
 | `acme-anvil-waiver.pdf`               | Trial contract template 2: the ACME Anvil Liability Waiver. Byte-identical to the document inside the signed bundle | Trial envelopes; the `/hashcheck` original (left input)               |
 | `acme-anvil-waiver-sign-request.pdf`  | The sign-request package (cover ++ document) exactly as a signer received it                                        | `/hashcheck` right side (content-level match)                         |
 | `acme-anvil-waiver-signed-bundle.pdf` | A genuine completed signing record from the live kysigned.com flow. Creator and signer are both `info@kysigned.com` | `/verify` (expect PROVEN (DURABLE) online, INTEGRITY VERIFIED offline); `/hashcheck` right side (byte-exact match) |
+| `sample-bundle-forged-key.pdf`        | A #136 self-minted-key FORGERY: a DKIM-valid bundle whose embedded key is claimed for `gmail.com/20251104` but is the attacker's, not gmail's real published key | `/verify` (INTEGRITY VERIFIED offline; FAILED online via the archive gate — provider-key mismatch) |
 
 Expected results:
 
 | Drop this                                   | On           | Expected result                                                                             |
 | ------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------- |
 | `acme-anvil-waiver-signed-bundle.pdf`       | `/verify`    | PROVEN (DURABLE) online, INTEGRITY VERIFIED offline. One signer, `info@kysigned.com`, signing domain `kysigned.com`; fingerprint matches |
+| `sample-bundle-forged-key.pdf`              | `/verify`    | INTEGRITY VERIFIED offline (self-consistent forgery, honestly NOT proven), then FAILED online: the archive gate finds gmail.com/20251104's real key ≠ the embedded self-minted key → provider-key mismatch (#136 forgery defense) |
 | `acme-anvil-waiver.pdf` + the signed bundle | `/hashcheck` | MATCH (byte-exact). The original equals the bundle's embedded `document-original.pdf`       |
 | `acme-anvil-waiver.pdf` + the sign-request  | `/hashcheck` | MATCH (content). The document inside the sign-request is the original                       |
 | `acme-approval.pdf` + the signed bundle     | `/hashcheck` | MISMATCH. A different document is inside                                                    |
