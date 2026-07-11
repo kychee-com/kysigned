@@ -11,17 +11,23 @@ import { formatVerdict, exitCodeFor } from './verifyCli.js';
 import type { BundleVerdict, BitcoinAnchor } from './verifyTypes.js';
 
 function verdict(anchor: BitcoinAnchor, proven = true): BundleVerdict {
+  const tier = proven ? 'INTEGRITY_VERIFIED' : 'FAILED';
   return {
     proven,
+    tier,
     fingerprint: { computed: 'a'.repeat(64), matchesPrinted: true },
+    originalDocSha256: null,
     signers: [
       {
         index: 1,
         proven,
+        tier,
+        assurance: { keyProvenance: 'pending', timestampDurability: 'pending', keyValidity: 'inconclusive' },
         email: 'alice@example.com',
         signingDomain: 'example.com',
         verbatimIntent: 'I sign this document',
         signingTimeSec: 1_780_000_000,
+        originalDocSha256: null,
         checks: { dkim: true, attachment: true, intent: true, timestamp: true, keyAuthenticity: 'archive-confirmed' },
         bitcoinAnchor: anchor,
         reasons: [],

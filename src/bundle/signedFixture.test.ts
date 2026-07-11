@@ -49,10 +49,12 @@ describe('signed bundle fixture — stays PROVEN offline on both engines', () =>
     assert.equal(v.signers[0].signingDomain, 'kysigned.com');
   });
 
-  it('CLI --offline: PROVEN (exit 0) with the Bitcoin anchor + key archive reported pending', async () => {
+  it('CLI --offline: INTEGRITY VERIFIED (exit 0) with the Bitcoin anchor + key archive reported pending', async () => {
     const { exitCode, report } = await runVerifyCli(bundle, { offline: true });
     assert.equal(exitCode, 0, report);
-    assert.match(report, /OVERALL: PROVEN/);
+    // Offline the honest tier is INTEGRITY VERIFIED: provenance pending (archive gate
+    // is online, 51.6) and durability pending (Bitcoin confirmed online). Still exit 0.
+    assert.match(report, /OVERALL: INTEGRITY VERIFIED/);
     assert.match(report, /Bitcoin timestamp: pending/);
     assert.match(report, /Key archive: pending/); // offline → no archive lookup
   });
@@ -93,7 +95,11 @@ describe('signed bundle fixture — LIVE CLI online (gated; real archive + real 
     async () => {
       const { exitCode, report } = await runVerifyCli(bundle); // online, no fakes
       assert.equal(exitCode, 0, report);
-      assert.match(report, /OVERALL: PROVEN/, report);
+      // Phase A/B: the online step confirms the archive-presence + Bitcoin badges, but
+      // the tier stays INTEGRITY VERIFIED until the provenance GATE (51.6) + validity
+      // window (51.7) recompute it online — they will raise this to PROVIDER KEY
+      // CONFIRMED / PROVEN (DURABLE).
+      assert.match(report, /OVERALL: INTEGRITY VERIFIED/, report);
       assert.match(report, /Key archive: confirmed/, report);
       assert.match(report, /Bitcoin timestamp: confirmed \(block \d+/, report);
     },

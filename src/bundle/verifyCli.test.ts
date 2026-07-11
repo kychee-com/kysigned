@@ -13,10 +13,13 @@ function signer(over: Partial<SignerVerdict> = {}): SignerVerdict {
   return {
     index: over.index ?? 1,
     proven: over.proven ?? true,
+    tier: over.tier ?? 'INTEGRITY_VERIFIED',
+    assurance: over.assurance ?? { keyProvenance: 'pending', timestampDurability: 'confirmed', keyValidity: 'inconclusive' },
     email: over.email ?? 'alice@example.com',
     signingDomain: over.signingDomain ?? 'example.com',
     verbatimIntent: over.verbatimIntent ?? 'I sign this document',
     signingTimeSec: over.signingTimeSec ?? 1_780_000_000,
+    originalDocSha256: over.originalDocSha256 ?? null,
     checks: over.checks ?? { dkim: true, attachment: true, intent: true, timestamp: true, keyAuthenticity: 'pending-online' },
     bitcoinAnchor: over.bitcoinAnchor ?? { status: 'absent' },
     keyObservedAt: over.keyObservedAt ?? null,
@@ -27,27 +30,39 @@ function signer(over: Partial<SignerVerdict> = {}): SignerVerdict {
 function verdict(over: Partial<BundleVerdict> = {}): BundleVerdict {
   return {
     proven: over.proven ?? true,
+    tier: over.tier ?? 'INTEGRITY_VERIFIED',
     fingerprint: over.fingerprint ?? { computed: 'a'.repeat(64), matchesPrinted: true },
+    originalDocSha256: over.originalDocSha256 ?? null,
     signers: over.signers ?? [signer()],
     errors: over.errors ?? [],
   };
 }
 
-describe('formatVerdict / exitCodeFor — F-10.4 / AC-29', () => {
-  it('PROVEN: human-first claim, fingerprint match, exit 0', () => {
+describe('formatVerdict / exitCodeFor — F-10.4 / AC-29 / F-32.1', () => {
+  it('a valid integrity-verified bundle renders the tier + human-first claim + exit 0', () => {
     const v = verdict();
     const out = formatVerdict(v);
-    assert.match(out, /OVERALL: PROVEN/);
+    assert.match(out, /OVERALL: INTEGRITY VERIFIED/);
+    assert.match(out, /Signer 1: INTEGRITY VERIFIED/);
     assert.match(out, /A sender authenticated by example\.com as alice@example\.com sent/);
     assert.match(out, /"I sign this document" with exactly this document attached/);
     assert.match(out, /MATCHES the value printed/);
     assert.equal(exitCodeFor(v), 0);
   });
 
+  it('the top tier renders as PROVEN (DURABLE) + exit 0', () => {
+    const s = signer({ tier: 'PROVEN_DURABLE', assurance: { keyProvenance: 'confirmed', timestampDurability: 'confirmed', keyValidity: 'confirmed' } });
+    const v = verdict({ tier: 'PROVEN_DURABLE', signers: [s] });
+    const out = formatVerdict(v);
+    assert.match(out, /OVERALL: PROVEN \(DURABLE\)/);
+    assert.equal(exitCodeFor(v), 0);
+  });
+
   it('FAILED: names the broken checks + exit 1', () => {
     const v = verdict({
       proven: false,
-      signers: [signer({ proven: false, reasons: ['DKIM invalid_signature', 'attachment modified'] })],
+      tier: 'FAILED',
+      signers: [signer({ proven: false, tier: 'FAILED', reasons: ['DKIM invalid_signature', 'attachment modified'] })],
     });
     const out = formatVerdict(v);
     assert.match(out, /Signer 1: FAILED/);

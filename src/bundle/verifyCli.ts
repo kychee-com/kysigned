@@ -7,6 +7,7 @@
 import { verifyBundle, type BundleVerdict, type SignerVerdict, type VerifyBundleDeps } from './verify.js';
 import { confirmKeyArchiveWeb, type ConfirmKeyArchiveDeps } from './confirmKeyArchive.js';
 import { confirmBitcoinAnchorsWeb, type ConfirmBitcoinDeps } from './confirmBitcoin.js';
+import { TIER_LABEL } from './assuranceTier.js';
 
 function fmtTime(sec: number | null): string {
   if (!sec) return 'time pending online confirmation';
@@ -50,20 +51,32 @@ function originalDocNote(s: SignerVerdict): string {
   return s.originalDocSha256 ? `\n  Original document (SHA-256): ${s.originalDocSha256}` : '';
 }
 
+/** The three F-32 evidence dimensions, one plain line, so the tier is legible (F-10.4). */
+function assuranceNote(s: SignerVerdict): string {
+  const label = (st: string) =>
+    st === 'confirmed' ? 'confirmed' : st === 'failed' ? 'FAILED' : st === 'inconclusive' ? 'inconclusive' : 'pending';
+  return (
+    `\n  Provider key: ${label(s.assurance.keyProvenance)}` +
+    `\n  Timestamp durability: ${label(s.assurance.timestampDurability)}` +
+    `\n  Key validity window: ${label(s.assurance.keyValidity)}`
+  );
+}
+
 function formatSigner(s: SignerVerdict): string {
-  const head = `Signer ${s.index}: ${s.proven ? 'PROVEN' : 'FAILED'}`;
-  if (s.proven) {
+  const head = `Signer ${s.index}: ${TIER_LABEL[s.tier]}`;
+  if (s.tier !== 'FAILED') {
     return (
       `${head}\n` +
       `  A sender authenticated by ${s.signingDomain} as ${s.email} sent\n` +
       `  "${s.verbatimIntent}" with exactly this document attached, at ${fmtTime(s.signingTimeSec)}.` +
       originalDocNote(s) +
+      assuranceNote(s) +
       keyArchiveNote(s) +
       bitcoinNote(s)
     );
   }
   const reasons = s.reasons.length ? s.reasons.map((r) => `    - ${r}`).join('\n') : '    - (unspecified)';
-  return `${head}\n  Failing checks:\n${reasons}${originalDocNote(s)}${keyArchiveNote(s)}${bitcoinNote(s)}`;
+  return `${head}\n  Failing checks:\n${reasons}${originalDocNote(s)}${assuranceNote(s)}${keyArchiveNote(s)}${bitcoinNote(s)}`;
 }
 
 /** Human-first verdict report (F-10.4). */
@@ -86,16 +99,16 @@ export function formatVerdict(v: BundleVerdict): string {
   lines.push('  Every signer signed this exact document — each .eml reconstruction is checked against it.');
   lines.push('');
   for (const s of v.signers) lines.push(formatSigner(s), '');
-  lines.push(`OVERALL: ${v.proven ? 'PROVEN' : 'FAILED'}`);
-  if (!v.proven) {
+  lines.push(`OVERALL: ${TIER_LABEL[v.tier]}`);
+  if (v.tier === 'FAILED') {
     lines.push('(kysigned is not part of the trust set — this verdict comes only from the embedded evidence.)');
   }
   return lines.join('\n');
 }
 
-/** Map a verdict to a process exit code: 0 = PROVEN, 1 = FAILED. */
+/** Map a verdict to a process exit code: 0 = any satisfied tier, nonzero = FAILED (AC-29). */
 export function exitCodeFor(v: BundleVerdict): number {
-  return v.proven ? 0 : 1;
+  return v.tier !== 'FAILED' ? 0 : 1;
 }
 
 /** Verify a bundle and return the report + exit code (the CLI's pure core). */

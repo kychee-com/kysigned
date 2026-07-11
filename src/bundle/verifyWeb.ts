@@ -15,6 +15,7 @@
 import { extractEmbeddedFileMapWeb } from './extractWeb.js';
 import { orderedEvidence, signerIndices } from './evidenceOrder.js';
 import type { BundleVerdict, KeyAuthStatus, BitcoinAnchor, SignerVerdict, VerifyBundleDeps } from './verifyTypes.js';
+import { computeSignerTier, computeBundleTier, type AssuranceDimensions } from './assuranceTier.js';
 import type { KeysJson } from './keysJson.js';
 import { verifyDkimWeb } from './dkimVerifyWeb.js';
 import { extractSigningText, extractPdfAttachments } from '../api/signing/mimeExtract.js';
@@ -158,6 +159,7 @@ export async function verifyBundleWeb(pdfBytes: Uint8Array, deps: VerifyBundleDe
     errors.push('bundle file appears damaged: could not decompress embedded data');
     return {
       proven: false,
+      tier: 'FAILED',
       fingerprint: { computed: '', matchesPrinted: false },
       originalDocSha256: null,
       signers: [],
@@ -233,6 +235,7 @@ export async function verifyBundleWeb(pdfBytes: Uint8Array, deps: VerifyBundleDe
 
     const emlHash = await sha256(emlBytes);
     let tsOk = false;
+    let tsrOk = false; // RFC-3161 specifically — needed for durable timestamp assurance (F-32.2)
     let signingTimeSec: number | null = null;
     // Bitcoin anchor (F-10.6): OFFLINE-FIRST — the web verifier reports `pending`
     // (no network on load); the explicit "Confirm on Bitcoin" action (26.3)
@@ -245,6 +248,7 @@ export async function verifyBundleWeb(pdfBytes: Uint8Array, deps: VerifyBundleDe
         const res = await verifyTimestamp(reconstructProof(`proofs/signer-${n}.${ext}`, pb), emlHash);
         if (res.ok) {
           tsOk = true;
+          if (ext === 'tsr') tsrOk = true;
           if (res.timeSec) signingTimeSec = signingTimeSec == null ? res.timeSec : Math.min(signingTimeSec, res.timeSec);
         }
       } catch {
@@ -258,10 +262,23 @@ export async function verifyBundleWeb(pdfBytes: Uint8Array, deps: VerifyBundleDe
     // no failed/red state, never gates `proven` (DD-16 presence-not-window, DD-17).
     const keyAuth: KeyAuthStatus = 'pending-online';
 
-    const proven = dkimOk && attOk && intent.valid && tsOk;
+    // F-32 assurance dimensions (mirrors verify.ts). Offline-first: key provenance
+    // (F-32.3, gated online by the archive in Phase C) and the key-validity window
+    // (F-32.4, Phase D) are pending/inconclusive here; timestamp durability needs a
+    // confirmed Bitcoin anchor, which the web verifier only settles online — so it is
+    // `pending` on load and upgrades with the "Confirm on Bitcoin" step. Tier therefore
+    // caps at INTEGRITY VERIFIED offline, honestly (DD-33/DD-34).
+    const assurance: AssuranceDimensions = {
+      keyProvenance: 'pending',
+      timestampDurability: bitcoinAnchor.status === 'confirmed' && tsrOk ? 'confirmed' : 'pending',
+      keyValidity: 'inconclusive',
+    };
+    const tier = computeSignerTier({ dkim: dkimOk, attachment: attOk, intent: intent.valid, timestamp: tsOk }, assurance);
     signers.push({
       index: n,
-      proven,
+      proven: tier !== 'FAILED',
+      tier,
+      assurance,
       email: parseFromEmail(emlStr),
       signingDomain,
       verbatimIntent,
@@ -273,6 +290,7 @@ export async function verifyBundleWeb(pdfBytes: Uint8Array, deps: VerifyBundleDe
     });
   }
 
-  const proven = errors.length === 0 && matchesPrinted && signers.length > 0 && signers.every((s) => s.proven);
-  return { proven, fingerprint: { computed, matchesPrinted }, originalDocSha256, signers, errors };
+  const structurallySound = errors.length === 0 && matchesPrinted && signers.length > 0;
+  const tier = structurallySound ? computeBundleTier(signers.map((s) => s.tier)) : 'FAILED';
+  return { proven: tier !== 'FAILED', tier, fingerprint: { computed, matchesPrinted }, originalDocSha256, signers, errors };
 }

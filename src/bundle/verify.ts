@@ -34,6 +34,7 @@ import { extractSigningText } from '../api/signing/mimeExtract.js';
 import { validateSigningIntent, firstIntentLineVerbatim } from '../api/signing/signingIntent.js';
 import { verifyWith, type TimestampProof, type VerifyResult } from '../timestamp/contract.js';
 import type { KeyAuthStatus, BitcoinAnchor, SignerVerdict, BundleVerdict, VerifyBundleDeps } from './verifyTypes.js';
+import { computeSignerTier, computeBundleTier, type AssuranceDimensions } from './assuranceTier.js';
 import { orderedEvidence, signerIndices } from './evidenceOrder.js';
 
 // Re-export the shared verdict types (defined in verifyTypes.ts so the browser
@@ -120,6 +121,7 @@ export async function verifyBundle(pdfBytes: Uint8Array, deps: VerifyBundleDeps 
     errors.push('bundle file appears damaged: could not decompress embedded data');
     return {
       proven: false,
+      tier: 'FAILED',
       fingerprint: { computed: '', matchesPrinted: false },
       originalDocSha256: null,
       signers: [],
@@ -197,6 +199,7 @@ export async function verifyBundle(pdfBytes: Uint8Array, deps: VerifyBundleDeps 
     // Timestamp: a proof must commit to SHA-256(.eml).
     const emlHash = createHash('sha256').update(emlBytes).digest();
     let tsOk = false;
+    let tsrOk = false; // the RFC-3161 (.tsr) proof specifically — needed for durable timestamp assurance (F-32.2)
     let signingTimeSec: number | null = null;
     // Bitcoin anchor (F-10.6): the `.ots` proof's status, surfaced distinctly from
     // the RFC-3161 time. ADDITIVE — captured here, never folded into `proven`.
@@ -208,6 +211,7 @@ export async function verifyBundle(pdfBytes: Uint8Array, deps: VerifyBundleDeps 
         const res = await verifyTimestamp(reconstructProof(`proofs/signer-${n}.${ext}`, proofBytes), emlHash);
         if (res.ok) {
           tsOk = true;
+          if (ext === 'tsr') tsrOk = true;
           if (res.timeSec) signingTimeSec = signingTimeSec == null ? res.timeSec : Math.min(signingTimeSec, res.timeSec);
           if (ext === 'ots') {
             const m = /bitcoin:block:(\d+):/.exec(res.anchor);
@@ -230,10 +234,26 @@ export async function verifyBundle(pdfBytes: Uint8Array, deps: VerifyBundleDeps 
     // `proven` (DD-16 presence-not-window, DD-17).
     const keyAuth: KeyAuthStatus = 'pending-online';
 
-    const proven = dkimOk && attOk && intent.valid && tsOk;
+    // F-32 assurance dimensions. In this phase (A/B) the OFFLINE engine can settle
+    // integrity + timestamp durability; provider-key provenance (F-32.3, Phase C)
+    // and the authenticated key-validity window (F-32.4, Phase D) have no embedded
+    // artifact yet, so they are honestly pending/inconclusive — capping the tier at
+    // INTEGRITY VERIFIED. Live archive presence never grants provenance (DD-33).
+    // Durable timestamp assurance (F-32.2) requires BOTH a confirmed Bitcoin anchor
+    // AND the RFC-3161 token (each already checked to commit to SHA-256(.eml)).
+    const assurance: AssuranceDimensions = {
+      keyProvenance: 'pending',
+      timestampDurability: bitcoinAnchor.status === 'confirmed' && tsrOk ? 'confirmed' : 'pending',
+      keyValidity: 'inconclusive',
+    };
+    const hard = { dkim: dkimOk, attachment: attOk, intent: intent.valid, timestamp: tsOk };
+    const tier = computeSignerTier(hard, assurance);
+    const proven = tier !== 'FAILED';
     signers.push({
       index: n,
       proven,
+      tier,
+      assurance,
       email: parseFromEmail(emlStr),
       signingDomain,
       verbatimIntent,
@@ -245,6 +265,10 @@ export async function verifyBundle(pdfBytes: Uint8Array, deps: VerifyBundleDeps 
     });
   }
 
-  const proven = errors.length === 0 && matchesPrinted && signers.length > 0 && signers.every((s) => s.proven);
-  return { proven, fingerprint: { computed, matchesPrinted }, originalDocSha256, signers, errors };
+  // Bundle-level: a structural failure (extraction error, fingerprint mismatch, no
+  // signers) is FAILED; otherwise the bundle tier is the WEAKEST signer's tier.
+  const structurallySound = errors.length === 0 && matchesPrinted && signers.length > 0;
+  const tier = structurallySound ? computeBundleTier(signers.map((s) => s.tier)) : 'FAILED';
+  const proven = tier !== 'FAILED';
+  return { proven, tier, fingerprint: { computed, matchesPrinted }, originalDocSha256, signers, errors };
 }

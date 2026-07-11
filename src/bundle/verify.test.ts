@@ -166,6 +166,36 @@ describe('verifyBundle — valid bundle (AC-27/29/64)', () => {
   });
 });
 
+describe('verifyBundle — assurance tiers (F-32.1, #137)', () => {
+  it('a valid bundle with no independent provenance + a non-durable timestamp lands at INTEGRITY_VERIFIED, not the top tier', async () => {
+    const eml = await emlP('alice@example.com', docA);
+    const { bytes } = await assembleBundle(inputFor(docA, [await makeSigner(1, 'alice@example.com', eml)]));
+    const v = await verifyBundle(bytes, { verifyTimestamp });
+    // proven (integrity) still true — but the honest tier is INTEGRITY_VERIFIED.
+    assert.equal(v.proven, true);
+    assert.equal(v.tier, 'INTEGRITY_VERIFIED');
+    const s = v.signers[0];
+    assert.equal(s.tier, 'INTEGRITY_VERIFIED');
+    // Even with a fully-confirmed timestamp, the ABSENCE of independent key
+    // provenance (Phase C) and an authenticated validity window (Phase D) caps
+    // the tier at INTEGRITY_VERIFIED — the honest fix for the #137 over-claim.
+    assert.deepEqual(s.assurance, {
+      keyProvenance: 'pending',
+      timestampDurability: 'confirmed', // fixture's fake OTS anchor confirms + TSA valid
+      keyValidity: 'inconclusive',
+    });
+  });
+
+  it('any hard-check tamper drives the tier to FAILED (never a downgraded tier)', async () => {
+    const eml = await emlP('alice@example.com', docA);
+    const { bytes } = await assembleBundle(inputFor(docB, [await makeSigner(1, 'alice@example.com', eml)])); // doc swap
+    const v = await verifyBundle(bytes, { verifyTimestamp });
+    assert.equal(v.tier, 'FAILED');
+    assert.equal(v.signers[0].tier, 'FAILED');
+    assert.equal(v.proven, false);
+  });
+});
+
 describe('verifyBundle — tamper matrix (AC-28/29)', () => {
   it('(a) document swapped: attachment no longer matches → FAILED', async () => {
     const eml = await emlP('alice@example.com', docA); // .eml attached docA

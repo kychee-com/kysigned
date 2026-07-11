@@ -6,6 +6,7 @@
  * pulls no runtime Node deps into the browser bundle.
  */
 import type { TimestampProof, VerifyResult } from '../timestamp/contract.js';
+import type { AssuranceTier, AssuranceDimensions } from './assuranceTier.js';
 
 // Key-archive presence (F-10.7): `archive-confirmed` (green — the exact signing key
 // is present in the public archive) or `pending-online` (grey — not yet checked /
@@ -33,7 +34,17 @@ export interface BitcoinAnchor {
 
 export interface SignerVerdict {
   index: number;
+  /**
+   * Backward-compatible integrity flag = the tier is INTEGRITY VERIFIED or
+   * better (i.e. `tier !== 'FAILED'`). The honest, granular result is `tier`
+   * + `assurance` (F-32.1); consumers that need to know provider-key vs durable
+   * assurance MUST read those, not `proven`.
+   */
   proven: boolean;
+  /** F-32.1 assurance tier: FAILED / INTEGRITY_VERIFIED / PROVIDER_KEY_CONFIRMED / PROVEN_DURABLE. */
+  tier: AssuranceTier;
+  /** The three evidence dimensions behind the tier (key provenance, timestamp durability, key validity). */
+  assurance: AssuranceDimensions;
   /** Signer email parsed from the `.eml` From header. */
   email: string | null;
   signingDomain: string | null;
@@ -67,7 +78,10 @@ export interface SignerVerdict {
 }
 
 export interface BundleVerdict {
+  /** Backward-compatible integrity flag = `tier !== 'FAILED'` (see SignerVerdict.proven). */
   proven: boolean;
+  /** F-32.1 bundle tier = the WEAKEST signer's tier (FAILED if any signer failed). */
+  tier: AssuranceTier;
   fingerprint: { computed: string; matchesPrinted: boolean };
   /**
    * SHA-256 (hex) of the shared original document `A` = `document-original.pdf`
