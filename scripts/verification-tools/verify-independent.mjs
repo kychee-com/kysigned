@@ -135,6 +135,7 @@ export async function verifyBundleIndependently(pdfBytes) {
     errors.push('bundle file appears damaged: could not decompress embedded data');
     return {
       proven: false,
+      tier: 'FAILED',
       fingerprint: { computed: '', matchesPrinted: false },
       originalDocSha256: null,
       signers: [],
@@ -222,10 +223,19 @@ export async function verifyBundleIndependently(pdfBytes) {
     }
     if (!tsOk) reasons.push('no valid timestamp proof');
 
-    const proven = dkimOk && attOk && intent.valid && tsOk;
+    // F-32 assurance tier, reimplemented INDEPENDENTLY (this toolkit imports none
+    // of the engines). This surface is offline-and-.tsr-only: it confirms no
+    // Bitcoin anchor and holds no archive record, so provider-key provenance and
+    // the key-validity window are pending/inconclusive and durable timestamp
+    // assurance is pending — the tier therefore caps at INTEGRITY VERIFIED, which
+    // is exactly what the web/CLI engines report under the same offline pin.
+    const assurance = { keyProvenance: 'pending', timestampDurability: 'pending', keyValidity: 'inconclusive' };
+    const tier = signerTier({ dkim: dkimOk, attachment: attOk, intent: intent.valid, timestamp: tsOk }, assurance);
     signers.push({
       index: n,
-      proven,
+      proven: tier !== 'FAILED',
+      tier,
+      assurance,
       email: parseFromEmail(emlStr),
       signingDomain,
       verbatimIntent,
@@ -236,9 +246,38 @@ export async function verifyBundleIndependently(pdfBytes) {
     });
   }
 
-  const proven = errors.length === 0 && matchesPrinted && signers.length > 0 && signers.every((s) => s.proven);
-  return { proven, fingerprint: { computed, matchesPrinted }, originalDocSha256, signers, errors };
+  const structurallySound = errors.length === 0 && matchesPrinted && signers.length > 0;
+  const tier = structurallySound ? bundleTier(signers.map((s) => s.tier)) : 'FAILED';
+  return { proven: tier !== 'FAILED', tier, fingerprint: { computed, matchesPrinted }, originalDocSha256, signers, errors };
 }
+
+/**
+ * The F-32.1 verdict tier, reimplemented here from scratch (NOT imported from the
+ * canonical engine) so the parity test is a genuine cross-implementation check.
+ * FAILED on any broken hard check or any `failed` dimension; otherwise the tier
+ * climbs only as far as the confirmed dimensions allow.
+ */
+function signerTier(hard, dims) {
+  if (!hard.dkim || !hard.attachment || !hard.intent || !hard.timestamp) return 'FAILED';
+  if (dims.keyProvenance === 'failed' || dims.timestampDurability === 'failed' || dims.keyValidity === 'failed') return 'FAILED';
+  if (dims.keyProvenance !== 'confirmed') return 'INTEGRITY_VERIFIED';
+  if (dims.timestampDurability === 'confirmed' && dims.keyValidity === 'confirmed') return 'PROVEN_DURABLE';
+  return 'PROVIDER_KEY_CONFIRMED';
+}
+
+/** Bundle tier = the weakest signer's tier (FAILED if none). */
+function bundleTier(tiers) {
+  if (tiers.length === 0) return 'FAILED';
+  const order = ['FAILED', 'INTEGRITY_VERIFIED', 'PROVIDER_KEY_CONFIRMED', 'PROVEN_DURABLE'];
+  return tiers.reduce((w, t) => (order.indexOf(t) < order.indexOf(w) ? t : w), 'PROVEN_DURABLE');
+}
+
+const TIER_LABEL = {
+  FAILED: 'FAILED',
+  INTEGRITY_VERIFIED: 'INTEGRITY VERIFIED',
+  PROVIDER_KEY_CONFIRMED: 'PROVIDER KEY CONFIRMED',
+  PROVEN_DURABLE: 'PROVEN (DURABLE)',
+};
 
 /** Human-readable report (mirrors the CLI's intent, independently formatted). */
 export function formatReport(v) {
@@ -247,12 +286,13 @@ export function formatReport(v) {
   lines.push(`Verification code: ${v.fingerprint.computed} (${v.fingerprint.matchesPrinted ? 'MATCHES' : 'DOES NOT MATCH'} printed)`);
   lines.push(`Original document (SHA-256): ${v.originalDocSha256 ?? '(none)'}`, '');
   for (const s of v.signers) {
-    lines.push(`Signer ${s.index} (${s.email ?? '?'}): ${s.proven ? 'PROVEN' : 'FAILED'}`);
+    lines.push(`Signer ${s.index} (${s.email ?? '?'}): ${TIER_LABEL[s.tier] ?? s.tier}`);
     lines.push(`  checks: dkim=${s.checks.dkim} attachment=${s.checks.attachment} intent=${s.checks.intent} timestamp=${s.checks.timestamp}`);
+    lines.push(`  assurance: provider-key=${s.assurance.keyProvenance} timestamp-durability=${s.assurance.timestampDurability} key-validity=${s.assurance.keyValidity}`);
     lines.push(`  Original document (SHA-256): ${s.originalDocSha256 ?? '(none)'}`);
-    if (!s.proven) lines.push(...s.reasons.map((r) => `    - ${r}`));
+    if (s.tier === 'FAILED') lines.push(...s.reasons.map((r) => `    - ${r}`));
   }
-  lines.push('', `OVERALL: ${v.proven ? 'PROVEN' : 'FAILED'}`);
+  lines.push('', `OVERALL: ${TIER_LABEL[v.tier] ?? v.tier}`);
   return lines.join('\n');
 }
 

@@ -47,12 +47,15 @@ const FIXTURES = [
 function core(v: BundleVerdict | Awaited<ReturnType<typeof verifyBundleIndependently>>) {
   return {
     proven: v.proven,
+    tier: v.tier, // F-32.1 — all three engines must agree on the tier (offline)
     fingerprint: v.fingerprint.computed,
     matchesPrinted: v.fingerprint.matchesPrinted,
     originalDocSha256: v.originalDocSha256,
     signers: v.signers.map((s) => ({
       index: s.index,
       proven: s.proven,
+      tier: s.tier,
+      assurance: s.assurance, // key provenance / timestamp durability / key validity states
       originalDocSha256: s.originalDocSha256,
       dkim: s.checks.dkim,
       attachment: s.checks.attachment,

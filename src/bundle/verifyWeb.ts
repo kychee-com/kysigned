@@ -15,7 +15,7 @@
 import { extractEmbeddedFileMapWeb } from './extractWeb.js';
 import { orderedEvidence, signerIndices } from './evidenceOrder.js';
 import type { BundleVerdict, KeyAuthStatus, BitcoinAnchor, SignerVerdict, VerifyBundleDeps } from './verifyTypes.js';
-import { computeSignerTier, computeBundleTier, type AssuranceDimensions } from './assuranceTier.js';
+import { computeSignerTier, computeBundleTier, TIER_LABEL, type AssuranceDimensions } from './assuranceTier.js';
 import type { KeysJson } from './keysJson.js';
 import { verifyDkimWeb } from './dkimVerifyWeb.js';
 import { extractSigningText, extractPdfAttachments } from '../api/signing/mimeExtract.js';
@@ -26,6 +26,8 @@ import type { TimestampProof, VerifyResult } from '../timestamp/contract.js';
 // Re-export the verdict types so the SPA imports everything from this one
 // browser-safe entry point (never reaching the mailauth-bound verify.ts).
 export type { BundleVerdict, SignerVerdict, KeyAuthStatus, BitcoinAnchorStatus, BitcoinAnchor, VerifyBundleDeps } from './verifyTypes.js';
+export { TIER_LABEL } from './assuranceTier.js';
+export type { AssuranceTier, AssuranceDimensions, DimensionState } from './assuranceTier.js';
 
 // The explicit "Confirm on Bitcoin" action (F-10.6) — offline-first: called only
 // when the user clicks confirm, so the default page load stays fully offline.

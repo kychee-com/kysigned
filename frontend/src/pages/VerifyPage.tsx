@@ -14,6 +14,7 @@ import {
   verifyBundleWeb,
   confirmBitcoinAnchorsWeb,
   confirmKeyArchiveWeb,
+  TIER_LABEL,
   type BundleVerdict,
   type SignerVerdict,
   type BitcoinAnchor,
@@ -127,18 +128,36 @@ function KeyArchiveBadge({ s }: { s: SignerVerdict }) {
   )
 }
 
-function SignerCard({ s }: { s: SignerVerdict }) {
+// A dimension fact (F-32): confirmed = green, failed = red, pending/inconclusive =
+// neutral grey (an upgradeable state, deliberately NOT alarming).
+function DimFact({ label, state }: { label: string; state: string }) {
+  const tone =
+    state === 'confirmed'
+      ? 'text-green-700'
+      : state === 'failed'
+        ? 'text-red-700'
+        : 'text-gray-500'
+  const shown = state === 'inconclusive' ? 'pending' : state
   return (
-    <div className={`rounded-lg border p-4 ${s.proven ? 'border-green-200 bg-green-50/40' : 'border-red-200 bg-red-50/40'}`}>
+    <span className="text-xs text-gray-600">
+      {label}: <span className={tone}>{shown}</span>
+    </span>
+  )
+}
+
+function SignerCard({ s }: { s: SignerVerdict }) {
+  const failed = s.tier === 'FAILED'
+  return (
+    <div className={`rounded-lg border p-4 ${failed ? 'border-red-200 bg-red-50/40' : 'border-green-200 bg-green-50/40'}`}>
       <div className="flex items-center justify-between">
         <h3 className="font-medium text-gray-900">
           Signer {s.index}: {s.email ?? '(unknown)'}
         </h3>
-        <span className={`text-sm font-semibold ${s.proven ? 'text-green-700' : 'text-red-700'}`}>
-          {s.proven ? 'PROVEN' : 'FAILED'}
+        <span className={`text-sm font-semibold ${failed ? 'text-red-700' : 'text-green-700'}`}>
+          {TIER_LABEL[s.tier]}
         </span>
       </div>
-      {s.proven && (
+      {!failed && (
         <p className="mt-1 text-sm text-gray-700">
           Authenticated by <strong>{s.signingDomain}</strong> as <strong>{s.email}</strong>, who sent
           {' '}&ldquo;{s.verbatimIntent}&rdquo; with exactly this document attached, at {fmtTime(s.signingTimeSec)}.
@@ -157,7 +176,13 @@ function SignerCard({ s }: { s: SignerVerdict }) {
         <KeyArchiveBadge s={s} />
         <BitcoinAnchorBadge a={s.bitcoinAnchor} />
       </div>
-      {!s.proven && s.reasons.length > 0 && (
+      {/* F-32 assurance dimensions behind the tier. */}
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+        <DimFact label="Provider key" state={s.assurance.keyProvenance} />
+        <DimFact label="Timestamp durability" state={s.assurance.timestampDurability} />
+        <DimFact label="Key validity window" state={s.assurance.keyValidity} />
+      </div>
+      {failed && s.reasons.length > 0 && (
         <ul className="mt-3 list-disc pl-5 text-sm text-red-700">
           {s.reasons.map((r, i) => (
             <li key={i}>{r}</li>
@@ -354,13 +379,15 @@ export function VerifyPage({
           ) : (
             <>
               <div
-                className={`rounded-lg p-4 mb-4 ${verdict.proven ? 'bg-green-100 text-green-900' : 'bg-red-100 text-red-900'}`}
+                className={`rounded-lg p-4 mb-4 ${verdict.tier === 'FAILED' ? 'bg-red-100 text-red-900' : 'bg-green-100 text-green-900'}`}
               >
-                <p className="text-lg font-semibold">{verdict.proven ? 'Verified' : 'Not verified'}</p>
+                <p className="text-lg font-semibold" data-testid="overall-verdict">
+                  {verdict.tier === 'FAILED' ? 'Not verified' : TIER_LABEL[verdict.tier]}
+                </p>
                 <p className="text-sm">
-                  {verdict.proven
-                    ? 'Every signature is genuine and bound to this exact document.'
-                    : 'One or more checks failed. See the details below.'}
+                  {verdict.tier === 'FAILED'
+                    ? 'One or more checks failed. See the details below.'
+                    : 'Every signature is genuine and bound to this exact document. The tier per signer shows how much independent, long-term evidence is confirmed so far; pending items upgrade automatically as external confirmations land.'}
                 </p>
               </div>
 
