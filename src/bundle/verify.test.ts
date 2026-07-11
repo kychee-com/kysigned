@@ -176,12 +176,13 @@ describe('verifyBundle — assurance tiers (F-32.1, #137)', () => {
     assert.equal(v.tier, 'INTEGRITY_VERIFIED');
     const s = v.signers[0];
     assert.equal(s.tier, 'INTEGRITY_VERIFIED');
-    // Even with a fully-confirmed timestamp, the ABSENCE of independent key
-    // provenance (Phase C) and an authenticated validity window (Phase D) caps
-    // the tier at INTEGRITY_VERIFIED — the honest fix for the #137 over-claim.
+    // The tier caps at INTEGRITY_VERIFIED: no independent key provenance (Phase C),
+    // no authenticated validity window (Phase D), and durability is pending because
+    // the fixture's fake OTS is not block-anchored (F-32.2 requires a real Bitcoin
+    // block for durable) — the honest fix for the #137 over-claim.
     assert.deepEqual(s.assurance, {
       keyProvenance: 'pending',
-      timestampDurability: 'confirmed', // fixture's fake OTS anchor confirms + TSA valid
+      timestampDurability: 'pending', // fake OTS has no Bitcoin block → provisional, not durable
       keyValidity: 'inconclusive',
     });
   });

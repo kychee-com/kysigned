@@ -34,7 +34,7 @@ import { extractSigningText } from '../api/signing/mimeExtract.js';
 import { validateSigningIntent, firstIntentLineVerbatim } from '../api/signing/signingIntent.js';
 import { verifyWith, type TimestampProof, type VerifyResult } from '../timestamp/contract.js';
 import type { KeyAuthStatus, BitcoinAnchor, SignerVerdict, BundleVerdict, VerifyBundleDeps } from './verifyTypes.js';
-import { computeSignerTier, computeBundleTier, type AssuranceDimensions } from './assuranceTier.js';
+import { computeSignerTier, computeBundleTier, classifyTimestampDurability, type AssuranceDimensions } from './assuranceTier.js';
 import { orderedEvidence, signerIndices } from './evidenceOrder.js';
 
 // Re-export the shared verdict types (defined in verifyTypes.ts so the browser
@@ -199,10 +199,13 @@ export async function verifyBundle(pdfBytes: Uint8Array, deps: VerifyBundleDeps 
     // Timestamp: a proof must commit to SHA-256(.eml).
     const emlHash = createHash('sha256').update(emlBytes).digest();
     let tsOk = false;
-    let tsrOk = false; // the RFC-3161 (.tsr) proof specifically — needed for durable timestamp assurance (F-32.2)
+    let tsrOk = false; // the RFC-3161 (.tsr) proof specifically — the provisional leg (F-32.2)
+    let tsrTimeSec: number | null = null;
+    let bitcoinTimeSec: number | null = null;
     let signingTimeSec: number | null = null;
-    // Bitcoin anchor (F-10.6): the `.ots` proof's status, surfaced distinctly from
-    // the RFC-3161 time. ADDITIVE — captured here, never folded into `proven`.
+    // Bitcoin anchor (F-10.6 / F-32.2): `confirmed` ONLY when the `.ots` proof
+    // commits to a REAL Bitcoin block (not merely a calendar/verifying proof) — a
+    // block-anchored time is what durable assurance rests on. Otherwise pending.
     let bitcoinAnchor: BitcoinAnchor = { status: files.has(`proofs/signer-${n}.ots`) ? 'pending' : 'absent' };
     for (const ext of ['tsr', 'ots'] as const) {
       const proofBytes = files.get(`proofs/signer-${n}.${ext}`);
@@ -211,15 +214,23 @@ export async function verifyBundle(pdfBytes: Uint8Array, deps: VerifyBundleDeps 
         const res = await verifyTimestamp(reconstructProof(`proofs/signer-${n}.${ext}`, proofBytes), emlHash);
         if (res.ok) {
           tsOk = true;
-          if (ext === 'tsr') tsrOk = true;
           if (res.timeSec) signingTimeSec = signingTimeSec == null ? res.timeSec : Math.min(signingTimeSec, res.timeSec);
+          if (ext === 'tsr') {
+            tsrOk = true;
+            tsrTimeSec = res.timeSec ?? null;
+          }
           if (ext === 'ots') {
             const m = /bitcoin:block:(\d+):/.exec(res.anchor);
-            bitcoinAnchor = {
-              status: 'confirmed',
-              ...(res.timeSec ? { timeSec: res.timeSec } : {}),
-              ...(m ? { blockHeight: Number(m[1]) } : {}),
-            };
+            if (m) {
+              // A real Bitcoin block → confirmed anchor (durable-eligible).
+              bitcoinTimeSec = res.timeSec ?? null;
+              bitcoinAnchor = {
+                status: 'confirmed',
+                ...(res.timeSec ? { timeSec: res.timeSec } : {}),
+                blockHeight: Number(m[1]),
+              };
+            }
+            // else: the .ots verifies but is not yet block-anchored → stays pending.
           }
         }
       } catch {
@@ -243,7 +254,12 @@ export async function verifyBundle(pdfBytes: Uint8Array, deps: VerifyBundleDeps 
     // AND the RFC-3161 token (each already checked to commit to SHA-256(.eml)).
     const assurance: AssuranceDimensions = {
       keyProvenance: 'pending',
-      timestampDurability: bitcoinAnchor.status === 'confirmed' && tsrOk ? 'confirmed' : 'pending',
+      timestampDurability: classifyTimestampDurability({
+        tsrOk,
+        bitcoinConfirmed: bitcoinAnchor.status === 'confirmed',
+        tsrTimeSec,
+        bitcoinTimeSec,
+      }),
       keyValidity: 'inconclusive',
     };
     const hard = { dkim: dkimOk, attachment: attOk, intent: intent.valid, timestamp: tsOk };

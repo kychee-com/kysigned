@@ -71,6 +71,42 @@ export function computeSignerTier(hard: HardChecks, dims: AssuranceDimensions): 
   return 'PROVIDER_KEY_CONFIRMED';
 }
 
+/**
+ * Timestamp assurance policy (F-32.2, #138). The dual timestamps have
+ * complementary weaknesses, so the model never accepts one alone for the
+ * statement that needs both:
+ *   - **durable** (→ `confirmed`): a Bitcoin-anchored OTS proof CONFIRMED in a
+ *     real block AND a valid RFC-3161 token, both over the same artifact hash and
+ *     with times that do not contradict.
+ *   - **provisional / pending** (→ `pending`): a valid RFC-3161 token alone
+ *     (immediate, TSA-dependent), or an OTS commitment not yet block-anchored.
+ *   - **contradictory** (→ `inconclusive`): both legs verify but the TSA time is
+ *     materially AFTER the Bitcoin block time (impossible for genuine evidence —
+ *     you cannot anchor a document before it was timestamped).
+ * (Absent/invalid timestamps never reach here: the hard `timestamp` check already
+ * requires ≥1 valid proof, so a bundle with none is FAILED before tiering.)
+ */
+export const TIMESTAMP_CONTRADICTION_TOLERANCE_SEC = 24 * 60 * 60; // 24h clock-skew / calendar-batching allowance
+
+export function classifyTimestampDurability(i: {
+  tsrOk: boolean;
+  bitcoinConfirmed: boolean;
+  tsrTimeSec: number | null;
+  bitcoinTimeSec: number | null;
+}): DimensionState {
+  if (i.bitcoinConfirmed && i.tsrOk) {
+    if (
+      i.tsrTimeSec != null &&
+      i.bitcoinTimeSec != null &&
+      i.tsrTimeSec > i.bitcoinTimeSec + TIMESTAMP_CONTRADICTION_TOLERANCE_SEC
+    ) {
+      return 'inconclusive'; // contradictory: TSA claims a time after the anchor that supposedly commits it
+    }
+    return 'confirmed'; // durable
+  }
+  return 'pending'; // provisional (TSA-only) or OTS-pending (not yet block-anchored)
+}
+
 /** The bundle-level tier: the WEAKEST signer's tier (FAILED if any signer failed / none present). */
 export function computeBundleTier(signerTiers: AssuranceTier[]): AssuranceTier {
   if (signerTiers.length === 0) return 'FAILED';

@@ -5,7 +5,13 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeSignerTier, type HardChecks, type AssuranceDimensions } from './assuranceTier.js';
+import {
+  computeSignerTier,
+  classifyTimestampDurability,
+  TIMESTAMP_CONTRADICTION_TOLERANCE_SEC,
+  type HardChecks,
+  type AssuranceDimensions,
+} from './assuranceTier.js';
 
 const HARD_OK: HardChecks = { dkim: true, attachment: true, intent: true, timestamp: true };
 const DIMS_NONE: AssuranceDimensions = {
@@ -63,6 +69,48 @@ describe('computeSignerTier (F-32.1)', () => {
     assert.equal(
       computeSignerTier(HARD_OK, { keyProvenance: 'pending', timestampDurability: 'confirmed', keyValidity: 'inconclusive' }),
       'INTEGRITY_VERIFIED',
+    );
+  });
+});
+
+describe('classifyTimestampDurability (F-32.2, #138)', () => {
+  it('Bitcoin-confirmed + valid TSA, agreeing times → durable (confirmed)', () => {
+    assert.equal(
+      classifyTimestampDurability({ tsrOk: true, bitcoinConfirmed: true, tsrTimeSec: 1000, bitcoinTimeSec: 5000 }),
+      'confirmed',
+    );
+  });
+
+  it('valid TSA only (no confirmed Bitcoin) → provisional (pending) — cannot be durable', () => {
+    assert.equal(
+      classifyTimestampDurability({ tsrOk: true, bitcoinConfirmed: false, tsrTimeSec: 1000, bitcoinTimeSec: null }),
+      'pending',
+    );
+  });
+
+  it('OTS present but not block-anchored (bitcoinConfirmed false) → pending', () => {
+    assert.equal(
+      classifyTimestampDurability({ tsrOk: false, bitcoinConfirmed: false, tsrTimeSec: null, bitcoinTimeSec: null }),
+      'pending',
+    );
+  });
+
+  it('both legs verify but TSA time is materially AFTER the Bitcoin block time → contradictory (inconclusive)', () => {
+    assert.equal(
+      classifyTimestampDurability({
+        tsrOk: true,
+        bitcoinConfirmed: true,
+        tsrTimeSec: 5000 + TIMESTAMP_CONTRADICTION_TOLERANCE_SEC + 1,
+        bitcoinTimeSec: 5000,
+      }),
+      'inconclusive',
+    );
+  });
+
+  it('TSA slightly before/around the Bitcoin time (within tolerance) → still durable', () => {
+    assert.equal(
+      classifyTimestampDurability({ tsrOk: true, bitcoinConfirmed: true, tsrTimeSec: 5000 + 10, bitcoinTimeSec: 5000 }),
+      'confirmed',
     );
   });
 });

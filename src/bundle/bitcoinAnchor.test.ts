@@ -125,11 +125,13 @@ async function makeBundle(over: Partial<BundleSignerInput> = {}): Promise<Uint8A
 }
 
 describe('Bitcoin-anchor verdict field (F-10.6 / AC-99, AC-100)', () => {
-  it('Node: a confirmed .ots → bitcoinAnchor confirmed (with time); proven unaffected', async () => {
+  it('Node: a verifying but NOT block-anchored .ots stays bitcoinAnchor pending (durable needs a real Bitcoin block, F-32.2); proven unaffected', async () => {
+    // The fake OTS verifies (ok) but carries no `bitcoin:block:*` anchor, so it is
+    // a calendar/provisional proof, not block-confirmed → pending (not confirmed).
     const v = await verifyBundle(await makeBundle(), { verifyTimestamp: fakeVerify });
     assert.equal(v.proven, true);
-    assert.equal(v.signers[0].bitcoinAnchor.status, 'confirmed');
-    assert.equal(v.signers[0].bitcoinAnchor.timeSec, 1_700_000_000);
+    assert.equal(v.signers[0].bitcoinAnchor.status, 'pending');
+    assert.equal(v.signers[0].assurance.timestampDurability, 'pending'); // provisional TSA-only
   });
 
   it('Node: parses the Bitcoin block height from a real-shaped anchor', async () => {
@@ -141,6 +143,8 @@ describe('Bitcoin-anchor verdict field (F-10.6 / AC-99, AC-100)', () => {
     assert.equal(v.signers[0].bitcoinAnchor.status, 'confirmed');
     assert.equal(v.signers[0].bitcoinAnchor.blockHeight, 750000);
     assert.equal(v.signers[0].bitcoinAnchor.timeSec, 1_700_000_500);
+    // Real Bitcoin block + valid TSA, agreeing times → durable timestamp assurance (F-32.2).
+    assert.equal(v.signers[0].assurance.timestampDurability, 'confirmed');
   });
 
   it('Node: a .ots that does not confirm → pending, while .tsr keeps proven true (additive, AC-100)', async () => {

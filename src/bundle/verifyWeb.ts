@@ -15,7 +15,7 @@
 import { extractEmbeddedFileMapWeb } from './extractWeb.js';
 import { orderedEvidence, signerIndices } from './evidenceOrder.js';
 import type { BundleVerdict, KeyAuthStatus, BitcoinAnchor, SignerVerdict, VerifyBundleDeps } from './verifyTypes.js';
-import { computeSignerTier, computeBundleTier, TIER_LABEL, type AssuranceDimensions } from './assuranceTier.js';
+import { computeSignerTier, computeBundleTier, classifyTimestampDurability, TIER_LABEL, type AssuranceDimensions } from './assuranceTier.js';
 import type { KeysJson } from './keysJson.js';
 import { verifyDkimWeb } from './dkimVerifyWeb.js';
 import { extractSigningText, extractPdfAttachments } from '../api/signing/mimeExtract.js';
@@ -237,7 +237,8 @@ export async function verifyBundleWeb(pdfBytes: Uint8Array, deps: VerifyBundleDe
 
     const emlHash = await sha256(emlBytes);
     let tsOk = false;
-    let tsrOk = false; // RFC-3161 specifically — needed for durable timestamp assurance (F-32.2)
+    let tsrOk = false; // RFC-3161 specifically — the provisional leg (F-32.2)
+    let tsrTimeSec: number | null = null;
     let signingTimeSec: number | null = null;
     // Bitcoin anchor (F-10.6): OFFLINE-FIRST — the web verifier reports `pending`
     // (no network on load); the explicit "Confirm on Bitcoin" action (26.3)
@@ -250,7 +251,10 @@ export async function verifyBundleWeb(pdfBytes: Uint8Array, deps: VerifyBundleDe
         const res = await verifyTimestamp(reconstructProof(`proofs/signer-${n}.${ext}`, pb), emlHash);
         if (res.ok) {
           tsOk = true;
-          if (ext === 'tsr') tsrOk = true;
+          if (ext === 'tsr') {
+            tsrOk = true;
+            tsrTimeSec = res.timeSec ?? null;
+          }
           if (res.timeSec) signingTimeSec = signingTimeSec == null ? res.timeSec : Math.min(signingTimeSec, res.timeSec);
         }
       } catch {
@@ -272,7 +276,12 @@ export async function verifyBundleWeb(pdfBytes: Uint8Array, deps: VerifyBundleDe
     // caps at INTEGRITY VERIFIED offline, honestly (DD-33/DD-34).
     const assurance: AssuranceDimensions = {
       keyProvenance: 'pending',
-      timestampDurability: bitcoinAnchor.status === 'confirmed' && tsrOk ? 'confirmed' : 'pending',
+      timestampDurability: classifyTimestampDurability({
+        tsrOk,
+        bitcoinConfirmed: bitcoinAnchor.status === 'confirmed', // offline-first: pending until the online Bitcoin confirm
+        tsrTimeSec,
+        bitcoinTimeSec: bitcoinAnchor.timeSec ?? null,
+      }),
       keyValidity: 'inconclusive',
     };
     const tier = computeSignerTier({ dkim: dkimOk, attachment: attOk, intent: intent.valid, timestamp: tsOk }, assurance);
