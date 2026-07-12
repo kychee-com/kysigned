@@ -10,7 +10,7 @@
 > Health: /v1/health
 > Pricing / access: operator-configured — this instance may charge per envelope, gate creators by
 >   an allowlist, or both. Signing is always free for signers.
-> Open source: Apache-2.0-licensed; run your own with `run402 up`.
+> Open source: Apache-2.0-licensed (https://github.com/kychee-com/kysigned); run your own with `run402 up`.
 
 **IMPORTANT: kysigned is NOT in the trust chain.** The proof of a signature is the signer's own
 email provider, not kysigned. The instance assembles and time-stamps the evidence; anyone can verify
