@@ -191,4 +191,17 @@ describe('VerifyPage — client-side verifier (AC-27)', () => {
     // (maps to min-height:44px). The design-validation sweep verifies the rendered px.
     expect(btn.className).toContain('min-h-[44px]')
   })
+
+  it('renders each assurance dimension state VERBATIM — no UI relabel (F-020 cross-surface parity)', async () => {
+    // The engine-parity harness (parity.test.ts) compares ENGINE outputs; F-020 slipped through
+    // because the divergence was a DISPLAY-layer relabel (the web rendered a genuine `inconclusive`
+    // state as `pending`, while the CLI/toolkit printed `inconclusive`). Lock the rendered word to
+    // the model state so a future relabel of any dimension fails here.
+    await uploadWith(verdict({ signers: [signer({ assurance: { keyProvenance: 'confirmed', timestampDurability: 'pending', keyValidity: 'inconclusive' } })] }))
+    await waitFor(() => expect(screen.getByTestId('overall-verdict')).toBeInTheDocument())
+    const text = document.body.textContent ?? ''
+    expect(text).toMatch(/Key validity window:\s*inconclusive/i) // shown verbatim, matching CLI/toolkit
+    expect(text).toMatch(/Timestamp durability:\s*pending/i)
+    expect(text).not.toMatch(/Key validity window:\s*pending/i) // the retired relabel hack must stay gone
+  })
 })
