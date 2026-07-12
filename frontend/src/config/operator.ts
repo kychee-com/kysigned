@@ -56,6 +56,12 @@ export interface OperatorAudienceCard {
   ctaStyle: 'primary' | 'secondary';
   /** true → full-navigation <a> (static page); false → SPA <Link>. */
   ctaExternal?: boolean;
+  /**
+   * 'github' → the CTA renders as an icon-only GitHub-mark link (always a
+   * full-navigation <a>, new tab); ctaLabel becomes the accessible name
+   * (aria-label/title) instead of visible text.
+   */
+  ctaIcon?: 'github';
 }
 
 export interface OperatorAudiences {

@@ -48,6 +48,16 @@ const KYSIGNED_CONFIG = JSON.stringify({
           ctaStyle: 'primary',
           ctaExternal: false,
         },
+        {
+          kicker: 'For builders + SaaS',
+          tagline: 'Deploy your own',
+          itemsHtml: ['Apache-2.0-licensed public repo'],
+          ctaLabel: 'kysigned on GitHub',
+          ctaHref: 'https://github.com/kychee-com/kysigned',
+          ctaStyle: 'secondary',
+          ctaExternal: true,
+          ctaIcon: 'github',
+        },
       ],
     },
   },
@@ -99,6 +109,19 @@ describe('MarketingHomePage — operator config injected (kysigned.com restored,
     expect(t).toMatch(/Use kysigned\.com/); // the audience card
     expect(t).toMatch(/4 envelopes free/i); // the trial note
     expect(t).toMatch(/Kychee/); // the operator footer brand
+  });
+
+  it('renders a card with ctaIcon "github" as an icon-only GitHub link (aria-label carries the name)', () => {
+    vi.stubEnv('VITE_OPERATOR_CONFIG', KYSIGNED_CONFIG);
+    const { container } = render(<MemoryRouter><MarketingHomePage /></MemoryRouter>);
+    const a = container.querySelector('a.btn-github');
+    expect(a).toBeTruthy();
+    expect(a!.getAttribute('href')).toBe('https://github.com/kychee-com/kysigned');
+    expect(a!.getAttribute('aria-label')).toBe('kysigned on GitHub');
+    expect(a!.getAttribute('target')).toBe('_blank');
+    expect(a!.getAttribute('rel')).toBe('noreferrer');
+    expect(a!.querySelector('svg')).toBeTruthy(); // the GitHub mark
+    expect((a!.textContent ?? '').trim()).toBe(''); // icon-only — no visible label text
   });
 });
 
