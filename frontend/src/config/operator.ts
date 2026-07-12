@@ -62,6 +62,12 @@ export interface OperatorAudienceCard {
    * (aria-label/title) instead of visible text.
    */
   ctaIcon?: 'github';
+  /**
+   * Optional quiet text link under the CTA (e.g. a "how it works" explainer).
+   * Rendered (as a full-navigation <a>) only when BOTH label and href are set.
+   */
+  ctaSubLabel?: string;
+  ctaSubHref?: string;
 }
 
 export interface OperatorAudiences {

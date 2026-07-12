@@ -73,6 +73,9 @@ const MARKETING_CSS = `
 .marketing-home-page .audience-card .btn-github { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; color: #1a1a2e; }
 .marketing-home-page .audience-card .btn-github:hover { opacity: 0.7; }
 .marketing-home-page .audience-card .btn-github svg { width: 40px; height: 40px; display: block; }
+.marketing-home-page .audience-card .cta-sub { margin-top: 8px; font-size: 13px; }
+.marketing-home-page .audience-card .cta-sub a { color: #5a5a6e; text-decoration: underline; }
+.marketing-home-page .audience-card .cta-sub a:hover { color: #1a1a2e; }
 
 @media (max-width: 720px) {
   .marketing-home-page .step-grid { grid-template-columns: 1fr; }
@@ -234,6 +237,12 @@ export function MarketingHomePage() {
                         {card.ctaLabel}
                       </Link>
                     )}
+                    {/* Quiet explainer link under the CTA (e.g. "How forking works"). */}
+                    {card.ctaSubLabel && card.ctaSubHref ? (
+                      <div className="cta-sub">
+                        <a href={card.ctaSubHref}>{card.ctaSubLabel}</a>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ))}

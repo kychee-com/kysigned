@@ -57,6 +57,8 @@ const KYSIGNED_CONFIG = JSON.stringify({
           ctaStyle: 'secondary',
           ctaExternal: true,
           ctaIcon: 'github',
+          ctaSubLabel: 'How forking works →',
+          ctaSubHref: '/saas-vs-repo.html',
         },
       ],
     },
@@ -122,6 +124,15 @@ describe('MarketingHomePage — operator config injected (kysigned.com restored,
     expect(a!.getAttribute('rel')).toBe('noreferrer');
     expect(a!.querySelector('svg')).toBeTruthy(); // the GitHub mark
     expect((a!.textContent ?? '').trim()).toBe(''); // icon-only — no visible label text
+  });
+
+  it('renders the quiet explainer sub-link under the CTA (ctaSubLabel/ctaSubHref)', () => {
+    vi.stubEnv('VITE_OPERATOR_CONFIG', KYSIGNED_CONFIG);
+    const { container } = render(<MemoryRouter><MarketingHomePage /></MemoryRouter>);
+    const sub = container.querySelector('.audience-cta .cta-sub a');
+    expect(sub).toBeTruthy();
+    expect(sub!.getAttribute('href')).toBe('/saas-vs-repo.html');
+    expect(sub!.textContent).toBe('How forking works →');
   });
 });
 
