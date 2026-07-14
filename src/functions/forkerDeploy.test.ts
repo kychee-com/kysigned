@@ -40,7 +40,7 @@ describe('#114 — forker deploy.mjs assembles the F-29.6 cron-less shape', () =
       assert.ok(!('schedule' in fn), `function ${name} must not carry a cron schedule`);
     }
     const triggers = fns['kysigned-api']!.triggers ?? [];
-    assert.equal(triggers.filter((t) => t.type === 'schedule').length, 1, 'one schedule trigger');
+    assert.equal(triggers.filter((t) => t.type === 'schedule').length, 2, 'two schedule triggers (grant monitor + archive reconciliation)');
     assert.equal(triggers.filter((t) => t.type === 'email').length, 2, 'two email triggers');
 
     // /v1/* routes to the api function; the SPA (site) is attached.
@@ -49,11 +49,14 @@ describe('#114 — forker deploy.mjs assembles the F-29.6 cron-less shape', () =
     assert.ok(spec.site, 'the built SPA is attached to the release');
   });
 
-  it('the schedule trigger is the daily signup-grant monitor; the email triggers are reply_received + bounced on the signing mailbox', () => {
-    const triggers = buildApiTriggers('mbx_x') as Array<{ id: string; type: string; cron?: string; mailbox?: string; events?: string[] }>;
-    const schedule = triggers.find((t) => t.type === 'schedule');
-    assert.equal(schedule?.id, 'signup-grant-monitor');
-    assert.equal(schedule?.cron, '0 9 * * *');
+  it('the schedule triggers are the daily grant monitor + archive reconciliation; the email triggers are reply_received + bounced on the signing mailbox', () => {
+    const triggers = buildApiTriggers('mbx_x') as Array<{ id: string; type: string; cron?: string; mailbox?: string; events?: string[]; run?: { event_type?: string } }>;
+    const schedules = triggers.filter((t) => t.type === 'schedule');
+    const grant = schedules.find((t) => t.id === 'signup-grant-monitor');
+    assert.equal(grant?.cron, '0 9 * * *');
+    const reconcile = schedules.find((t) => t.id === 'archive-reconciliation');
+    assert.equal(reconcile?.cron, '31 7 * * *', 'daily archive-confirmation backstop (F-32.7)');
+    assert.equal(reconcile?.run?.event_type, 'archive_reconciliation_sweep');
 
     const email = triggers.filter((t) => t.type === 'email');
     assert.deepEqual(email.flatMap((t) => t.events ?? []).sort(), ['bounced', 'reply_received']);

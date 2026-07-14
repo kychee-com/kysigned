@@ -11,7 +11,12 @@
  * throws and NEVER gates the PROVEN verdict; there is no failed/red key state.
  * Browser-safe (the archive client is fetch-only; the bundle extractor is isomorphic).
  */
-import { lookupArchivedKey, type DkimArchiveDeps } from '../api/signing/dkimArchive.js';
+import {
+  lookupArchivedKey,
+  extractPublicKey,
+  usableLastSeenAt,
+  type DkimArchiveDeps,
+} from '../api/signing/dkimArchive.js';
 import { extractEmbeddedFileMapWeb } from './extractWeb.js';
 import { signerIndices } from './evidenceOrder.js';
 import type { KeysJson } from './keysJson.js';
@@ -34,7 +39,7 @@ export interface KeyArchiveConfirmation {
   keyProvenance: DimensionState;
   /** The archive's observation/registration time (ISO-8601), when confirmed; else null. */
   observedAt: string | null;
-  /** The archive's last-observed-live time for the exact key (F-32.4 validity window); else null. */
+  /** The archive's recorded last-seen for the exact key (F-32.4 validity window, as-recorded semantics); else null. */
   lastSeenAt: string | null;
 }
 
@@ -45,12 +50,8 @@ const PENDING: KeyArchiveConfirmation = {
   lastSeenAt: null,
 };
 
-/** The base64 `p=` public key from a DKIM TXT value (`v=DKIM1; k=rsa; p=<b64>`) or a bare `p=<b64>`, whitespace-stripped. */
-function extractPublicKey(value: string | null | undefined): string {
-  if (!value) return '';
-  const m = /p=([^;]*)/i.exec(value);
-  return (m ? m[1] : '').replace(/\s+/g, '');
-}
+// extractPublicKey lives in dkimArchive.ts — ONE canonical comparison shared with the
+// receipt-time parity check (confirmKeyAtSigning), per F-32.6/DD-36.
 
 /**
  * Confirm ONE signer's key against the public archive. Returns `archive-confirmed`
@@ -76,7 +77,7 @@ export async function confirmKeyArchive(
         keyAuthenticity: 'archive-confirmed',
         keyProvenance: 'confirmed',
         observedAt: match.firstSeenAt ?? match.lastSeenAt ?? null,
-        lastSeenAt: match.lastSeenAt ?? match.firstSeenAt ?? null,
+        lastSeenAt: usableLastSeenAt(match),
       };
     }
     // Records EXIST for this exact (domain, selector) but none carry the bundle's key:

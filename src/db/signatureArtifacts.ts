@@ -56,6 +56,9 @@ function mapRow(r: Row): SignatureArtifact {
     tsa_token: coerceProof(r.tsa_token),
     key_obs_proof: coerceProof(r.key_obs_proof),
     archive_status: (r.archive_status as string | null) ?? null,
+    archive_confirmation: (r.archive_confirmation as 'confirmed' | 'unconfirmed' | 'outage' | null) ?? null,
+    archive_confirmation_checked_at: coerceDate(r.archive_confirmation_checked_at),
+    archive_confirmation_healed_at: coerceDate(r.archive_confirmation_healed_at),
     ts_status: r.ts_status as 'pending' | 'complete',
     created_at: coerceDate(r.created_at) ?? new Date(0),
     updated_at: coerceDate(r.updated_at) ?? new Date(0),
@@ -77,9 +80,10 @@ export async function upsertSignatureArtifact(
        (envelope_id, signer_email, message_id, sha256_eml,
         spf_verdict, dkim_verdict, dmarc_verdict,
         dkim_domain, dkim_selector, dkim_key, dkim_observed_at,
-        ots_proof, tsa_token, key_obs_proof, archive_status, ts_status)
+        ots_proof, tsa_token, key_obs_proof, archive_status, ts_status,
+        archive_confirmation, archive_confirmation_checked_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
-             $12::jsonb,$13::jsonb,$14::jsonb,$15,COALESCE($16,'pending'))
+             $12::jsonb,$13::jsonb,$14::jsonb,$15,COALESCE($16,'pending'),$17,$18)
      ON CONFLICT (envelope_id, signer_email) DO NOTHING
      RETURNING *`,
     [
@@ -89,6 +93,7 @@ export async function upsertSignatureArtifact(
       input.dkim_observed_at ?? null,
       jsonParam(input.ots_proof), jsonParam(input.tsa_token), jsonParam(input.key_obs_proof),
       input.archive_status ?? null, input.ts_status ?? null,
+      input.archive_confirmation ?? null, input.archive_confirmation_checked_at ?? null,
     ],
   );
   if (res.rows.length > 0) {
@@ -145,6 +150,50 @@ export async function listPendingTimestampArtifacts(
     [limit],
   );
   return (res.rows as Row[]).map(mapRow);
+}
+
+/**
+ * The F-32.7 daily reconciliation sweep's work list (AC-165): artifacts created inside
+ * the [now-maxAge, now-minAge] window (default 24-48h — every artifact is in-window for
+ * exactly one daily run, which also bounds re-alerting) whose receipt-time confirmation
+ * is NOT clean (`unconfirmed` / `outage` / NULL-with-selector — NULL rows older than the
+ * window, i.e. all legacy rows, never qualify), and that have a selector to re-check.
+ */
+export async function listArtifactsForArchiveReconciliation(
+  pool: DbPool,
+  now: Date = new Date(),
+  window: { minAgeHours?: number; maxAgeHours?: number } = {},
+): Promise<SignatureArtifact[]> {
+  const olderThan = new Date(now.getTime() - (window.minAgeHours ?? 24) * 3_600_000);
+  const youngerThan = new Date(now.getTime() - (window.maxAgeHours ?? 48) * 3_600_000);
+  const res = await pool.query(
+    `SELECT * FROM signature_artifacts
+      WHERE created_at <= $1 AND created_at >= $2
+        AND dkim_selector IS NOT NULL
+        AND (archive_confirmation IS NULL OR archive_confirmation IN ('unconfirmed', 'outage'))
+      ORDER BY created_at ASC`,
+    [olderThan, youngerThan],
+  );
+  return (res.rows as Row[]).map(mapRow);
+}
+
+/** Record a sweep re-check outcome (F-32.7): state + checked-at, healed-at when it healed. */
+export async function updateArtifactArchiveConfirmation(
+  pool: DbPool,
+  id: string,
+  update: { confirmation: 'confirmed' | 'unconfirmed' | 'outage'; checkedAt: Date; healedAt?: Date | null },
+): Promise<SignatureArtifact | null> {
+  const res = await pool.query(
+    `UPDATE signature_artifacts
+       SET archive_confirmation = $2,
+           archive_confirmation_checked_at = $3,
+           archive_confirmation_healed_at = COALESCE($4, archive_confirmation_healed_at),
+           updated_at = now()
+     WHERE id = $1
+     RETURNING *`,
+    [id, update.confirmation, update.checkedAt, update.healedAt ?? null],
+  );
+  return res.rows.length ? mapRow(res.rows[0] as Row) : null;
 }
 
 export interface ArtifactTimestampUpdate {

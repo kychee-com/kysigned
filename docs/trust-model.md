@@ -109,14 +109,21 @@ Each item is a threat, then what stops it (and any residual risk).
 
 - **Leaked or rotated-published DKIM key (the `dkim-rotate` model).** A provider's old private key leaks, or
   a later-published key is used to forge a historical "signature". *Defence:* an
-  **anchored-time upper bound** on the key's observed life. The public archive records
-  when each provider key was last seen live in DNS; the durable timestamp fixes when the
-  signature existed. If the anchored signing time is *later* than the key was last
-  observed live (plus a grace margin), the signature cannot reach **PROVEN (DURABLE)** —
+  **anchored-time upper bound** on the key's recorded lifetime. The public archive records
+  when each provider key was first and last seen; the durable timestamp fixes when the
+  signature existed. If the anchored signing time is *later* than the key's recorded
+  last-seen time (plus a grace margin), the signature cannot reach **PROVEN (DURABLE)** —
   which is exactly the retired-key / rotate-and-publish forgery. This is deliberately a
   one-sided *upper* bound: a signing time *earlier* than the archive first recorded the
   key is fine (a key is often observed only after it is already in use), so we never
-  require a lower bound. A key compromised *during* its live window is indistinguishable
+  require a lower bound. *Known limitation:* the archive's public API does not label
+  whether a recorded time came from its own live DNS observation or from an archival
+  reconstruction (GCD key recovery from stored mail), so the bound consumes the times
+  **as recorded**; an attacker who already holds a leaked provider private key could try
+  to stretch a record's last-seen through the archive's recovery corpus. The defence for
+  that residual lives on the archive side (upstream ask for per-source semantics:
+  `zkemail/archive#46`); if the archive exposes them, this bound tightens to live
+  observations only. A key compromised *during* its live window is indistinguishable
   from legitimate use — the same residual risk as any PKI.
 - **Malicious operator (self-minted key forgery).** kysigned itself tries to fabricate a
   signature. It **cannot swap the document** (the signer's DKIM signature byte-binds the
@@ -148,7 +155,7 @@ Each item is a threat, then what stops it (and any residual risk).
   providers' DNS itself and timestamps what it sees), not against volatile live DNS. A
   later rotation changes nothing: the archive's historical record still confirms the
   exact embedded key, and the anchored-time upper bound above still places signing within
-  the key's observed-live window.
+  the key's recorded lifetime.
 - **Replay / double-recording.** The same signed email is submitted twice, or two
   workers race to record it. *Defence:* recording is idempotent — a still-pending
   signer flips to `signed` exactly once, and a duplicate resolves to "already

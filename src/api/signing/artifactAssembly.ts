@@ -17,7 +17,7 @@ import { upsertSignatureArtifact } from '../../db/signatureArtifacts.js';
 import type { SignatureArtifact } from '../../db/types.js';
 import type { TimestampProof, TimestampProvider } from '../../timestamp/contract.js';
 import type { ReceiptVerdicts } from './senderAuthGate.js';
-import { ensureKeyArchived, type DkimArchiveDeps } from './dkimArchive.js';
+import { confirmKeyAtSigning, type DkimArchiveDeps, type SigningKeyConfirmation } from './dkimArchive.js';
 import { keyRecordDigest, type ResolveDkimKey } from './dkimKeyResolver.js';
 
 /**
@@ -142,7 +142,7 @@ export async function assembleSignatureArtifact(
       dkimObservedAt = observed.observedAt;
       // Timestamp the observation with the TSA (synchronous → complete; no pending
       // upgrade needed). The Bitcoin/math anchor for the key is the public archive's
-      // witness.co record (ensureKeyArchived below); the .eml carries the OTS anchor.
+      // witness.co record (confirmKeyAtSigning below); the .eml carries the OTS anchor.
       if (deps.tsaProvider) {
         keyObsProof = await safeStamp(
           deps.tsaProvider,
@@ -153,13 +153,24 @@ export async function assembleSignatureArtifact(
     }
   }
 
+  // F-32.6 (AC-163): the receipt-time check runs at VERIFIER PARITY — exact observed
+  // key bytes present in the archive with a usable last-seen (confirmKeyAtSigning
+  // shares the verifier's extractPublicKey predicate), contributing whenever the
+  // selector's records lack the observed key. Still fail-proof + deadline-bounded:
+  // any outcome (incl. outage) lets receipt proceed (AC-164).
+  let archiveConfirmation: SigningKeyConfirmation | null = null;
   if (deps.archive && input.selector) {
-    const r = await settleWithin(
-      ensureKeyArchived(input.signingDomain, input.selector, deps.archive),
+    archiveConfirmation = await settleWithin(
+      confirmKeyAtSigning(input.signingDomain, input.selector, dkimKey, deps.archive),
       budgets.archive,
-      { archived: false, contributed: false, outage: true, records: [], detail: 'archive call exceeded deadline' },
+      { outcome: 'outage', lastSeenAt: null, nudged: false, detail: 'archive call exceeded deadline' },
     );
-    archiveStatus = r.outage ? 'outage' : r.contributed ? 'contributed' : r.archived ? 'archived' : 'unknown';
+    archiveStatus =
+      archiveConfirmation.outcome === 'outage'
+        ? 'outage'
+        : archiveConfirmation.nudged
+          ? 'contributed'
+          : 'archived';
   }
 
   const { artifact } = await upsertSignatureArtifact(pool, {
@@ -178,6 +189,8 @@ export async function assembleSignatureArtifact(
     tsa_token: tsaToken,
     key_obs_proof: keyObsProof,
     archive_status: archiveStatus,
+    archive_confirmation: archiveConfirmation?.outcome ?? null,
+    archive_confirmation_checked_at: archiveConfirmation ? new Date() : null,
     ts_status: tsStatus,
   });
   return artifact;

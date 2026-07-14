@@ -1,12 +1,18 @@
 /**
- * Key-validity window (F-32.4, #139) — the durable statement requires the anchored
- * signing time `T` to fall within the key's OBSERVED-LIVE-in-DNS interval from the
- * independent archive.
+ * Key-validity window (F-32.4, #139/#147) — the durable statement requires the
+ * anchored signing time `T` to fall within the key's RECORDED lifetime interval
+ * from the independent archive.
  *
- * The rule is the UPPER bound only: `T <= last-observed-live + grace`. A signature
- * anchored after the provider stopped serving that key in DNS cannot be genuine —
- * this is what defeats the retired-key / rotate-and-publish forgery (a real but
- * later-disclosed historical key, forged with a fresh timestamp).
+ * The rule is the UPPER bound only: `T <= last-seen (as recorded) + grace`. A
+ * signature anchored after the provider stopped serving that key in DNS cannot be
+ * genuine — this is what defeats the retired-key / rotate-and-publish forgery (a
+ * real but later-disclosed historical key, forged with a fresh timestamp).
+ *
+ * "As recorded" is a documented limitation (spec 0.44.0, DD-36): the archive's
+ * public API does not label live-DNS vs archival (GCD-recovered) observations, so
+ * the window consumes the recorded times regardless of source. If the archive ships
+ * per-source semantics (upstream ask zkemail/archive#46), this tightens to live
+ * observations only.
  *
  * The LOWER bound (first-observed) is deliberately NOT required: kysigned
  * contributes the key to the archive at signing time, so first-observed ≈ `T`, and
@@ -21,7 +27,7 @@
  */
 import type { DimensionState } from './assuranceTier.js';
 
-/** Grace over last-observed-live: archive re-observation cadence + rotation/crawl lag. */
+/** Grace over the recorded last-seen: archive re-observation cadence + rotation/crawl lag. */
 export const KEY_VALIDITY_GRACE_SEC = 90 * 24 * 60 * 60; // 90 days
 
 export function validityFromWindow(

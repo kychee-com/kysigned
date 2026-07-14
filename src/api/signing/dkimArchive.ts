@@ -80,6 +80,23 @@ function resolveFetch(deps?: DkimArchiveDeps): typeof fetch {
   return f;
 }
 
+/**
+ * The base64 `p=` public key from a DKIM TXT value (`v=DKIM1; k=rsa; p=<b64>`) or a
+ * bare `p=<b64>`, whitespace-stripped. THE canonical key comparison for both the
+ * verifier's provenance gate (confirmKeyArchive) and the receipt-time parity check
+ * (confirmKeyAtSigning) — one predicate, shared (F-32.6 / DD-36).
+ */
+export function extractPublicKey(value: string | null | undefined): string {
+  if (!value) return '';
+  const m = /p=([^;]*)/i.exec(value);
+  return (m ? m[1] : '').replace(/\s+/g, '');
+}
+
+/** The record's usable last-seen (falls back to first-seen) — the F-32.4 window input. */
+export function usableLastSeenAt(record: ArchiveKeyRecord): string | null {
+  return record.lastSeenAt ?? record.firstSeenAt ?? null;
+}
+
 /** Coerce the archive's lookup body (single record | array | {records}) into a record list. */
 function normalizeRecords(body: unknown): ArchiveKeyRecord[] {
   if (Array.isArray(body)) {
@@ -141,6 +158,82 @@ export async function contributeKey(
     alreadyPresent: result.already_in_db === true,
     status: res.status,
   };
+}
+
+export type SigningConfirmOutcome = 'confirmed' | 'unconfirmed' | 'outage';
+
+export interface SigningKeyConfirmation {
+  /**
+   * The receipt-time verifier-parity result (F-32.6 / AC-163):
+   *   - `confirmed`: the archive holds the EXACT observed key bytes with a usable last-seen
+   *     — the same predicate the verifier's provenance gate applies later;
+   *   - `unconfirmed`: not (yet) confirmable — absent, stale selector records, contributed
+   *     just now (the read path may lag), no usable time, or no observed key to compare.
+   *     The F-32.7 reconciliation sweep re-checks and heals these;
+   *   - `outage`: the archive was unreachable/errored. NEVER blocks receipt.
+   */
+  outcome: SigningConfirmOutcome;
+  /** Usable last-seen for the exact key when confirmed (F-32.4 window input); else null. */
+  lastSeenAt: string | null;
+  /** A contribute POST was issued this call (absent pair, or the stale-selector nudge). */
+  nudged: boolean;
+  /** Diagnostic detail for the audit log. */
+  detail?: string;
+}
+
+/**
+ * Receipt-time verifier-parity confirmation (F-32.6 / AC-163, DD-36). Evaluates the
+ * VERIFIER'S own predicate at signing — exact key bytes present in the archive with a
+ * usable last-seen — and ALWAYS contributes when the selector's records lack the
+ * observed key (rotation under a reused selector: the old ensure-flow skipped the POST
+ * whenever ANY record existed, so the archive was never nudged to re-observe — the
+ * latent false-FAIL risk this fixes). Never throws; receipt proceeds on any outcome.
+ */
+export async function confirmKeyAtSigning(
+  domain: string,
+  selector: string,
+  observedKey: string | null,
+  deps?: DkimArchiveDeps,
+): Promise<SigningKeyConfirmation> {
+  try {
+    const lookup = await lookupArchivedKey(domain, selector, deps);
+    const want = extractPublicKey(observedKey);
+    if (lookup.found && !want) {
+      // resolveDkimKey failed upstream — parity is not evaluable; presence alone is
+      // deliberately NOT `confirmed` (operator metadata never substitutes, AC-158).
+      return { outcome: 'unconfirmed', lastSeenAt: null, nudged: false, detail: 'no observed key to compare' };
+    }
+    if (lookup.found) {
+      const match = lookup.records.find((r) => extractPublicKey(r.value) === want);
+      if (match) {
+        const lastSeen = usableLastSeenAt(match);
+        if (lastSeen) return { outcome: 'confirmed', lastSeenAt: lastSeen, nudged: false };
+        const nudge = await contributeKey(domain, selector, deps);
+        return nudge.ok
+          ? { outcome: 'unconfirmed', lastSeenAt: null, nudged: true, detail: 'exact key present, no usable last-seen; nudged' }
+          : { outcome: 'outage', lastSeenAt: null, nudged: true, detail: `nudge failed: HTTP ${nudge.status}` };
+      }
+      // Records exist but none carry the observed key → nudge a fresh observation.
+      const nudge = await contributeKey(domain, selector, deps);
+      return nudge.ok
+        ? { outcome: 'unconfirmed', lastSeenAt: null, nudged: true, detail: 'selector records lack the observed key; nudged' }
+        : { outcome: 'outage', lastSeenAt: null, nudged: true, detail: `nudge failed: HTTP ${nudge.status}` };
+    }
+    // Nothing archived for the pair → contribute (F-6.7). Contributed-now stays
+    // `unconfirmed`: the broad read path can lag (re-GET would false-negative), so
+    // the sweep confirms it 24–48h later against the settled record.
+    const contribution = await contributeKey(domain, selector, deps);
+    return contribution.ok
+      ? {
+          outcome: 'unconfirmed',
+          lastSeenAt: null,
+          nudged: true,
+          detail: contribution.alreadyPresent ? 'already_in_db (race)' : 'contributed',
+        }
+      : { outcome: 'outage', lastSeenAt: null, nudged: true, detail: `contribute failed: HTTP ${contribution.status}` };
+  } catch (err) {
+    return { outcome: 'outage', lastSeenAt: null, nudged: false, detail: `archive unreachable: ${(err as Error).message}` };
+  }
 }
 
 export async function ensureKeyArchived(

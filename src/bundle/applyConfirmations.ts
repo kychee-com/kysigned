@@ -39,7 +39,7 @@ export function applyOnlineConfirmations(verdict: BundleVerdict, c: OnlineConfir
           'provider key mismatch: the public archive publishes a different key for this domain/selector (possible forgery)',
         );
       }
-      // F-32.4 validity window — anchored signing time within the key's observed-live interval.
+      // F-32.4 validity window — anchored signing time within the key's recorded lifetime (as-recorded semantics).
       s.assurance.keyValidity = validityFromWindow(s.signingTimeSec, ka.lastSeenAt, ka.keyProvenance);
     }
 

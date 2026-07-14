@@ -263,7 +263,7 @@ The bundle is an ordinary PDF anyone can verify with no account and no server:
 The verdict is one of four honest assurance tiers, not a yes/no. Offline, anyone reaches INTEGRITY
 VERIFIED (valid signatures, matching document, intent line, timestamp present). Going online confirms
 the exact provider key against the public archive (PROVIDER KEY CONFIRMED) and a Bitcoin-anchored,
-un-back-datable time within the key's observed-live window (PROVEN DURABLE). A key an operator merely
+un-back-datable time within the key's recorded lifetime window (PROVEN DURABLE). A key an operator merely
 claimed was the provider's fails the archive gate instead of passing as proven.
 
 ## Fork your own

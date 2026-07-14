@@ -102,17 +102,24 @@ describe('assembleSignatureArtifact — F-6.6 timestamps', () => {
     assert.equal(rows.length, 1);
   });
 
-  it('records + timestamps + archives the observed DKIM key (F-6.7)', async () => {
+  it('records + timestamps + archives the observed DKIM key (F-6.7) — exact-match record confirms at parity (AC-163)', async () => {
     const { pool } = createSignatureArtifactsMemoryPool();
     const resolveDkimKey = async () => ({
       value: 'v=DKIM1; k=rsa; p=AAAA',
       observedAt: new Date('2026-06-14T10:00:00Z'),
     });
-    // archive GET returns the record → already archived (no contribute).
+    // archive GET returns the EXACT observed key with seen-times (real records always
+    // carry them) → already archived, verifier-parity confirmed, no contribute.
     const archiveFetch = (async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ domain: 'example.com', selector: 'sel', value: 'v=DKIM1; k=rsa; p=AAAA' }),
+      json: async () => ({
+        domain: 'example.com',
+        selector: 'sel',
+        value: 'v=DKIM1; k=rsa; p=AAAA',
+        firstSeenAt: '2026-06-01T00:00:00Z',
+        lastSeenAt: '2026-06-14T09:00:00Z',
+      }),
     })) as unknown as typeof fetch;
 
     const artifact = await assembleSignatureArtifact(pool, baseInput(), {
@@ -126,6 +133,54 @@ describe('assembleSignatureArtifact — F-6.6 timestamps', () => {
     assert.ok(artifact.dkim_observed_at);
     assert.equal(artifact.key_obs_proof?.provider, 'fake'); // TSA-stamped observation
     assert.equal(artifact.archive_status, 'archived');
+    assert.equal(artifact.archive_confirmation, 'confirmed');
+    assert.ok(artifact.archive_confirmation_checked_at);
+  });
+
+  it('rotation under a reused selector: stale records trigger the contribute nudge; stored UNCONFIRMED (AC-163, DD-36)', async () => {
+    const { pool } = createSignatureArtifactsMemoryPool();
+    let posted = false;
+    const archiveFetch = (async (url: string) => {
+      if (String(url).includes('/api/dsp')) {
+        posted = true;
+        return { ok: true, status: 200, json: async () => ({ already_in_db: true, added: false }) };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          domain: 'example.com',
+          selector: 'sel',
+          value: 'v=DKIM1; k=rsa; p=STALEOLDKEY',
+          firstSeenAt: '2026-01-01T00:00:00Z',
+          lastSeenAt: '2026-05-01T00:00:00Z',
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const artifact = await assembleSignatureArtifact(pool, baseInput(), {
+      timestampProvider: createFakeProvider(),
+      resolveDkimKey: async () => ({ value: 'v=DKIM1; k=rsa; p=AAAA', observedAt: new Date() }),
+      archive: { fetchFn: archiveFetch },
+    });
+    assert.equal(posted, true, 'stale selector records must still be contributed (the old flow skipped this)');
+    assert.equal(artifact.archive_status, 'contributed');
+    assert.equal(artifact.archive_confirmation, 'unconfirmed');
+  });
+
+  it('archive outage at receipt is stored as confirmation OUTAGE and never blocks (AC-163/AC-164)', async () => {
+    const { pool } = createSignatureArtifactsMemoryPool();
+    const archiveFetch = (async () => {
+      throw new Error('ECONNREFUSED');
+    }) as unknown as typeof fetch;
+    const artifact = await assembleSignatureArtifact(pool, baseInput(), {
+      timestampProvider: createFakeProvider(),
+      resolveDkimKey: async () => ({ value: 'v=DKIM1; k=rsa; p=AAAA', observedAt: new Date() }),
+      archive: { fetchFn: archiveFetch },
+    });
+    assert.equal(artifact.archive_status, 'outage');
+    assert.equal(artifact.archive_confirmation, 'outage');
+    assert.ok(artifact.sha256_eml, 'the signature artifact still persisted through the outage');
   });
 
   it('is fail-proof when the DKIM key cannot be resolved (DNS hiccup)', async () => {
@@ -217,7 +272,7 @@ describe('assembleSignatureArtifact — bounded external tail (F-6.9 hang-proofi
     assert.ok(artifact.ots_proof); // the signature + .eml timestamp still persisted
   });
 
-  it('a HANGING archive lookup degrades to outage status', async () => {
+  it('a HANGING archive lookup degrades to outage status (and outage confirmation state)', async () => {
     const { pool } = createSignatureArtifactsMemoryPool();
     const artifact = await mustSettle(
       assembleSignatureArtifact(pool, baseInput(), {
@@ -228,5 +283,6 @@ describe('assembleSignatureArtifact — bounded external tail (F-6.9 hang-proofi
       2_000,
     );
     assert.equal(artifact.archive_status, 'outage');
+    assert.equal(artifact.archive_confirmation, 'outage');
   });
 });

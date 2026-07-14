@@ -35,6 +35,10 @@ const FORBIDDEN = [
   { re: /defeat \*?both\*?\b/i, why: 'timestamp "defeat both" framing — superseded by graded durability' },
   { re: /never (?:change|gate)s? the [^.]*\bverdict/i, why: 'archive/Bitcoin described as additive "never changes the verdict" — the provenance gate CAN fail it' },
   { re: /additive online steps/i, why: 'the pre-F-32 "additive online steps" section' },
+  // Spec 0.44.0 (#147): the window consumes archive times AS RECORDED — the API exposes
+  // no live-vs-GCD label, so a surface claiming live-only semantics overclaims.
+  { re: /observed[- ]live window|observed live \(plus/i, why: 'the retired live-only window claim — the window uses the archive times AS RECORDED (F-32.4, spec 0.44.0)' },
+  { re: /GCD-recovered[^.]*cannot extend|carries no live-DNS observation/i, why: 'the retired GCD-exclusion claim — unimplementable client-side; un-defer pinned to zkemail/archive#46 (#147)' },
 ];
 
 describe('verdict-model consistency across surfaces (AC-161 / F-019b regression)', () => {

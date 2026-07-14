@@ -156,6 +156,15 @@ export interface SignatureArtifact {
   key_obs_proof: TimestampProof | null;
   /** archive.prove.email contribution outcome (AC-60). */
   archive_status: string | null;
+  /**
+   * Receipt-time verifier-parity confirmation (F-32.6 / AC-163, migration 010):
+   * exact key bytes in the archive with a usable last-seen. NULL = not applicable
+   * (legacy row, or the archive step didn't run). Re-checked/healed by the F-32.7 sweep.
+   */
+  archive_confirmation: 'confirmed' | 'unconfirmed' | 'outage' | null;
+  archive_confirmation_checked_at: Date | null;
+  /** Set by the sweep when a non-clean state healed to confirmed (F-32.7). */
+  archive_confirmation_healed_at: Date | null;
   /** OTS lifecycle: `pending` until Bitcoin confirms, then `complete`. */
   ts_status: 'pending' | 'complete';
   created_at: Date;
@@ -178,5 +187,7 @@ export interface CreateSignatureArtifactInput {
   tsa_token?: TimestampProof | null;
   key_obs_proof?: TimestampProof | null;
   archive_status?: string | null;
+  archive_confirmation?: 'confirmed' | 'unconfirmed' | 'outage' | null;
+  archive_confirmation_checked_at?: Date | null;
   ts_status?: 'pending' | 'complete';
 }

@@ -11,6 +11,8 @@ import {
   getSignatureArtifact,
   listPendingTimestampArtifacts,
   updateArtifactTimestamps,
+  listArtifactsForArchiveReconciliation,
+  updateArtifactArchiveConfirmation,
 } from './signatureArtifacts.js';
 import { createSignatureArtifactsMemoryPool } from './signatureArtifacts.testpool.js';
 import type { TimestampProof } from '../timestamp/contract.js';
@@ -105,5 +107,70 @@ describe('signature_artifacts DAO', () => {
     const updated = await updateArtifactTimestamps(pool, artifact.id, { tsStatus: 'complete' });
     assert.deepEqual(updated?.ots_proof, OTS_PENDING); // unchanged
     assert.equal(updated?.ts_status, 'complete');
+  });
+});
+
+describe('archive-confirmation state (F-32.6/F-32.7, migration 010)', () => {
+  const CHECKED = new Date('2026-07-14T12:00:00Z');
+
+  it('round-trips archive_confirmation + checked_at on create; defaults are null', async () => {
+    const { pool } = createSignatureArtifactsMemoryPool();
+    const withState = await upsertSignatureArtifact(
+      pool,
+      baseInput({ archive_confirmation: 'unconfirmed', archive_confirmation_checked_at: CHECKED }),
+    );
+    assert.equal(withState.artifact.archive_confirmation, 'unconfirmed');
+    assert.ok(withState.artifact.archive_confirmation_checked_at);
+    assert.equal(withState.artifact.archive_confirmation_healed_at, null);
+
+    const bare = await upsertSignatureArtifact(pool, baseInput({ signer_email: 'bare@x.com' }));
+    assert.equal(bare.artifact.archive_confirmation, null);
+    assert.equal(bare.artifact.archive_confirmation_checked_at, null);
+  });
+
+  it('sweep list: picks 24-48h-old NON-clean artifacts with a selector; excludes confirmed and out-of-window rows (AC-165)', async () => {
+    const { pool, rows } = createSignatureArtifactsMemoryPool();
+    const NOW = new Date('2026-07-14T12:00:00Z');
+    const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000).toISOString();
+
+    await upsertSignatureArtifact(pool, baseInput({ signer_email: 'in-unconfirmed@x.com', archive_confirmation: 'unconfirmed' }));
+    await upsertSignatureArtifact(pool, baseInput({ signer_email: 'in-outage@x.com', archive_confirmation: 'outage' }));
+    await upsertSignatureArtifact(pool, baseInput({ signer_email: 'in-null@x.com' })); // null state, selector present
+    await upsertSignatureArtifact(pool, baseInput({ signer_email: 'in-confirmed@x.com', archive_confirmation: 'confirmed' }));
+    await upsertSignatureArtifact(pool, baseInput({ signer_email: 'too-fresh@x.com', archive_confirmation: 'unconfirmed' }));
+    await upsertSignatureArtifact(pool, baseInput({ signer_email: 'too-old@x.com', archive_confirmation: 'unconfirmed' }));
+    await upsertSignatureArtifact(pool, baseInput({ signer_email: 'no-selector@x.com', archive_confirmation: 'unconfirmed', dkim_selector: null }));
+
+    for (const r of rows) {
+      if (r.signer_email === 'too-fresh@x.com') r.created_at = hoursAgo(2);
+      else if (r.signer_email === 'too-old@x.com') r.created_at = hoursAgo(72);
+      else r.created_at = hoursAgo(30);
+    }
+
+    const due = await listArtifactsForArchiveReconciliation(pool, NOW);
+    const who = due.map((a) => a.signer_email).sort();
+    assert.deepEqual(who, ['in-null@x.com', 'in-outage@x.com', 'in-unconfirmed@x.com']);
+  });
+
+  it('updateArtifactArchiveConfirmation heals a row: confirmed + healed_at set, checked_at advanced', async () => {
+    const { pool } = createSignatureArtifactsMemoryPool();
+    const { artifact } = await upsertSignatureArtifact(
+      pool,
+      baseInput({ archive_confirmation: 'outage', archive_confirmation_checked_at: CHECKED }),
+    );
+    const healed = await updateArtifactArchiveConfirmation(pool, artifact.id, {
+      confirmation: 'confirmed',
+      checkedAt: new Date('2026-07-15T12:00:00Z'),
+      healedAt: new Date('2026-07-15T12:00:00Z'),
+    });
+    assert.equal(healed?.archive_confirmation, 'confirmed');
+    assert.ok(healed?.archive_confirmation_healed_at);
+
+    const still = await updateArtifactArchiveConfirmation(pool, artifact.id, {
+      confirmation: 'unconfirmed',
+      checkedAt: new Date('2026-07-16T12:00:00Z'),
+    });
+    assert.equal(still?.archive_confirmation, 'unconfirmed');
+    assert.ok(still?.archive_confirmation_healed_at, 'healed_at is preserved when the update omits it');
   });
 });

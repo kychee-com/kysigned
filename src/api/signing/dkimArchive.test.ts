@@ -13,6 +13,7 @@ import {
   lookupArchivedKey,
   contributeKey,
   ensureKeyArchived,
+  confirmKeyAtSigning,
 } from './dkimArchive.js';
 
 /** Build a fake fetch from a handler returning { status, body }. */
@@ -181,5 +182,109 @@ describe('ensureKeyArchived — check-and-contribute-on-receipt (AC-60)', () => 
     });
     assert.equal(r.outage, true);
     assert.equal(r.archived, false);
+  });
+});
+
+describe('confirmKeyAtSigning — receipt-time verifier-parity confirmation (F-32.6 / AC-163)', () => {
+  const OTHER_KEY = 'v=DKIM1; k=rsa; p=DIFFERENTKEYBYTESZZZZZZZZZZZZZZZZZZZZZZ';
+
+  it('confirmed: the archive holds the EXACT observed key with a usable last-seen (no POST)', async () => {
+    let posted = false;
+    const r = await confirmKeyAtSigning('kychee.com', 'google', RECORD.value, {
+      fetchFn: fakeFetch((url) => {
+        if (url.includes('/api/dsp')) posted = true;
+        return { status: 200, body: [RECORD] };
+      }),
+    });
+    assert.equal(r.outcome, 'confirmed');
+    assert.equal(r.lastSeenAt, RECORD.lastSeenAt);
+    assert.equal(r.nudged, false);
+    assert.equal(posted, false, 'a confirmed key needs no contribute POST');
+  });
+
+  it('parity matches on key bytes, not raw TXT formatting (whitespace/order-insensitive p= compare)', async () => {
+    const reformatted = `k=rsa; v=DKIM1; p=${/p=([^;]*)/i.exec(RECORD.value)![1].replace(/(.{10})/g, '$1 ')}`;
+    const r = await confirmKeyAtSigning('kychee.com', 'google', reformatted, {
+      fetchFn: fakeFetch(() => ({ status: 200, body: [RECORD] })),
+    });
+    assert.equal(r.outcome, 'confirmed');
+  });
+
+  it('rotation under a reused selector: records exist but lack the observed key → POSTs the nudge, unconfirmed (the old flow skipped this POST)', async () => {
+    let posted = false;
+    const r = await confirmKeyAtSigning('outlook.com', 'selector1', RECORD.value, {
+      fetchFn: fakeFetch((url) => {
+        if (url.includes('/api/dsp')) {
+          posted = true;
+          return { status: 200, body: { already_in_db: true, added: false } };
+        }
+        return { status: 200, body: [{ ...RECORD, value: OTHER_KEY }] };
+      }),
+    });
+    assert.equal(r.outcome, 'unconfirmed');
+    assert.equal(r.nudged, true);
+    assert.equal(posted, true, 'must contribute even when the selector already has (stale) records');
+  });
+
+  it('exact key present but NO usable time → nudges and stays unconfirmed', async () => {
+    let posted = false;
+    const noTimes = { domain: RECORD.domain, selector: RECORD.selector, value: RECORD.value };
+    const r = await confirmKeyAtSigning('kychee.com', 'google', RECORD.value, {
+      fetchFn: fakeFetch((url) => {
+        if (url.includes('/api/dsp')) {
+          posted = true;
+          return { status: 200, body: { already_in_db: true, added: false } };
+        }
+        return { status: 200, body: [noTimes] };
+      }),
+    });
+    assert.equal(r.outcome, 'unconfirmed');
+    assert.equal(posted, true);
+  });
+
+  it('absent selector → contributes; contributed-now is UNCONFIRMED (read path may lag; the sweep heals it)', async () => {
+    const r = await confirmKeyAtSigning('kychee.com', 'google', RECORD.value, {
+      fetchFn: fakeFetch((url) => {
+        if (url.includes('/api/dsp')) return { status: 201, body: { addResult: { added: true, already_in_db: false } } };
+        return { status: 200, body: { records: 0 } };
+      }),
+    });
+    assert.equal(r.outcome, 'unconfirmed');
+    assert.equal(r.nudged, true);
+    assert.equal(r.lastSeenAt, null);
+  });
+
+  it('no observed key to compare (resolveDkimKey failed) → parity not evaluable: unconfirmed, no nudge when records exist', async () => {
+    let posted = false;
+    const r = await confirmKeyAtSigning('kychee.com', 'google', null, {
+      fetchFn: fakeFetch((url) => {
+        if (url.includes('/api/dsp')) posted = true;
+        return { status: 200, body: [RECORD] };
+      }),
+    });
+    assert.equal(r.outcome, 'unconfirmed');
+    assert.equal(posted, false);
+  });
+
+  it('archive outage on lookup → outage, never throws (receipt proceeds; AC-163)', async () => {
+    const r = await confirmKeyAtSigning('x.com', 's', RECORD.value, {
+      fetchFn: fakeFetch(() => ({ status: 503 })),
+    });
+    assert.equal(r.outcome, 'outage');
+  });
+
+  it('network error → outage, never throws', async () => {
+    const throwingFetch = (async () => {
+      throw new Error('ECONNREFUSED');
+    }) as unknown as typeof fetch;
+    const r = await confirmKeyAtSigning('x.com', 's', RECORD.value, { fetchFn: throwingFetch });
+    assert.equal(r.outcome, 'outage');
+  });
+
+  it('absent selector + failed contribute → outage', async () => {
+    const r = await confirmKeyAtSigning('x.com', 's', RECORD.value, {
+      fetchFn: fakeFetch((url) => (url.includes('/api/dsp') ? { status: 500 } : { status: 200, body: { records: 0 } })),
+    });
+    assert.equal(r.outcome, 'outage');
   });
 });

@@ -60,8 +60,8 @@ For each signer-<n>.eml:
      provider's DNS itself). A DIFFERENT key for that (domain, selector) is a forged key
      and FAILS the verdict; an unreachable archive or a not-yet-recorded key is "pending"
      and does not fail. When confirmed, the durable tier also requires the signing time T
-     to be at or before the key's last-seen-live time in the archive (plus a grace
-     margin) -- a one-sided UPPER bound (a T before the key was first seen is fine).
+     to be at or before the key's last-seen time as recorded by the archive (plus a
+     grace margin) -- a one-sided UPPER bound (a T before the key was first seen is fine).
   => The verdict is one of four assurance tiers, not a yes/no:
      - FAILED: a check above did not hold, or the archive published a different key than
        the one embedded (a forged key).
@@ -71,7 +71,8 @@ For each signer-<n>.eml:
      - PROVIDER KEY CONFIRMED: plus step 5 confirmed the exact key was the provider's
        real published key.
      - PROVEN (DURABLE): plus the OpenTimestamps proof is Bitcoin-block-confirmed and
-       agrees with the RFC 3161 token, and T is within the key's observed-live window.
+       agrees with the RFC 3161 token, and T is within the key's recorded lifetime
+       window (archive last-seen plus grace).
      A genuine record is INTEGRITY VERIFIED offline and rises to PROVEN (DURABLE) online
      once its Bitcoin anchor settles; a forged key FAILS.
 

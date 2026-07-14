@@ -24,6 +24,7 @@ export function createSignatureArtifactsMemoryPool() {
           spf_verdict, dkim_verdict, dmarc_verdict,
           dkim_domain, dkim_selector, dkim_key, dkim_observed_at,
           ots_proof, tsa_token, key_obs_proof, archive_status, ts_status,
+          archive_confirmation, archive_confirmation_checked_at,
         ] = v;
         const conflict = rows.find(
           (r) => r.envelope_id === envelope_id &&
@@ -41,10 +42,40 @@ export function createSignatureArtifactsMemoryPool() {
           ots_proof: ots_proof ?? null, tsa_token: tsa_token ?? null, key_obs_proof: key_obs_proof ?? null,
           archive_status: archive_status ?? null,
           ts_status: ts_status ?? 'pending',
+          archive_confirmation: archive_confirmation ?? null,
+          archive_confirmation_checked_at: archive_confirmation_checked_at ?? null,
+          archive_confirmation_healed_at: null,
           created_at: now, updated_at: now,
         };
         rows.push(row);
         return { rows: [clone(row)], rowCount: 1 } as any;
+      }
+
+      // listArtifactsForArchiveReconciliation — created_at window + non-clean confirmation (F-32.7)
+      if (text.includes('archive_confirmation IS NULL OR archive_confirmation IN')) {
+        const [olderThan, youngerThan] = v as [Date, Date];
+        const out = rows
+          .filter((r) => {
+            const created = new Date(r.created_at).getTime();
+            if (created > olderThan.getTime() || created < youngerThan.getTime()) return false;
+            if (r.dkim_selector == null) return false;
+            return r.archive_confirmation == null || r.archive_confirmation === 'unconfirmed' || r.archive_confirmation === 'outage';
+          })
+          .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+          .map(clone);
+        return { rows: out, rowCount: out.length } as any;
+      }
+
+      // updateArtifactArchiveConfirmation — must match BEFORE the generic UPDATE branch
+      if (text.includes('SET archive_confirmation')) {
+        const [id, confirmation, checkedAt, healedAt] = v;
+        const r = rows.find((x) => x.id === id);
+        if (!r) return { rows: [], rowCount: 0 } as any;
+        r.archive_confirmation = confirmation;
+        r.archive_confirmation_checked_at = checkedAt;
+        if (healedAt != null) r.archive_confirmation_healed_at = healedAt; // COALESCE: keep when null
+        r.updated_at = new Date(1700000000000 + ++seq * 1000).toISOString();
+        return { rows: [clone(r)], rowCount: 1 } as any;
       }
 
       // getSignatureArtifact — SELECT ... WHERE envelope_id AND LOWER(signer_email)

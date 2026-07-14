@@ -378,6 +378,22 @@ describe('runHandlers — signup_grant_monitor (F-29 / F-16.6)', () => {
   });
 });
 
+describe('runHandlers — archive_reconciliation_sweep (F-32.7 / AC-165)', () => {
+  it('dispatches the daily sweep with the pool + operator email deps and returns its summary', async () => {
+    const h = createInboundRepliesMemoryPool();
+    const calls: unknown[] = [];
+    const handlers = buildRunHandlers(depsWith(h.pool), {
+      reconcileArchive: async (pool, deps) => {
+        calls.push({ hasPool: !!pool, operatorDomain: deps.operatorDomain, hasEmail: !!deps.emailProvider });
+        return { swept: 3, healed: 2, stillFailing: 1, alerted: true };
+      },
+    });
+    const out = await handlers.archive_reconciliation_sweep({});
+    assert.deepEqual(calls, [{ hasPool: true, operatorDomain: 'kysigned.com', hasEmail: true }]);
+    assert.deepEqual(out, { swept: 3, healed: 2, stillFailing: 1, alerted: true });
+  });
+});
+
 // ── F-9.3 / F-013 — ephemeral-retention runs (completion_retention + sweep) ──────
 
 const DOC = (h: string) => `envelopes/${h}/document.pdf`;

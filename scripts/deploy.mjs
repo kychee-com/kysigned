@@ -88,6 +88,9 @@ const API_BASE = process.env.RUN402_API_BASE ?? 'https://api.run402.com';
 export function buildApiTriggers(signingMailboxId) {
   return [
     { id: 'signup-grant-monitor', type: 'schedule', cron: '0 9 * * *', run: { event_type: 'signup_grant_monitor' } },
+    // F-32.7 — the daily archive-confirmation backstop: re-checks 24-48h-old artifacts
+    // whose signing-time archive confirmation is not clean; alerts the operator only.
+    { id: 'archive-reconciliation', type: 'schedule', cron: '31 7 * * *', run: { event_type: 'archive_reconciliation_sweep' } },
     {
       id: 'inbound-reply-received',
       type: 'email',
@@ -199,10 +202,11 @@ export async function resolveSigningMailboxId({ apiBase = API_BASE, env = proces
 
 /**
  * Self-check the F-29.6 forker release invariants (run by BOTH --dry-run and the
- * unit test): exactly ONE function, the api function, carrying 1 schedule + 2 email
- * (reply_received + bounced) triggers, and ZERO cron functions (no extra functions,
- * and none carrying a top-level `schedule` — the OLD per-cron shape). Throws on any
- * violation. Returns true so a test can `assert.ok(...)` it.
+ * unit test): exactly ONE function, the api function, carrying 2 schedule (grant
+ * monitor + archive reconciliation, F-32.7) + 2 email (reply_received + bounced)
+ * triggers, and ZERO cron functions (no extra functions, and none carrying a
+ * top-level `schedule` — the OLD per-cron shape). Throws on any violation. Returns
+ * true so a test can `assert.ok(...)` it.
  */
 export function assertForkerSpecShape(spec) {
   const fns = spec.functions?.replace ?? {};
@@ -215,7 +219,7 @@ export function assertForkerSpecShape(spec) {
   const triggers = fns[API_FN.name].triggers ?? [];
   const schedule = triggers.filter((t) => t.type === 'schedule');
   const email = triggers.filter((t) => t.type === 'email');
-  if (schedule.length !== 1) throw new Error(`expected 1 schedule trigger, got ${schedule.length}`);
+  if (schedule.length !== 2) throw new Error(`expected 2 schedule triggers, got ${schedule.length}`);
   if (email.length !== 2) throw new Error(`expected 2 email triggers, got ${email.length}`);
   const events = email.flatMap((t) => t.events ?? []);
   for (const ev of ['reply_received', 'bounced']) {

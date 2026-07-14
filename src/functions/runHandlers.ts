@@ -28,6 +28,7 @@ import { notifyEnvelopeAwaitingSeal } from '../api/sealEnvelope.js';
 import { handleReplyReceived, handleBounce, type InboundEmailCtx } from '../api/signing/inboundEmail.js';
 import { remindSigner, notifyEnvelopeExpired, handleUndeliverableSigningRequest, type ReminderSendCtx, type ExpirationStorage } from '../api/envelope.js';
 import { runSignupGrantMonitor } from '../api/signupGrantMonitor.js';
+import { runArchiveReconciliation } from '../api/signing/archiveReconciliation.js';
 import { getSignatureArtifactById } from '../db/signatureArtifacts.js';
 import { upgradeOneArtifact, scheduleTimestampUpgrade, TIMESTAMP_UPGRADE_MAX_ATTEMPTS } from '../api/signing/timestampSchedule.js';
 import type { TimestampProvider } from '../timestamp/contract.js';
@@ -70,6 +71,7 @@ export interface RunHandlerOverrides {
   upgradeArtifact?: typeof upgradeOneArtifact;
   handleUndeliverable?: typeof handleUndeliverableSigningRequest;
   deliverWebhook?: typeof deliverEnvelopeWebhook;
+  reconcileArchive?: typeof runArchiveReconciliation;
 }
 
 export function buildRunHandlers(
@@ -86,6 +88,7 @@ export function buildRunHandlers(
   const upgradeArtifact = overrides.upgradeArtifact ?? upgradeOneArtifact;
   const markUndeliverable = overrides.handleUndeliverable ?? handleUndeliverableSigningRequest;
   const deliverWebhook = overrides.deliverWebhook ?? deliverEnvelopeWebhook;
+  const reconcileArchive = overrides.reconcileArchive ?? runArchiveReconciliation;
 
   return {
     /**
@@ -273,6 +276,20 @@ export function buildRunHandlers(
         emailProvider: deps.emailProvider,
         operatorDomain: deps.operatorDomain,
         alertThreshold: deps.signupGrantAlertThreshold,
+      })),
+    }),
+
+    /**
+     * F-32.7 / AC-165 — the daily archive-confirmation backstop (a run402 SCHEDULE
+     * trigger, deploy.ts). Re-checks 24-48h-old artifacts whose signing-time
+     * third-party confirmation (F-32.6) is not clean: heals silently, aggregates
+     * still-failing ones into ONE operator email (info@ From notifications@), and
+     * NEVER contacts customers (AC-166 — the re-sign decision is human-gated).
+     */
+    archive_reconciliation_sweep: async () => ({
+      ...(await reconcileArchive(deps.pool, {
+        emailProvider: deps.emailProvider,
+        operatorDomain: deps.operatorDomain,
       })),
     }),
 
