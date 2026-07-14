@@ -36,6 +36,12 @@ export interface SignupGrantStats {
 export interface SignupGrantMonitorDeps {
   emailProvider: EmailProvider;
   operatorDomain: string;
+  /**
+   * Operator alert recipient (F-32.7-family routing). Default `info@<operatorDomain>`
+   * — but the in-project mailboxes are store-only, so kysigned.com configures an
+   * external inbox (KYSIGNED_OPERATOR_ALERT_EMAIL; interim until #149).
+   */
+  alertEmail?: string;
   /** Alert when issuance in the window exceeds this. <= 0 disables alerting (the metric is still computed/logged). */
   alertThreshold: number;
   /** Rolling window in ms. Default 24h. */
@@ -98,7 +104,7 @@ export async function runSignupGrantMonitor(
       `${stats.grantFundedEnvelopeCount}. If this is abuse, disable the grant by setting ` +
       `KYSIGNED_SIGNUP_GRANT_CREDITS=0 and redeploying.`;
     await deps.emailProvider.send({
-      to: `info@${deps.operatorDomain}`,
+      to: deps.alertEmail ?? `info@${deps.operatorDomain}`,
       from: `notifications@${deps.operatorDomain}`,
       subject: `kysigned: trial-credit issuance spike (${stats.issuanceCount} in ${windowHours}h)`,
       text,

@@ -201,6 +201,15 @@ export interface AppEnv {
    */
   KYSIGNED_UNSUBSCRIBE_MAILTO?: string;
   /**
+   * F-32.7 / F-16.6 — where operator alert emails (the archive-reconciliation
+   * sweep, the trial-credit abuse monitor) are delivered. The in-project
+   * mailboxes are store-only (nothing forwards externally), so an operator who
+   * wants alerts pushed to a real inbox sets this to an external address; unset
+   * (the forker default) falls back to `info@<operatorDomain>`. Interim channel
+   * until a proper alerts mechanism exists (#149).
+   */
+  KYSIGNED_OPERATOR_ALERT_EMAIL?: string;
+  /**
    * F-9.9 / AC-124 — the delivery-confirmation backstop window, in HOURS. When a
    * signing-request send fails with an ambiguous/unclassifiable error, a deferred run
    * fires after this window; if the signer is still pending (neither delivered nor
@@ -261,6 +270,8 @@ export interface AppDeps {
   operatorDomain: string;
   /** F-19 / AC-39 — operator-configured List-Unsubscribe contact (default legal@<operatorDomain>). */
   unsubscribeMailto: string;
+  /** F-32.7/F-16.6 — operator alert recipient (default info@<operatorDomain>; kysigned.com routes externally, #149 interim). */
+  operatorAlertEmail: string;
   /** F-9.9 / AC-124 — delivery-confirmation backstop window as a run `delay` string (e.g. "24h"). */
   deliveryBackstop: string;
   /** F-16.6 / AC-97 — trial-credit abuse-monitor alert threshold (grants per 24h; 0 disables alerting). */
@@ -314,6 +325,9 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
   // F-19 / AC-39 — operator-configurable List-Unsubscribe contact; forker default
   // derives from their own domain so no Kychee address ships in the template.
   const unsubscribeMailto = env.KYSIGNED_UNSUBSCRIBE_MAILTO ?? `legal@${operatorDomain}`;
+  // F-32.7/F-16.6 — operator alerts go to a real inbox when configured (the
+  // in-project mailboxes are store-only); default = the in-project human inbox.
+  const operatorAlertEmail = env.KYSIGNED_OPERATOR_ALERT_EMAIL?.trim() || `info@${operatorDomain}`;
   const signingMailboxId = env.KYSIGNED_SIGNING_MAILBOX_ID ?? env.RUN402_MAILBOX_FORWARD_TO_SIGN_ID;
   const notificationMailboxId = env.KYSIGNED_NOTIFICATION_MAILBOX_ID ?? env.RUN402_MAILBOX_NOTIFICATIONS_ID;
   const allowedCreators = csv(env.KYSIGNED_ALLOWED_CREATORS);
@@ -580,6 +594,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     operatorDomain,
     unsubscribeMailto,
     signupGrantAlertThreshold,
+    operatorAlertEmail,
     projectId,
     getPdf,
     storePdf,

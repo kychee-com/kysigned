@@ -38,6 +38,13 @@ import { confirmKeyAtSigning, type DkimArchiveDeps, type SigningConfirmOutcome }
 export interface ArchiveReconciliationDeps {
   emailProvider: EmailProvider;
   operatorDomain: string;
+  /**
+   * Operator alert recipient. Default `info@<operatorDomain>` — but the
+   * in-project mailboxes are store-only (nothing forwards externally), so
+   * kysigned.com routes this to a real inbox via KYSIGNED_OPERATOR_ALERT_EMAIL
+   * (interim until the #149 alerts mechanism).
+   */
+  alertEmail?: string;
   /** Archive client deps (tests inject a fake fetch; omit for the real archive). */
   archive?: DkimArchiveDeps;
   /** Injected for tests; defaults to the call time. */
@@ -108,7 +115,7 @@ export async function runArchiveReconciliation(
       `bundle is capped below PROVEN (DURABLE) permanently — deciding whether to ask the customer ` +
       `to re-sign (optionally with a credit grant) is YOUR call; this sweep never contacts customers.`;
     await deps.emailProvider.send({
-      to: `info@${deps.operatorDomain}`,
+      to: deps.alertEmail ?? `info@${deps.operatorDomain}`,
       from: `notifications@${deps.operatorDomain}`,
       subject: `kysigned: ${failing.length} archive confirmation(s) still failing after 24h`,
       text,

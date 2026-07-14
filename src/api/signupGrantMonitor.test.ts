@@ -91,6 +91,22 @@ describe('runSignupGrantMonitor', () => {
     assert.match(sent[0]!.text, /KYSIGNED_SIGNUP_GRANT_CREDITS=0/);
   });
 
+  it('routes the alert to the configured operator alert address when set (interim external routing, #149)', async () => {
+    const ledger = Array.from({ length: 5 }, (_, i) => ({ email: `u${i}@x.com`, source: 'signup_grant', created_at: within }));
+    const { provider, sent } = captureEmail();
+    const r = await runSignupGrantMonitor(statsPool(ledger), {
+      emailProvider: provider,
+      operatorDomain: 'kysigned.com',
+      alertEmail: 'barry@kychee.com',
+      alertThreshold: 3,
+      now: NOW,
+    });
+    assert.equal(r.alerted, true);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0]!.to, 'barry@kychee.com');
+    assert.match(sent[0]!.from!, /^notifications@kysigned\.com$/, 'the sender mailbox is unchanged');
+  });
+
   it('does NOT email when issuance is within the threshold', async () => {
     const pool = statsPool([{ email: 'u@x.com', source: 'signup_grant', created_at: within }]);
     const { provider, sent } = captureEmail();

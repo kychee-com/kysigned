@@ -53,6 +53,18 @@ describe('buildAppDeps — F-18.1 session lifetime', () => {
   });
 });
 
+describe('buildAppDeps — F-32.7/F-16.6 operator alert address', () => {
+  it('KYSIGNED_OPERATOR_ALERT_EMAIL routes operator alerts to an external inbox', () => {
+    const deps = buildAppDeps({ ...baseEnv, KYSIGNED_OPERATOR_ALERT_EMAIL: 'barry@kychee.com' }, fakeRuntime());
+    assert.equal(deps.operatorAlertEmail, 'barry@kychee.com');
+  });
+
+  it('unset → info@<operatorDomain> (forker default: the in-project human inbox)', () => {
+    const deps = buildAppDeps(baseEnv, fakeRuntime());
+    assert.equal(deps.operatorAlertEmail, `info@${deps.operatorDomain}`);
+  });
+});
+
 describe('buildAppDeps — run402 up generated env', () => {
   it('uses generated Run402 origin and mailbox ids for clone deployments', () => {
     const deps = buildAppDeps(

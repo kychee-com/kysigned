@@ -379,17 +379,17 @@ describe('runHandlers — signup_grant_monitor (F-29 / F-16.6)', () => {
 });
 
 describe('runHandlers — archive_reconciliation_sweep (F-32.7 / AC-165)', () => {
-  it('dispatches the daily sweep with the pool + operator email deps and returns its summary', async () => {
+  it('dispatches the daily sweep with the pool + operator email deps (incl. the alert address) and returns its summary', async () => {
     const h = createInboundRepliesMemoryPool();
     const calls: unknown[] = [];
-    const handlers = buildRunHandlers(depsWith(h.pool), {
+    const handlers = buildRunHandlers({ ...depsWith(h.pool), operatorAlertEmail: 'barry@kychee.com' }, {
       reconcileArchive: async (pool, deps) => {
-        calls.push({ hasPool: !!pool, operatorDomain: deps.operatorDomain, hasEmail: !!deps.emailProvider });
+        calls.push({ hasPool: !!pool, operatorDomain: deps.operatorDomain, hasEmail: !!deps.emailProvider, alertEmail: deps.alertEmail });
         return { swept: 3, healed: 2, stillFailing: 1, alerted: true };
       },
     });
     const out = await handlers.archive_reconciliation_sweep({});
-    assert.deepEqual(calls, [{ hasPool: true, operatorDomain: 'kysigned.com', hasEmail: true }]);
+    assert.deepEqual(calls, [{ hasPool: true, operatorDomain: 'kysigned.com', hasEmail: true, alertEmail: 'barry@kychee.com' }]);
     assert.deepEqual(out, { swept: 3, healed: 2, stillFailing: 1, alerted: true });
   });
 });

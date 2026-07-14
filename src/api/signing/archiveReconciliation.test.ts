@@ -171,6 +171,26 @@ describe('runArchiveReconciliation — the F-32.7 daily backstop', () => {
     assert.doesNotMatch(sends[0].text, /healed@customer\.example/, 'healed artifacts are silent');
   });
 
+  it('routes the alert to the configured operator alert address when set (barry@kychee.com interim until #149)', async () => {
+    const { pool, rows } = createSignatureArtifactsMemoryPool();
+    await seed(pool, rows, { signer_email: 'x@customer.example' });
+    const { provider, sends } = capturingEmail();
+    const { fetchFn } = archiveFetch([]);
+
+    const result = await runArchiveReconciliation(pool, {
+      emailProvider: provider,
+      operatorDomain: 'kysigned.com',
+      alertEmail: 'barry@kychee.com',
+      archive: { fetchFn },
+      now: NOW,
+    });
+
+    assert.equal(result.alerted, true);
+    assert.equal(sends.length, 1);
+    assert.equal(sends[0].to, 'barry@kychee.com');
+    assert.equal(sends[0].from, 'notifications@kysigned.com', 'the sender mailbox is unchanged');
+  });
+
   it('an archive outage DURING the sweep records outage state and is included in the single alert', async () => {
     const { pool, rows } = createSignatureArtifactsMemoryPool();
     await seed(pool, rows, { signer_email: 'carol@customer.example' });

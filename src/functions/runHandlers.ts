@@ -48,6 +48,8 @@ export interface RunHandlerDeps {
   reminderSendCtx: () => ReminderSendCtx;
   emailProvider: EmailProvider;
   operatorDomain: string;
+  /** F-32.7/F-16.6 — operator alert recipient (default info@<operatorDomain>; #149 interim). */
+  operatorAlertEmail?: string;
   expirationStorage: () => ExpirationStorage;
   timestampProvider: () => TimestampProvider;
   createRun: CreateRun;
@@ -275,6 +277,7 @@ export function buildRunHandlers(
       ...(await runSignupGrantMonitor(deps.pool, {
         emailProvider: deps.emailProvider,
         operatorDomain: deps.operatorDomain,
+        ...(deps.operatorAlertEmail ? { alertEmail: deps.operatorAlertEmail } : {}),
         alertThreshold: deps.signupGrantAlertThreshold,
       })),
     }),
@@ -290,6 +293,7 @@ export function buildRunHandlers(
       ...(await reconcileArchive(deps.pool, {
         emailProvider: deps.emailProvider,
         operatorDomain: deps.operatorDomain,
+        ...(deps.operatorAlertEmail ? { alertEmail: deps.operatorAlertEmail } : {}),
       })),
     }),
 
