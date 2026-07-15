@@ -38,7 +38,12 @@ const FORBIDDEN = [
   // Spec 0.44.0 (#147): the window consumes archive times AS RECORDED — the API exposes
   // no live-vs-GCD label, so a surface claiming live-only semantics overclaims.
   { re: /observed[- ]live window|observed live \(plus/i, why: 'the retired live-only window claim — the window uses the archive times AS RECORDED (F-32.4, spec 0.44.0)' },
-  { re: /GCD-recovered[^.]*cannot extend|carries no live-DNS observation/i, why: 'the retired GCD-exclusion claim — unimplementable client-side; un-defer pinned to zkemail/archive#46 (#147)' },
+  // Spec 0.44.2 (AC-161, Barry 2026-07-15): GCD / recovery-corpus mechanics are an INTERNAL
+  // engineering note (keyValidityWindow.ts + the spec), never public trust copy — the public
+  // window rule is the plain last-seen upper bound. Forbid the mechanics from leaking into any
+  // customer-facing / verify surface (the rotate-and-publish defence is the timestamp bound; the
+  // GCD detail defends a corner of a non-event and only reads as doubt in a confidence doc).
+  { re: /\bGCD\b|recovery corpus/i, why: 'GCD / recovery-corpus mechanics belong to the internal engineering note, not public trust copy (AC-161, spec 0.44.2) — the public window rule is the plain last-seen upper bound' },
 ];
 
 describe('verdict-model consistency across surfaces (AC-161 / F-019b regression)', () => {

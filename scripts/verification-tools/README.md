@@ -97,9 +97,8 @@ reaches the top tier.
   change the verdict; it is not merely additive. Unreachable / not-yet-recorded is `pending`
   and never fails.
 - **Bitcoin anchor (OpenTimestamps)** — confirm `proofs/signer-<n>.ots` in a real Bitcoin
-  block; with a signing time within the key's recorded lifetime window (the archive's
-  last-seen plus grace, as recorded) this reaches **PROVEN (DURABLE)**. Pending/offline
-  never fails the verdict.
+  block; with a signing time within the key's last-seen window (the archive's last-seen
+  plus grace) this reaches **PROVEN (DURABLE)**. Pending/offline never fails the verdict.
 
 kysigned is **not** in the trust set: the verdict comes only from the embedded
 evidence (the signer's email provider via DKIM, the public key archives, the
