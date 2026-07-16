@@ -46,6 +46,7 @@
     "bidi-js": "^1.0.3",
     "crypto-js": "^4.2.0",
     "disposable-email-domains": "^1.0.62",
+    "jose": "^6.2.3",
     "mailauth": "^4.13.3",
     "pdf-lib": "^1.17.1",
     "pg": "^8.22.0",

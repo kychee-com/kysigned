@@ -130,6 +130,17 @@ Expected results:
 | `acme-anvil-waiver.pdf` + the sign-request  | `/hashcheck` | MATCH (content). The document inside the sign-request is the original                       |
 | `acme-approval.pdf` + the signed bundle     | `/hashcheck` | MISMATCH. A different document is inside                                                    |
 
+**Archive statement interop vectors (`archive-statement-vectors.json`).** Not a
+`/verify` asset. This is the interop reference kit for the signed DKIM-observation
+format kysigned proposed to the archive team (zkemail/archive#46): a test JWKS public
+key plus compact-JWS statements (valid EdDSA + ES256, and one case per reject class)
+with the outcome `verifyArchiveStatement` must produce for each. The archive team
+diffs a prototype signer against these; our suite (`src/bundle/archiveStatementVectors.test.ts`)
+round-trips every vector to its committed outcome. Keys are TEST-ONLY throwaways.
+Regenerate with `node scripts/gen-archive-statement-vectors.mjs` (EdDSA vectors are
+byte-reproducible; the ES256 and stranger-key vectors are randomized, `deterministic:
+false`, and locked by outcome only).
+
 **Regenerating the acme files.** `build-acme-approval.mjs` and
 `build-acme-anvil-waiver.mjs` rebuild the two trial documents offline (`node
 docs/test-assets/build-acme-approval.mjs`), and `build-acme-anvil-waiver-sign-request.mjs`

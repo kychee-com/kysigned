@@ -1,0 +1,154 @@
+{
+  "note": "Interop reference vectors for the archive signed-observation format (zkemail/archive#46). TEST-ONLY keys. EdDSA vectors are byte-reproducible; the ES256 and unknown-key vectors are randomized (deterministic:false) and checked by outcome only. Regenerate with scripts/gen-archive-statement-vectors.mjs.",
+  "jwks": {
+    "keys": [
+      {
+        "crv": "Ed25519",
+        "x": "RF7Uk0Q0Tl5ZuTOE_Qbf92pukea6JejVjNDQz4uB3OI",
+        "kty": "OKP",
+        "kid": "test-ed25519-1",
+        "alg": "EdDSA",
+        "use": "sig"
+      },
+      {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "S-l9ihmzlukIJaadHpFWaeMRjCLWx5oT6asm4m3p-M0",
+        "y": "WgHIGihuWSoiELg7IQYQ6jZcg6QX2ntPOnmpPAPD9H4",
+        "kid": "test-es256-1",
+        "alg": "ES256",
+        "use": "sig"
+      }
+    ]
+  },
+  "statementShape": {
+    "v": 1,
+    "iss": "archive.prove.email",
+    "iat": 1789000000,
+    "record": {
+      "id": "rec-1",
+      "domain": "example.com",
+      "selector": "mail2026",
+      "value": "v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0example...IDAQAB",
+      "source": "live_dns",
+      "first_seen_at": "2026-06-01T00:00:00Z",
+      "last_seen_at": "2026-07-15T08:00:00Z"
+    }
+  },
+  "vectors": [
+    {
+      "name": "valid-eddsa",
+      "deterministic": true,
+      "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6InRlc3QtZWQyNTUxOS0xIn0.eyJ2IjoxLCJpc3MiOiJhcmNoaXZlLnByb3ZlLmVtYWlsIiwiaWF0IjoxNzg5MDAwMDAwLCJyZWNvcmQiOnsiaWQiOiJyZWMtMSIsImRvbWFpbiI6ImV4YW1wbGUuY29tIiwic2VsZWN0b3IiOiJtYWlsMjAyNiIsInZhbHVlIjoidj1ES0lNMTsgaz1yc2E7IHA9TUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUEwZXhhbXBsZS4uLklEQVFBQiIsInNvdXJjZSI6ImxpdmVfZG5zIiwiZmlyc3Rfc2Vlbl9hdCI6IjIwMjYtMDYtMDFUMDA6MDA6MDBaIiwibGFzdF9zZWVuX2F0IjoiMjAyNi0wNy0xNVQwODowMDowMFoifX0.hvnKDprnAGl4CQtxFNr1DnINBb8dfQbM6ZJ1fgJJX8ZoPBEgVoxEh0eyaJRrD2bKqR27RdTtA3_5LB2ckppHBA",
+      "expect": {
+        "ok": true,
+        "kid": "test-ed25519-1",
+        "domain": "example.com",
+        "source": "live_dns"
+      }
+    },
+    {
+      "name": "valid-eddsa-gcd-no-id",
+      "deterministic": true,
+      "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6InRlc3QtZWQyNTUxOS0xIn0.eyJ2IjoxLCJpc3MiOiJhcmNoaXZlLnByb3ZlLmVtYWlsIiwiaWF0IjoxNzg5MDAwMDAwLCJyZWNvcmQiOnsiZG9tYWluIjoiZXhhbXBsZS5jb20iLCJzZWxlY3RvciI6Im1haWwyMDI2IiwidmFsdWUiOiJ2PURLSU0xOyBrPXJzYTsgcD1NSUlCSWpBTkJna3Foa2lHOXcwQkFRRUZBQU9DQVE4QU1JSUJDZ0tDQVFFQTBleGFtcGxlLi4uSURBUUFCIiwic291cmNlIjoiZ2NkX3JlY292ZXJlZCIsImZpcnN0X3NlZW5fYXQiOiIyMDI2LTA2LTAxVDAwOjAwOjAwWiIsImxhc3Rfc2Vlbl9hdCI6IjIwMjYtMDctMTVUMDg6MDA6MDBaIn19.yGqHrfHrUZSCedPTvZjqbbzcQGgcGkteUv7diYcnO0A3-YxLwTASmTPYPvKQruXohpud1qQNi95tMddd839_AA",
+      "expect": {
+        "ok": true,
+        "kid": "test-ed25519-1",
+        "domain": "example.com",
+        "source": "gcd_recovered"
+      }
+    },
+    {
+      "name": "valid-es256",
+      "deterministic": false,
+      "jws": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtZXMyNTYtMSJ9.eyJ2IjoxLCJpc3MiOiJhcmNoaXZlLnByb3ZlLmVtYWlsIiwiaWF0IjoxNzg5MDAwMDAwLCJyZWNvcmQiOnsiaWQiOiJyZWMtMSIsImRvbWFpbiI6ImV4YW1wbGUuY29tIiwic2VsZWN0b3IiOiJtYWlsMjAyNiIsInZhbHVlIjoidj1ES0lNMTsgaz1yc2E7IHA9TUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUEwZXhhbXBsZS4uLklEQVFBQiIsInNvdXJjZSI6ImxpdmVfZG5zIiwiZmlyc3Rfc2Vlbl9hdCI6IjIwMjYtMDYtMDFUMDA6MDA6MDBaIiwibGFzdF9zZWVuX2F0IjoiMjAyNi0wNy0xNVQwODowMDowMFoifX0.31X2-8LeKk9uK5_NhTQjJwtrsgJg_lsQwQ2r-vZkUncjKH_ManQAUEh1u52BOUQqiUNQF2d8KTzSsg4QfIy8zA",
+      "expect": {
+        "ok": true,
+        "kid": "test-es256-1",
+        "domain": "example.com",
+        "source": "live_dns"
+      }
+    },
+    {
+      "name": "reject-unknown-key",
+      "deterministic": false,
+      "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6Im5vdC1waW5uZWQta2lkIn0.eyJ2IjoxLCJpc3MiOiJhcmNoaXZlLnByb3ZlLmVtYWlsIiwiaWF0IjoxNzg5MDAwMDAwLCJyZWNvcmQiOnsiaWQiOiJyZWMtMSIsImRvbWFpbiI6ImV4YW1wbGUuY29tIiwic2VsZWN0b3IiOiJtYWlsMjAyNiIsInZhbHVlIjoidj1ES0lNMTsgaz1yc2E7IHA9TUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUEwZXhhbXBsZS4uLklEQVFBQiIsInNvdXJjZSI6ImxpdmVfZG5zIiwiZmlyc3Rfc2Vlbl9hdCI6IjIwMjYtMDYtMDFUMDA6MDA6MDBaIiwibGFzdF9zZWVuX2F0IjoiMjAyNi0wNy0xNVQwODowMDowMFoifX0.BEbo8FE2YeZ_O4NSUXLST7c1GOdH7iP7fNlxjXyILDr7sFXz6rJ1qvWNhftj20qTT15esSheNwULOh3bU36_Aw",
+      "expect": {
+        "ok": false,
+        "reason": "unknown-key"
+      }
+    },
+    {
+      "name": "reject-bad-signature-tampered",
+      "deterministic": true,
+      "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6InRlc3QtZWQyNTUxOS0xIn0.eyJ2IjoxLCJpc3MiOiJhcmNoaXZlLnByb3ZlLmVtYWlsIiwiaWF0IjoxNzg5MDAwMDAwLCJyZWNvcmQiOnsiaWQiOiJyZWMtMSIsImRvbWFpbiI6ImV2aWwuY29tIiwic2VsZWN0b3IiOiJtYWlsMjAyNiIsInZhbHVlIjoidj1ES0lNMTsgaz1yc2E7IHA9TUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUEwZXhhbXBsZS4uLklEQVFBQiIsInNvdXJjZSI6ImxpdmVfZG5zIiwiZmlyc3Rfc2Vlbl9hdCI6IjIwMjYtMDYtMDFUMDA6MDA6MDBaIiwibGFzdF9zZWVuX2F0IjoiMjAyNi0wNy0xNVQwODowMDowMFoifX0.hvnKDprnAGl4CQtxFNr1DnINBb8dfQbM6ZJ1fgJJX8ZoPBEgVoxEh0eyaJRrD2bKqR27RdTtA3_5LB2ckppHBA",
+      "expect": {
+        "ok": false,
+        "reason": "bad-signature"
+      }
+    },
+    {
+      "name": "reject-unsupported-alg-hs256",
+      "deterministic": true,
+      "jws": "eyJhbGciOiJIUzI1NiIsImtpZCI6InRlc3QtZWQyNTUxOS0xIn0.eyJ2IjoxLCJpc3MiOiJhcmNoaXZlLnByb3ZlLmVtYWlsIiwiaWF0IjoxNzg5MDAwMDAwLCJyZWNvcmQiOnsiaWQiOiJyZWMtMSIsImRvbWFpbiI6ImV4YW1wbGUuY29tIiwic2VsZWN0b3IiOiJtYWlsMjAyNiIsInZhbHVlIjoidj1ES0lNMTsgaz1yc2E7IHA9TUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUEwZXhhbXBsZS4uLklEQVFBQiIsInNvdXJjZSI6ImxpdmVfZG5zIiwiZmlyc3Rfc2Vlbl9hdCI6IjIwMjYtMDYtMDFUMDA6MDA6MDBaIiwibGFzdF9zZWVuX2F0IjoiMjAyNi0wNy0xNVQwODowMDowMFoifX0.AAAA",
+      "expect": {
+        "ok": false,
+        "reason": "unsupported-alg"
+      }
+    },
+    {
+      "name": "reject-alg-none",
+      "deterministic": true,
+      "jws": "eyJhbGciOiJub25lIiwia2lkIjoidGVzdC1lZDI1NTE5LTEifQ.eyJ2IjoxLCJpc3MiOiJhcmNoaXZlLnByb3ZlLmVtYWlsIiwiaWF0IjoxNzg5MDAwMDAwLCJyZWNvcmQiOnsiaWQiOiJyZWMtMSIsImRvbWFpbiI6ImV4YW1wbGUuY29tIiwic2VsZWN0b3IiOiJtYWlsMjAyNiIsInZhbHVlIjoidj1ES0lNMTsgaz1yc2E7IHA9TUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUEwZXhhbXBsZS4uLklEQVFBQiIsInNvdXJjZSI6ImxpdmVfZG5zIiwiZmlyc3Rfc2Vlbl9hdCI6IjIwMjYtMDYtMDFUMDA6MDA6MDBaIiwibGFzdF9zZWVuX2F0IjoiMjAyNi0wNy0xNVQwODowMDowMFoifX0.",
+      "expect": {
+        "ok": false,
+        "reason": "unsupported-alg"
+      }
+    },
+    {
+      "name": "reject-malformed-jws",
+      "deterministic": true,
+      "jws": "not-a-jws",
+      "expect": {
+        "ok": false,
+        "reason": "malformed-jws"
+      }
+    },
+    {
+      "name": "reject-shape-unknown-source",
+      "deterministic": true,
+      "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6InRlc3QtZWQyNTUxOS0xIn0.eyJ2IjoxLCJpc3MiOiJhcmNoaXZlLnByb3ZlLmVtYWlsIiwiaWF0IjoxNzg5MDAwMDAwLCJyZWNvcmQiOnsiaWQiOiJyZWMtMSIsImRvbWFpbiI6ImV4YW1wbGUuY29tIiwic2VsZWN0b3IiOiJtYWlsMjAyNiIsInZhbHVlIjoidj1ES0lNMTsgaz1yc2E7IHA9TUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUEwZXhhbXBsZS4uLklEQVFBQiIsInNvdXJjZSI6Im1hZGVfdXAiLCJmaXJzdF9zZWVuX2F0IjoiMjAyNi0wNi0wMVQwMDowMDowMFoiLCJsYXN0X3NlZW5fYXQiOiIyMDI2LTA3LTE1VDA4OjAwOjAwWiJ9fQ.VLMsKEFpdpCxLoYys7VkWgJOrybT8VNC_YZ9Y4bWlRKlu0Gszvbw0SH2Z2nz6Xzg6IrkYag-_Y1fGFvMN_SSDg",
+      "expect": {
+        "ok": false,
+        "reason": "malformed-shape"
+      }
+    },
+    {
+      "name": "reject-shape-bad-time",
+      "deterministic": true,
+      "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6InRlc3QtZWQyNTUxOS0xIn0.eyJ2IjoxLCJpc3MiOiJhcmNoaXZlLnByb3ZlLmVtYWlsIiwiaWF0IjoxNzg5MDAwMDAwLCJyZWNvcmQiOnsiaWQiOiJyZWMtMSIsImRvbWFpbiI6ImV4YW1wbGUuY29tIiwic2VsZWN0b3IiOiJtYWlsMjAyNiIsInZhbHVlIjoidj1ES0lNMTsgaz1yc2E7IHA9TUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUEwZXhhbXBsZS4uLklEQVFBQiIsInNvdXJjZSI6ImxpdmVfZG5zIiwiZmlyc3Rfc2Vlbl9hdCI6IjIwMjYtMDYtMDFUMDA6MDA6MDBaIiwibGFzdF9zZWVuX2F0IjoiMjAyNi0wNy0xNSAwODowMDowMCJ9fQ.EPq5mhP1IjeKEPxB3DgSO1k6Q8-yHSOFE5Pg7iXBplL13u3yodCYNxrmeB6MCzYk8F29xgEzZRtB-h0K_B4uCw",
+      "expect": {
+        "ok": false,
+        "reason": "malformed-shape"
+      }
+    },
+    {
+      "name": "reject-shape-non-integer-iat",
+      "deterministic": true,
+      "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6InRlc3QtZWQyNTUxOS0xIn0.eyJ2IjoxLCJpc3MiOiJhcmNoaXZlLnByb3ZlLmVtYWlsIiwiaWF0IjoxNzg5MDAwMDAwLjUsInJlY29yZCI6eyJpZCI6InJlYy0xIiwiZG9tYWluIjoiZXhhbXBsZS5jb20iLCJzZWxlY3RvciI6Im1haWwyMDI2IiwidmFsdWUiOiJ2PURLSU0xOyBrPXJzYTsgcD1NSUlCSWpBTkJna3Foa2lHOXcwQkFRRUZBQU9DQVE4QU1JSUJDZ0tDQVFFQTBleGFtcGxlLi4uSURBUUFCIiwic291cmNlIjoibGl2ZV9kbnMiLCJmaXJzdF9zZWVuX2F0IjoiMjAyNi0wNi0wMVQwMDowMDowMFoiLCJsYXN0X3NlZW5fYXQiOiIyMDI2LTA3LTE1VDA4OjAwOjAwWiJ9fQ.HP6I8DOJ6MXWbuO-oafHkWxIexGtX3h-KBMMPkeW_Vn1bEMnYHgkc0FTBFxEw6uuOzsE71QCA6y7D-1WDamtBQ",
+      "expect": {
+        "ok": false,
+        "reason": "malformed-shape"
+      }
+    },
+    {
+      "name": "reject-shape-missing-field",
+      "deterministic": true,
+      "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6InRlc3QtZWQyNTUxOS0xIn0.eyJ2IjoxLCJpc3MiOiJhcmNoaXZlLnByb3ZlLmVtYWlsIiwiaWF0IjoxNzg5MDAwMDAwLCJyZWNvcmQiOnsiaWQiOiJyZWMtMSIsImRvbWFpbiI6ImV4YW1wbGUuY29tIiwidmFsdWUiOiJ2PURLSU0xOyBrPXJzYTsgcD1NSUlCSWpBTkJna3Foa2lHOXcwQkFRRUZBQU9DQVE4QU1JSUJDZ0tDQVFFQTBleGFtcGxlLi4uSURBUUFCIiwic291cmNlIjoibGl2ZV9kbnMiLCJmaXJzdF9zZWVuX2F0IjoiMjAyNi0wNi0wMVQwMDowMDowMFoiLCJsYXN0X3NlZW5fYXQiOiIyMDI2LTA3LTE1VDA4OjAwOjAwWiJ9fQ.B7uj8dZjk9V0hezYpmo7bx_ryKPCKpvtoDUtcfSZdp-3Bb8qp-pWjzYxIUdmWBRAeN1MFSMQJeR6spNMXK63Cw",
+      "expect": {
+        "ok": false,
+        "reason": "malformed-shape"
+      }
+    }
+  ]
+}
