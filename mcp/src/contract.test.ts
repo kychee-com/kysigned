@@ -115,8 +115,14 @@ describe('tool registration', () => {
   });
 });
 
+// #155 — a realistic one-time webhook secret: whs_ + 64 hex (webhookSignature.ts).
+const CALLBACK_SECRET = 'whs_' + 'ab12'.repeat(16);
+
 describe('create_envelope', () => {
-  it('POSTs the body verbatim to /v1/envelope with the verbatim Authorization, and returns the six passthrough fields', async () => {
+  it('#155 — POSTs verbatim and returns the FULL documented envelope result (delivery, spam_notice, one-time callback_secret, suggestion), dropping undocumented fields', async () => {
+    // Deliberate reversal (#155, Barry-approved 2026-07-16) of the 2026-07-09
+    // six-field lock: the API shows callback_secret exactly ONCE, so an MCP
+    // caller who supplied callback_url must receive it here or never.
     queue.push({
       status: 201,
       body: {
@@ -126,7 +132,12 @@ describe('create_envelope', () => {
         status_url: 's',
         verify_url: 'v',
         signing_links: [{ email: 'a@b.co', link: 'l' }],
-        callback_secret: 'whs_never_surfaced_by_this_tool',
+        spam_notice: 'If signers do not receive the email, ask them to check their spam folder.',
+        delivery: { delivered: 1, undeliverable: [], failed: [] },
+        callback_secret: CALLBACK_SECRET,
+        suggestion: { has_existing_signatures: false, signed_count: 0, total_count: 1, missing_signers: [] },
+        internal_flag: 'MUST_NOT_PASS',
+        payment_authorization: 'MUST_NOT_PASS',
       },
     });
     const text = await callTool('create_envelope', {
@@ -154,14 +165,44 @@ describe('create_envelope', () => {
 
     const parsed = JSON.parse(text) as Record<string, unknown>;
     assert.deepEqual(Object.keys(parsed).sort(), [
+      'callback_secret',
+      'delivery',
       'document_hash',
       'envelope_id',
       'signing_links',
+      'spam_notice',
       'status',
       'status_url',
+      'suggestion',
       'verify_url',
     ]);
     assert.equal(parsed.envelope_id, 'env-1');
+    assert.equal(parsed.callback_secret, CALLBACK_SECRET, 'the one-time secret passes VERBATIM');
+    assert.deepEqual(parsed.delivery, { delivered: 1, undeliverable: [], failed: [] });
+  });
+
+  it('#155 — optional fields absent from the API result stay absent (no undefined keys)', async () => {
+    queue.push({
+      status: 201,
+      body: {
+        envelope_id: 'env-2',
+        status: 'active',
+        document_hash: 'abc',
+        status_url: 's',
+        verify_url: 'v',
+        signing_links: [{ email: 'a@b.co', link: 'l' }],
+        spam_notice: 'check spam',
+        delivery: { delivered: 1, undeliverable: [], failed: [] },
+      },
+    });
+    const text = await callTool('create_envelope', {
+      document_name: 'Contract',
+      pdf_base64: 'JVBERi0=',
+      signers: [{ email: 'a@b.co', name: 'A B' }],
+    });
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    assert.ok(!('callback_secret' in parsed), 'no callback_url → no callback_secret key');
+    assert.ok(!('suggestion' in parsed), 'no suggestion → no suggestion key');
   });
 
   it('#119 — a non-ok API response is an isError result preserving status + stable code + message', async () => {
@@ -290,6 +331,17 @@ describe('void_envelope', () => {
     assert.equal(r.isError, true);
     assert.match(r.content[0]!.text, /403/);
     assert.match(r.content[0]!.text, /auth_key_scope/);
+  });
+});
+
+describe('#155 — envelope-result lockstep', () => {
+  it('the MCP projection mirrors the API create-201 canonical field list exactly', async () => {
+    // Cross-package, test-only import (excluded from both builds): if the API
+    // 201 body gains a field the MCP allowlist does not know, this fails the
+    // suite — the "future documented safe fields are not silently discarded" AC.
+    const { ENVELOPE_RESULT_FIELDS } = await import('./envelopeResult.js');
+    const { CREATE_201_RESULT_FIELDS } = await import('../../src/api/envelopeResultFields.js');
+    assert.deepEqual([...ENVELOPE_RESULT_FIELDS].sort(), [...CREATE_201_RESULT_FIELDS].sort());
   });
 });
 

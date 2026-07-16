@@ -109,13 +109,27 @@ const CREATE_ARGS = {
   signers: [{ email: 'signer@example.com', name: 'S' }],
 };
 
-const PAID_201 = {
+// #155 — a realistic one-time webhook secret: whs_ + 64 hex (webhookSignature.ts).
+const CALLBACK_SECRET = 'whs_' + 'ab12'.repeat(16);
+
+// The envelope-result part of a paid 201 — the FULL documented create-201 body
+// (src/api/envelopeResultFields.ts), which #155 requires to survive the MCP
+// projection on the first success exactly as on a spending-intent replay.
+const ENVELOPE_201 = {
   envelope_id: 'env-x1',
   status: 'active',
   document_hash: 'abc',
   status_url: 'https://wallet-contract.test/status/env-x1',
   verify_url: 'https://wallet-contract.test/verify',
   signing_links: [{ email: 'signer@example.com' }],
+  spam_notice: 'If signers do not receive the email, ask them to check their spam folder.',
+  delivery: { delivered: 1, undeliverable: [], failed: [] },
+  callback_secret: CALLBACK_SECRET,
+  suggestion: { has_existing_signatures: false, signed_count: 0, total_count: 1, missing_signers: [] },
+};
+
+const PAID_201 = {
+  ...ENVELOPE_201,
   payment: {
     payment_id: 'pay_1',
     network: 'eip155:8453',
@@ -220,6 +234,12 @@ describe('create_envelope_x402 — AC-144/AC-145 over the tool surface, NO auth 
     assert.equal(out['envelope_id'], 'env-x1');
     assert.deepEqual(out['payment'], PAID_201.payment);
     assert.deepEqual(out['tracking'], PAID_201.tracking);
+    // #155 — the documented envelope-result fields survive the FIRST success
+    // (previously only the replay returned them).
+    assert.deepEqual(out['delivery'], ENVELOPE_201.delivery, 'delivery outcome on the first success');
+    assert.equal(out['spam_notice'], ENVELOPE_201.spam_notice);
+    assert.equal(out['callback_secret'], CALLBACK_SECRET, 'the one-time secret is returned on the FIRST success');
+    assert.deepEqual(out['suggestion'], ENVELOPE_201.suggestion);
     const intent = String(out['spending_intent_key']);
     assert.ok(intent.length >= 8, 'a generated spending-intent key is returned');
     // the paid call carried exactly that key + the full body incl. creator_email
@@ -248,7 +268,7 @@ describe('create_envelope_x402 — AC-144/AC-145 over the tool surface, NO auth 
         body: {
           ok: true,
           already_created: true,
-          envelope: { envelope_id: 'env-prev', status_url: 'https://wallet-contract.test/status/env-prev' },
+          envelope: { ...ENVELOPE_201, envelope_id: 'env-prev', internal_flag: 'MUST_NOT_PASS' },
         },
       },
     });
@@ -259,9 +279,50 @@ describe('create_envelope_x402 — AC-144/AC-145 over the tool surface, NO auth 
     assert.equal(out['replayed'], true);
     assert.equal(out['envelope_id'], 'env-prev');
     assert.equal(out['spending_intent_key'], 'agent-intent-7');
+    // #155 — the replay goes through the SAME projection: documented fields
+    // survive, undocumented stored fields are dropped.
+    assert.deepEqual(out['delivery'], ENVELOPE_201.delivery);
+    assert.equal(out['callback_secret'], CALLBACK_SECRET);
+    assert.ok(!('internal_flag' in out), 'undocumented stored fields must not pass through the replay');
     assert.equal(flow.factory(), 0, 'a replayed intent must never construct the paid fetch');
     assert.equal(flow.paidCalls.length, 0);
     assert.ok(!flow.unpaidCalls.some((u) => u.endsWith('/v1/x402/envelope')), 'no challenge probe either');
+  });
+
+  it('#155 — undocumented fields in the paid 201 are dropped (deny-by-default projection)', async () => {
+    const flow = createFlowSeams({
+      paid: {
+        status: 201,
+        body: { ...PAID_201, internal_flag: 'MUST_NOT_PASS', payment_authorization: 'MUST_NOT_PASS' },
+      },
+    });
+    setWalletSeamsForTests(flow.s);
+    const r = await call('create_envelope_x402', { ...CREATE_ARGS });
+    assert.ok(!r.isError, r.content[0]!.text);
+    const out = JSON.parse(r.content[0]!.text) as Record<string, unknown>;
+    assert.ok(!('internal_flag' in out));
+    assert.ok(!('payment_authorization' in out));
+    assert.equal(out['callback_secret'], CALLBACK_SECRET, 'documented fields still pass');
+  });
+
+  it('#155 — first success and replay expose the SAME envelope-result fields (payment/tracking are first-call extras; replayed/note are replay metadata)', async () => {
+    const first = createFlowSeams({ paid: { status: 201, body: PAID_201 } });
+    setWalletSeamsForTests(first.s);
+    const r1 = await call('create_envelope_x402', { ...CREATE_ARGS, idempotency_key: 'parity-1' });
+    assert.ok(!r1.isError, r1.content[0]!.text);
+    const out1 = JSON.parse(r1.content[0]!.text) as Record<string, unknown>;
+
+    const replay = createFlowSeams({
+      preflight: { status: 200, body: { ok: true, already_created: true, envelope: ENVELOPE_201 } },
+    });
+    setWalletSeamsForTests(replay.s);
+    const r2 = await call('create_envelope_x402', { ...CREATE_ARGS, idempotency_key: 'parity-1' });
+    assert.ok(!r2.isError, r2.content[0]!.text);
+    const out2 = JSON.parse(r2.content[0]!.text) as Record<string, unknown>;
+
+    const envKeys1 = Object.keys(out1).filter((k) => !['payment', 'tracking', 'spending_intent_key'].includes(k)).sort();
+    const envKeys2 = Object.keys(out2).filter((k) => !['replayed', 'note', 'spending_intent_key'].includes(k)).sort();
+    assert.deepEqual(envKeys1, envKeys2, 'first-call and replay envelope-result schemas must match');
   });
 
   it('a preflight validation failure surfaces the coded error and NEVER attempts payment (AC-144 ordering)', async () => {
@@ -374,7 +435,10 @@ describe('create_envelope_x402 — AC-144/AC-145 over the tool surface, NO auth 
       setWalletSeamsForTests(flow.s);
       const r = await call('create_envelope_x402', { ...CREATE_ARGS });
       assert.doesNotMatch(r.content[0]!.text, /privateKey|private_key/i);
-      assert.doesNotMatch(r.content[0]!.text, /[0-9a-fA-F]{64}/);
+      // #155: the documented one-time webhook secret is whs_ + 64 hex BY DESIGN
+      // (webhookSignature.ts) — whitelist exactly that shape; a BARE 64-hex run
+      // (a raw EVM key) anywhere in the output stays banned.
+      assert.doesNotMatch(r.content[0]!.text, /(?<!whs_)[0-9a-fA-F]{64}/);
     }
   });
 });

@@ -18,6 +18,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { VERSION } from './version.js';
 import { normalizeEndpoint, apiRequest, textResult, type McpToolResult } from './http.js';
+import { projectEnvelopeResult } from './envelopeResult.js';
 import {
   getWalletStatus,
   fetchChallengeTerms,
@@ -105,21 +106,9 @@ server.registerTool(
     }
     const r = await apiRequest(getEndpoint(), '/v1/envelope', { method: 'POST', auth, body: params });
     if (!r.ok) return r.result;
-    const d = r.data;
-    return textResult(
-      JSON.stringify(
-        {
-          envelope_id: d['envelope_id'],
-          status: d['status'],
-          document_hash: d['document_hash'],
-          status_url: d['status_url'],
-          verify_url: d['verify_url'],
-          signing_links: d['signing_links'],
-        },
-        null,
-        2,
-      ),
-    );
+    // #155 — the shared allowlist projection: delivery, spam_notice, the
+    // one-time callback_secret and suggestion survive; undocumented fields don't.
+    return textResult(JSON.stringify(projectEnvelopeResult(r.data), null, 2));
   },
 );
 
@@ -322,10 +311,11 @@ server.registerTool(
           preBody['envelope'] && typeof preBody['envelope'] === 'object'
             ? (preBody['envelope'] as Record<string, unknown>)
             : {};
+        // #155 — same projection as the first success: parity by construction.
         return textResult(
           JSON.stringify(
             {
-              ...envelope,
+              ...projectEnvelopeResult(envelope),
               replayed: true,
               spending_intent_key: intentKey,
               note: 'This spending intent already produced this envelope — nothing was paid or created on this call.',
@@ -368,15 +358,12 @@ server.registerTool(
       const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
 
       if (res.status === 201) {
+        // #155 — the shared envelope-result projection (delivery, spam_notice,
+        // one-time callback_secret, suggestion included) + the x402 extras.
         return textResult(
           JSON.stringify(
             {
-              envelope_id: data['envelope_id'],
-              status: data['status'],
-              document_hash: data['document_hash'],
-              status_url: data['status_url'],
-              verify_url: data['verify_url'],
-              signing_links: data['signing_links'],
+              ...projectEnvelopeResult(data),
               payment: data['payment'],
               tracking: data['tracking'],
               spending_intent_key: intentKey,

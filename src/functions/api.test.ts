@@ -787,6 +787,17 @@ describe('handleRequest — Idempotency-Key on createEnvelope (F-30.3 / AC-136)'
     assert.ok(body.callback_secret?.startsWith('whs_'), 'callback_secret returned once at create');
     assert.equal(inserted.length, 1, 'webhook row stored');
     assert.ok(inserted[0]!.includes('https://agent.example.com/hook'));
+    // #155 lockstep hop 1: every key of the real 201 body is in the canonical
+    // list that the kysigned-mcp projection mirrors (hop 2 lives in the MCP
+    // contract suite). A new 201 field not added there fails HERE, not by
+    // silently vanishing from MCP results.
+    const { CREATE_201_RESULT_FIELDS } = await import('../api/envelopeResultFields.js');
+    for (const k of Object.keys(body)) {
+      assert.ok(
+        (CREATE_201_RESULT_FIELDS as readonly string[]).includes(k),
+        `create-201 field "${k}" missing from CREATE_201_RESULT_FIELDS (and the MCP projection)`,
+      );
+    }
   });
 
   it('create with an invalid callback_url → 400 validation_callback_url', async () => {
