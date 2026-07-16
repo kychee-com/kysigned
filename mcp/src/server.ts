@@ -23,8 +23,12 @@ import {
   getWalletStatus,
   fetchChallengeTerms,
   defaultWalletSeams,
+  buildFundWalletAction,
+  BalanceUnknownError,
+  PayerConfigError,
   X402RouteError,
   X402_CREATE_PATH,
+  type OpaqueSignerProvider,
   type WalletSeams,
 } from './wallet.js';
 
@@ -167,18 +171,69 @@ server.registerTool(
   },
 );
 
-// ── wallet seams (F-30.5) — injectable for tests, real run402 stack otherwise ─
+// ── wallet seams (F-30.5/F-30.6) — injectable for tests, real stack otherwise ─
 let walletSeamsOverride: WalletSeams | undefined;
 /** TEST-ONLY: inject fake wallet seams (pass undefined to restore the real ones). */
 export function setWalletSeamsForTests(seams?: WalletSeams): void {
   walletSeamsOverride = seams;
 }
-function walletSeams(): WalletSeams {
-  return walletSeamsOverride ?? defaultWalletSeams();
+
+// F-30.6 (#151): the payer source resolves EXACTLY ONCE per process — the real
+// seams are memoized, and the embedder construction seam below must run before
+// the first wallet tool call.
+let injectedPaymentSigner: OpaqueSignerProvider | undefined;
+let realWalletSeams: WalletSeams | undefined;
+
+/**
+ * Embedder construction seam (AC-170): inject an opaque async payment
+ * signer/provider (KMS/HSM/secret-broker) BEFORE the first wallet tool call.
+ * Key material never crosses this boundary — only a public address and
+ * signing operations. Mutually exclusive with KYSIGNED_RUN402_ALLOWANCE_PATH.
+ */
+export function configurePaymentSigner(provider: OpaqueSignerProvider | undefined): void {
+  if (realWalletSeams) {
+    throw new PayerConfigError(
+      'payer_source_conflict',
+      'configurePaymentSigner must run before the first wallet tool call — the payer source resolves exactly once.',
+    );
+  }
+  injectedPaymentSigner = provider;
 }
 
-/** Map wallet-path failures to the MCP error contract (`Error: <message>`). */
+function walletSeams(): WalletSeams {
+  if (walletSeamsOverride) return walletSeamsOverride;
+  realWalletSeams ??= defaultWalletSeams({ paymentSigner: injectedPaymentSigner });
+  return realWalletSeams;
+}
+
+/** Map wallet-path failures to the MCP error contract (`Error: <message-or-json>`). */
 function walletError(err: unknown): McpToolResult {
+  if (err instanceof PayerConfigError) {
+    // AC-170 fail-closed: stable machine-readable code + next_actions.
+    return textResult(
+      `Error: ${JSON.stringify({ code: err.code, message: err.message, next_actions: err.next_actions }, null, 2)}`,
+      true,
+    );
+  }
+  if (err instanceof BalanceUnknownError) {
+    // AC-171: provider exhaustion is balance-unknown — never zero, never
+    // insufficient-funds — and explicitly states nothing was dispatched.
+    return textResult(
+      `Error: ${JSON.stringify(
+        {
+          code: err.code,
+          message: err.message,
+          retryable: err.retryable,
+          safe_to_retry: err.safe_to_retry,
+          mutation_state: err.mutation_state,
+          providers: err.providers,
+        },
+        null,
+        2,
+      )}`,
+      true,
+    );
+  }
   if (err instanceof X402RouteError) return textResult(`Error: ${err.message}`, true);
   return textResult(`Error: ${err instanceof Error ? err.message : String(err)}`, true);
 }
@@ -188,11 +243,14 @@ server.registerTool(
   'wallet_status',
   {
     description:
-      'Report the local run402 wallet\'s payment readiness for wallet-paid envelope creation: wallet address, ' +
-      'network, asset, on-chain balance, the live per-envelope price (read from the x402 route\'s own challenge), ' +
-      'and whether the balance covers it (with funding guidance when short). Read-only — never creates or spends. ' +
-      'Needs no API key: the wallet-paid path works without KYSIGNED_AUTHORIZATION; the wallet is the host-local ' +
-      'run402 allowance wallet (created by `run402 init`; its key is never a tool argument and never appears in output).',
+      'Report the payer\'s payment readiness for wallet-paid envelope creation: payer provenance (source kind + ' +
+      'public address + network — never key material), asset, on-chain balance (read resiliently across independent ' +
+      'RPC providers), the live per-envelope price (read from the x402 route\'s own challenge), and whether the ' +
+      'balance covers it — when short, a structured QR-ready fund_wallet action (ERC-681 payment URI for exactly ' +
+      'the shortfall). Read-only — never creates, spends, or initiates an on-chain transaction. Needs no API key: ' +
+      'the wallet-paid path works without KYSIGNED_AUTHORIZATION. The payer resolves once from: an explicit ' +
+      'allowance file (KYSIGNED_RUN402_ALLOWANCE_PATH), an embedder-injected opaque signer, or the host-local ' +
+      'run402 allowance (`run402 init`); its key is never a tool argument and never appears in output.',
     inputSchema: {},
     annotations: { title: 'Wallet status', readOnlyHint: true, openWorldHint: true },
   },
@@ -217,9 +275,11 @@ server.registerTool(
       'kysigned.com: $0.25 USDC on Base mainnet). Safety order: it first runs the FREE preflight validation, then ' +
       'checks the wallet balance, and only then pays — an invalid request or short balance never triggers a charge. ' +
       'Retries are safe: the spending-intent idempotency key (yours, or a generated one returned in the result) ' +
-      'replays the same envelope without paying twice. The wallet is the host-local run402 allowance wallet ' +
-      '(`run402 init`); its key is never a tool argument and never appears in output. On success the result carries ' +
-      'the payment receipt and a tracking note (status links need creator auth — sign in later with creator_email).',
+      'replays the same envelope without paying twice. The payer resolves once from: an explicit allowance file ' +
+      '(KYSIGNED_RUN402_ALLOWANCE_PATH), an embedder-injected opaque signer (KMS/HSM), or the host-local run402 ' +
+      'allowance wallet (`run402 init`); its key is never a tool argument and never appears in output. On success the ' +
+      'result carries the payment receipt and a tracking note (status links need creator auth — sign in later with ' +
+      'creator_email).',
     inputSchema: {
       creator_email: z
         .string()
@@ -276,13 +336,15 @@ server.registerTool(
         return textResult('Error: provide exactly one of pdf_base64 or pdf_url.', true);
       }
 
-      // 1) Wallet presence — fail with guidance before any network work.
-      const address = await seams.readAllowanceAddress();
-      if (!address) {
-        const path = await seams.allowancePath();
+      // 1) Payer presence — the ONE resolved source (F-30.6/AC-170), cheap
+      // probe only (a replayed intent must never construct the paid stack).
+      // Conflicting/unavailable EXPLICIT sources throw fail-closed here.
+      const presence = await seams.payerPresence();
+      if (!presence.configured) {
         return textResult(
-          `Error: no run402 wallet is configured (expected at ${path}). Run \`run402 init\` to create one, ` +
-            `fund it, then retry — or use create_envelope with a KYSIGNED_AUTHORIZATION key instead.`,
+          `Error: no run402 payer is configured (allowance expected at ${presence.allowancePath}). Run \`run402 init\` ` +
+            `to create one, point KYSIGNED_RUN402_ALLOWANCE_PATH at an explicit allowance file, fund it, then retry — ` +
+            `or use create_envelope with a KYSIGNED_AUTHORIZATION key instead.`,
           true,
         );
       }
@@ -326,17 +388,56 @@ server.registerTool(
         );
       }
 
-      // 3) Readiness gate — challenge terms vs on-chain balance, before any charge (AC-145).
+      // 3) Readiness gate — challenge terms vs on-chain balance of the SAME
+      // payer the paid fetch will use (AC-145/AC-171), before any charge.
       const terms = await fetchChallengeTerms(endpoint, seams.fetchFn);
+      const address = await seams.payerAddress(terms.network);
+      if (!address) {
+        return textResult(
+          `Error: ${JSON.stringify(
+            {
+              code: 'payer_unavailable_for_network',
+              message: `The configured payer source (${presence.sourceKind}) has no payer for ${terms.network} — the priced route settles there. Nothing was charged.`,
+            },
+            null,
+            2,
+          )}`,
+          true,
+        );
+      }
+      // Resilient read (bounded retry + provider failover). BalanceUnknownError
+      // propagates to walletError → structured balance-unknown, never
+      // insufficient-funds (AC-171).
       const balance = await seams.readBalanceAtomic({ network: terms.network, asset: terms.asset, address });
       const price = BigInt(terms.amountAtomic);
       if (balance < price) {
         const assetLabel = terms.assetName ?? terms.asset;
+        const fundAction = buildFundWalletAction({
+          terms,
+          address,
+          balance,
+          retry: {
+            tool: 'create_envelope_x402',
+            note: `Retry with the SAME idempotency_key (${intentKey}) after funding — the spending intent replays without double-paying.`,
+          },
+        });
+        // Machine-readable underfunded outcome (AC-172): prose for humans +
+        // the structured QR-ready fund_wallet action for agents.
         return textResult(
-          `Error: insufficient wallet balance — nothing was charged. Send at least ${(price - balance).toString()} ` +
-            `atomic units of ${assetLabel} on ${terms.network} to ${address} (one envelope costs ${terms.amountAtomic}` +
-            (terms.amountUsdMicros !== undefined ? ` = $${(terms.amountUsdMicros / 1_000_000).toFixed(2)}` : '') +
-            `; current balance ${balance.toString()}). Check readiness any time with wallet_status.`,
+          `Error: ${JSON.stringify(
+            {
+              code: 'insufficient_funds',
+              message:
+                `Insufficient wallet balance — nothing was charged. Send at least ${(price - balance).toString()} ` +
+                `atomic units of ${assetLabel} on ${terms.network} to ${address} (one envelope costs ${terms.amountAtomic}` +
+                (terms.amountUsdMicros !== undefined ? ` = $${(terms.amountUsdMicros / 1_000_000).toFixed(2)}` : '') +
+                `; current balance ${balance.toString()}). Check readiness any time with wallet_status.`,
+              mutation_state: 'not_started',
+              next_actions: [fundAction],
+            },
+            null,
+            2,
+          )}`,
           true,
         );
       }

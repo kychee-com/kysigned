@@ -50,14 +50,26 @@ function challengeFetch(status = 402): typeof fetch {
 
 function seams(overrides: Partial<WalletSeams> = {}): WalletSeams {
   return {
-    readAllowanceAddress: async () => '0x0000000000000000000000000000000000000AaA',
-    allowancePath: async () => 'C:/fake/.config/run402/allowance.json',
+    payerPresence: async () => ({
+      configured: true,
+      sourceKind: 'default_allowance',
+      allowancePath: 'C:/fake/.config/run402/allowance.json',
+    }),
+    payerAddress: async () => '0x0000000000000000000000000000000000000AaA',
     fetchFn: challengeFetch(),
     readBalanceAtomic: async () => 550_000n,
     paidFetchFactory: async () => null,
     ...overrides,
   };
 }
+
+const NOT_CONFIGURED: Partial<WalletSeams> = {
+  payerPresence: async () => ({
+    configured: false,
+    sourceKind: 'default_allowance',
+    allowancePath: 'C:/fake/.config/run402/allowance.json',
+  }),
+};
 
 /**
  * Route-aware unpaid fetch + recorded paid fetch for the create flow:
@@ -160,16 +172,18 @@ describe('wallet_status registration', () => {
   });
 });
 
-describe('wallet_status — AC-145 over the tool surface, NO auth env', () => {
-  it('funded wallet → readiness JSON (address, terms, balance, coverage), no auth required', async () => {
+describe('wallet_status — AC-145/AC-170/AC-172 over the tool surface, NO auth env', () => {
+  it('funded wallet → readiness JSON (provenance, address, terms, balance, coverage), no auth required', async () => {
     assert.equal(process.env.KYSIGNED_AUTHORIZATION, undefined, 'precondition: no auth env');
     setWalletSeamsForTests(seams());
     const r = await call('wallet_status');
     assert.ok(!r.isError, r.content[0]!.text);
     const s = JSON.parse(r.content[0]!.text) as Record<string, unknown>;
     assert.equal(s['configured'], true);
+    assert.equal(s['payer_source'], 'default_allowance', 'AC-170: safe payer provenance in the status');
     assert.equal(s['address'], '0x0000000000000000000000000000000000000AaA');
     assert.equal(s['network'], 'eip155:8453');
+    assert.equal(s['balance_status'], 'known');
     assert.equal(s['balance_atomic'], '550000');
     assert.equal(s['price_atomic'], '250000');
     assert.equal(s['sufficient'], true);
@@ -177,7 +191,7 @@ describe('wallet_status — AC-145 over the tool surface, NO auth env', () => {
   });
 
   it('no wallet configured → a NON-error status with the run402-init hint', async () => {
-    setWalletSeamsForTests(seams({ readAllowanceAddress: async () => null }));
+    setWalletSeamsForTests(seams(NOT_CONFIGURED));
     const r = await call('wallet_status');
     assert.ok(!r.isError, 'not-configured is a status report, not a tool error');
     const s = JSON.parse(r.content[0]!.text) as Record<string, unknown>;
@@ -185,13 +199,71 @@ describe('wallet_status — AC-145 over the tool surface, NO auth env', () => {
     assert.match(String(s['hint']), /run402 init/);
   });
 
-  it('underfunded wallet → sufficient:false with the fund hint (address+network+asset+minimum)', async () => {
-    setWalletSeamsForTests(seams({ readBalanceAtomic: async () => 10_000n }));
+  it('underfunded wallet → fund hint + the structured QR-ready fund_wallet action (AC-172)', async () => {
+    setWalletSeamsForTests(seams({ readBalanceAtomic: async () => 197_456n }));
     const r = await call('wallet_status');
     const s = JSON.parse(r.content[0]!.text) as Record<string, unknown>;
     assert.equal(s['sufficient'], false);
     assert.match(String(s['fund_hint']), /0x0000000000000000000000000000000000000AaA/);
     assert.match(String(s['fund_hint']), /eip155:8453/);
+    const actions = s['next_actions'] as Array<Record<string, unknown>>;
+    assert.ok(Array.isArray(actions) && actions.length === 1, 'exactly one structured funding action');
+    const a = actions[0]!;
+    assert.equal(a['type'], 'fund_wallet');
+    assert.equal(a['network'], 'eip155:8453');
+    assert.equal(a['token_symbol'], 'USDC');
+    assert.equal(a['token_decimals'], 6);
+    assert.equal(a['shortfall_atomic'], '52544');
+    assert.equal(a['shortfall_decimal'], '0.052544');
+    assert.equal(
+      a['payment_uri'],
+      'ethereum:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913@8453/transfer?address=0x0000000000000000000000000000000000000AaA&uint256=52544',
+    );
+    assert.match(String(a['instruction']), /USDC.*Base mainnet|Base mainnet.*USDC/);
+  });
+
+  it('AC-171: every RPC provider down → balance_status unknown (structured, retryable), NEVER insufficient', async () => {
+    const { BalanceUnknownError } = await import('./wallet.js');
+    setWalletSeamsForTests(
+      seams({
+        readBalanceAtomic: async () => {
+          throw new BalanceUnknownError('eip155:8453', [
+            { provider: 'mainnet.base.org', error: 'TimeoutError' },
+            { provider: 'base-rpc.publicnode.com', error: 'HttpRequestError' },
+            { provider: '1rpc.io', error: 'HttpRequestError' },
+          ]);
+        },
+      }),
+    );
+    const r = await call('wallet_status');
+    assert.ok(!r.isError, 'balance-unknown is a structured status report for the read-only probe');
+    const s = JSON.parse(r.content[0]!.text) as Record<string, unknown>;
+    assert.equal(s['configured'], true);
+    assert.equal(s['balance_status'], 'unknown');
+    const be = s['balance_error'] as Record<string, unknown>;
+    assert.equal(be['code'], 'balance_unknown_provider_exhausted');
+    assert.equal(be['retryable'], true);
+    assert.equal(be['mutation_state'], 'not_started');
+    assert.ok(!('balance_atomic' in s), 'no fabricated zero balance');
+    assert.ok(!('sufficient' in s), 'unknown is never reported as (in)sufficient');
+  });
+
+  it('AC-170: a conflicting explicit payer config fails CLOSED with the stable code', async () => {
+    const { PayerConfigError } = await import('./wallet.js');
+    setWalletSeamsForTests(
+      seams({
+        payerPresence: async () => {
+          throw new PayerConfigError('payer_source_conflict', 'Both an explicit allowance path and an injected payment signer are configured.', [
+            { type: 'fix_config', why: 'remove one source' },
+          ]);
+        },
+      }),
+    );
+    const r = await call('wallet_status');
+    assert.equal(r.isError, true);
+    assert.match(r.content[0]!.text, /^Error: /);
+    assert.match(r.content[0]!.text, /payer_source_conflict/);
+    assert.match(r.content[0]!.text, /next_actions/);
   });
 
   it('an unpriced route (fork with x402 not wired) → isError with the actionable message', async () => {
@@ -203,7 +275,7 @@ describe('wallet_status — AC-145 over the tool surface, NO auth env', () => {
   });
 
   it('custody: no wallet_status output can carry key material (AC-146)', async () => {
-    for (const s of [seams(), seams({ readAllowanceAddress: async () => null })]) {
+    for (const s of [seams(), seams(NOT_CONFIGURED)]) {
       setWalletSeamsForTests(s);
       const r = await call('wallet_status');
       assert.doesNotMatch(r.content[0]!.text, /privateKey|private_key/i);
@@ -338,24 +410,59 @@ describe('create_envelope_x402 — AC-144/AC-145 over the tool surface, NO auth 
     assert.ok(!flow.unpaidCalls.some((u) => u.endsWith('/v1/x402/envelope')), 'challenge probe skipped too');
   });
 
-  it('an underfunded wallet fails BEFORE any payment attempt with the fund guidance (AC-145)', async () => {
+  it('an underfunded wallet fails BEFORE any payment attempt with fund guidance + the structured action (AC-145/AC-172)', async () => {
     const flow = createFlowSeams({ balance: 10_000n });
     setWalletSeamsForTests(flow.s);
-    const r = await call('create_envelope_x402', { ...CREATE_ARGS });
+    const r = await call('create_envelope_x402', { ...CREATE_ARGS, idempotency_key: 'fund-me-1' });
     assert.equal(r.isError, true);
     assert.match(r.content[0]!.text, /0x0000000000000000000000000000000000000AaA/);
     assert.match(r.content[0]!.text, /eip155:8453/);
     assert.match(r.content[0]!.text, /250000/);
+    const body = JSON.parse(r.content[0]!.text.replace(/^Error: /, '')) as Record<string, unknown>;
+    assert.equal(body['code'], 'insufficient_funds');
+    assert.equal(body['mutation_state'], 'not_started');
+    const actions = body['next_actions'] as Array<Record<string, unknown>>;
+    assert.equal(actions[0]!['type'], 'fund_wallet');
+    assert.equal(actions[0]!['shortfall_atomic'], '240000');
+    assert.match(String(actions[0]!['payment_uri']), /^ethereum:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913@8453\/transfer\?address=0x0000000000000000000000000000000000000AaA&uint256=240000$/);
+    assert.match(String((actions[0]!['retry'] as Record<string, unknown>)['note']), /fund-me-1/, 'retry names the SAME spending-intent key');
     assert.equal(flow.factory(), 0);
+    assert.equal(flow.paidCalls.length, 0);
+  });
+
+  it('AC-171: all RPC providers down at the readiness gate → structured balance-unknown, NOTHING paid, never insufficient', async () => {
+    const { BalanceUnknownError } = await import('./wallet.js');
+    const flow = createFlowSeams({});
+    setWalletSeamsForTests({
+      ...flow.s,
+      readBalanceAtomic: async () => {
+        throw new BalanceUnknownError('eip155:8453', [
+          { provider: 'mainnet.base.org', error: 'TimeoutError' },
+          { provider: 'base-rpc.publicnode.com', error: 'HttpRequestError' },
+        ]);
+      },
+    });
+    const r = await call('create_envelope_x402', { ...CREATE_ARGS });
+    assert.equal(r.isError, true);
+    const body = JSON.parse(r.content[0]!.text.replace(/^Error: /, '')) as Record<string, unknown>;
+    assert.equal(body['code'], 'balance_unknown_provider_exhausted');
+    assert.equal(body['retryable'], true);
+    assert.equal(body['safe_to_retry'], true);
+    assert.equal(body['mutation_state'], 'not_started');
+    assert.match(String(body['message']), /no payment was dispatched/i);
+    assert.notEqual(body['code'], 'insufficient_funds', 'provider exhaustion is NEVER the insufficient-funds code');
+    assert.ok(!('next_actions' in body && JSON.stringify(body['next_actions']).includes('fund_wallet')), 'no funding action for an UNKNOWN balance');
+    assert.equal(flow.factory(), 0, 'the paid stack is never constructed on an unknown balance');
     assert.equal(flow.paidCalls.length, 0);
   });
 
   it('no wallet configured → the run402-init guidance, nothing fetched, nothing paid', async () => {
     const flow = createFlowSeams({});
-    setWalletSeamsForTests({ ...flow.s, readAllowanceAddress: async () => null });
+    setWalletSeamsForTests({ ...flow.s, ...NOT_CONFIGURED });
     const r = await call('create_envelope_x402', { ...CREATE_ARGS });
     assert.equal(r.isError, true);
     assert.match(r.content[0]!.text, /run402 init/);
+    assert.match(r.content[0]!.text, /KYSIGNED_RUN402_ALLOWANCE_PATH/, 'names the explicit-source escape hatch');
     assert.equal(flow.unpaidCalls.length, 0);
     assert.equal(flow.paidCalls.length, 0);
   });

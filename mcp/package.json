@@ -33,15 +33,15 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
-    "@run402/sdk": "^4.2.1",
+    "@run402/sdk": "^4.8.0",
     "@x402/evm": "^2.9.0",
     "@x402/fetch": "^2.9.0",
     "viem": "^2.47.10",
     "zod": "^3.24.0"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
     "@types/node": "^22.0.0",
-    "tsx": "^4.0.0"
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0"
   }
 }

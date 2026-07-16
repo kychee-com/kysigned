@@ -150,13 +150,25 @@ Void an active envelope. All pending signers receive a cancellation notice. Void
 
 ### `wallet_status` — no key needed
 
-Report the local run402 wallet's payment readiness for wallet-paid creation: wallet address, network, asset, on-chain balance, the live per-envelope price (read from the x402 route's own 402 challenge — never hardcoded), whether the balance covers it, and funding guidance when short. Read-only; never creates or spends. No arguments.
+Report the payer's payment readiness for wallet-paid creation: payer provenance (`payer_source` + public address + network — never key material), asset, on-chain balance, the live per-envelope price (read from the x402 route's own 402 challenge — never hardcoded), whether the balance covers it, and funding guidance when short. Read-only; never creates, spends, or initiates an on-chain transaction. No arguments.
 
 ```json
 {}
 ```
 
-If no wallet exists it returns `configured: false` with the expected file path and the fix (`run402 init`). On an instance whose operator has not wired x402, it returns an error explaining the route is not payable.
+If no payer exists it returns `configured: false` with the expected allowance path and the fixes (`run402 init`, or `KYSIGNED_RUN402_ALLOWANCE_PATH`). On an instance whose operator has not wired x402, it returns an error explaining the route is not payable.
+
+**Payer sources (resolved once at startup, in precedence order):**
+
+1. `KYSIGNED_RUN402_ALLOWANCE_PATH` — an **explicit run402 allowance file**. When set, it is the ONLY wallet consulted: an unreadable path fails closed (`payer_source_unavailable`) instead of falling back to the ambient wallet. Use this when a host manages per-agent allowance files (for example materialized from a secret store into a mode-0600 file).
+2. An **opaque payment signer** injected programmatically by an embedder (`import { configurePaymentSigner } from 'kysigned-mcp'`-style hosting of the server module, before the first wallet tool call). The provider exposes only a public address plus signing operations, so key material can stay inside KMS/HSM/secret-broker boundaries. Mutually exclusive with the env path (`payer_source_conflict` if both are set).
+3. The **ambient host-local run402 allowance** (`run402 init`) — the default when nothing explicit is configured.
+
+Readiness and payment share the one resolved payer: the address whose balance `wallet_status` reports is the address that signs the payment.
+
+**Balance resilience:** the balance read retries with backoff and fails over across independent public RPC providers (the same lists the run402 SDK payment stack uses). If EVERY provider fails, the result is `balance_status: "unknown"` with a structured `balance_error` (`retryable: true`, `mutation_state: "not_started"`) — never a fabricated zero and never an insufficient-funds verdict. `KYSIGNED_RPC_URL` optionally PREPENDS a private RPC; it is an advanced override, not required for ordinary reliability.
+
+**Funding an underfunded wallet (fund → recheck → create):** an underfunded result carries a structured `next_actions[0]` of `type: "fund_wallet"` — destination address, CAIP-2 network, token contract/symbol/decimals, balance/price/shortfall in atomic AND exact decimal units, a concise human instruction, and an **ERC-681 payment URI requesting exactly the shortfall** (`ethereum:<token>@<chainId>/transfer?address=<wallet>&uint256=<shortfall>`) ready to render as a QR code. Flow: show the QR / send the URI → after funding, call `wallet_status` again to confirm `sufficient: true` → then `create_envelope_x402` (reusing your `idempotency_key` if this was a retry).
 
 ### `create_envelope_x402` — wallet-paid create, no key needed
 
@@ -178,7 +190,7 @@ Create an envelope **paying the per-envelope price from the host-local run402 al
 
 **Pay-safe order** (an invalid request or a short balance never charges): the tool first runs the instance's **free preflight** (`POST /v1/envelope/preflight` — the create's own deterministic validation), then checks the wallet balance against the live price, and only then pays via the x402 challenge/pay/retry flow. **Returns:** the envelope fields plus the `payment` receipt (stable `payment_id`, amount, network, asset, payee, settlement reference, settlement time), the `tracking` note (status links need creator auth), and `spending_intent_key`. Payment failures come back machine-readably — a post-payment validation failure banks the money as account credit for `creator_email` (`payment_banked: true` + recovery `next_actions`; never lost), and insufficient on-chain funds surface the platform's stable `payment_insufficient_funds` code with a `fund_wallet` next action.
 
-**Custody:** the wallet is read from the host's local run402 configuration only. A private key is never a tool argument, never an environment variable of this server, and never appears in any tool output or error.
+**Custody:** the payer resolves once from the explicit allowance file (`KYSIGNED_RUN402_ALLOWANCE_PATH`), an embedder-injected opaque signer, or the host-local run402 configuration (see `wallet_status` above). A private key is never a tool argument, never an environment variable of this server, and never appears in any tool output or error. An underfunded create fails before any payment attempt with the same structured `fund_wallet` action as `wallet_status` (ERC-681 QR URI for exactly the shortfall) — fund, re-check with `wallet_status`, then retry with the SAME `idempotency_key`.
 
 ## Usage examples
 
