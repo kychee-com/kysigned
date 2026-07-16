@@ -4,8 +4,8 @@
  * The verifier DKIM-verifies each `signer-<n>.eml` against this file offline
  * (F-10.3): for each signer it carries the public-key record observed from DNS at
  * receipt (F-6.7), when it was observed, and the archive cross-reference outcome
- * (archive.prove.email, Bitcoin/witness-timestamped — the key-authenticity anchor
- * for the F-1.4 signing-time-within-window join).
+ * (archive.prove.email — the independent third party whose own DNS observation
+ * backs the F-32.3 provenance gate and the F-32.4 signing-time-within-window join).
  *
  * Deterministic: signers in index order, fixed object-key order, 2-space JSON.
  */

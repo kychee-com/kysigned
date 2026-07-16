@@ -150,10 +150,17 @@ export interface SignatureArtifact {
   dkim_selector: string | null;
   dkim_key: string | null;
   dkim_observed_at: Date | null;
-  /** Dual timestamps over sha256_eml (F-6.6) + the key-observation timestamp (F-6.7). */
+  /** Dual timestamps over sha256_eml (F-6.6) + the key-observation timestamps (F-6.7.1). */
   ots_proof: TimestampProof | null;
   tsa_token: TimestampProof | null;
+  /** RFC 3161 token over the key-record digest. */
   key_obs_proof: TimestampProof | null;
+  /**
+   * OpenTimestamps (Bitcoin) proof over the SAME key-record digest (AC-169,
+   * migration 011). The archive runs no chain timestamping, so the first-party
+   * observation carries its own anchor. Null when the OTS stamp failed (fail-proof).
+   */
+  key_obs_ots_proof: TimestampProof | null;
   /** archive.prove.email contribution outcome (AC-60). */
   archive_status: string | null;
   /**
@@ -186,6 +193,7 @@ export interface CreateSignatureArtifactInput {
   ots_proof?: TimestampProof | null;
   tsa_token?: TimestampProof | null;
   key_obs_proof?: TimestampProof | null;
+  key_obs_ots_proof?: TimestampProof | null;
   archive_status?: string | null;
   archive_confirmation?: 'confirmed' | 'unconfirmed' | 'outage' | null;
   archive_confirmation_checked_at?: Date | null;

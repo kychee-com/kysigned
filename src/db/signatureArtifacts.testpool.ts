@@ -24,7 +24,7 @@ export function createSignatureArtifactsMemoryPool() {
           spf_verdict, dkim_verdict, dmarc_verdict,
           dkim_domain, dkim_selector, dkim_key, dkim_observed_at,
           ots_proof, tsa_token, key_obs_proof, archive_status, ts_status,
-          archive_confirmation, archive_confirmation_checked_at,
+          archive_confirmation, archive_confirmation_checked_at, key_obs_ots_proof,
         ] = v;
         const conflict = rows.find(
           (r) => r.envelope_id === envelope_id &&
@@ -40,6 +40,7 @@ export function createSignatureArtifactsMemoryPool() {
           dkim_domain: dkim_domain ?? null, dkim_selector: dkim_selector ?? null, dkim_key: dkim_key ?? null,
           dkim_observed_at: dkim_observed_at ?? null,
           ots_proof: ots_proof ?? null, tsa_token: tsa_token ?? null, key_obs_proof: key_obs_proof ?? null,
+          key_obs_ots_proof: key_obs_ots_proof ?? null,
           archive_status: archive_status ?? null,
           ts_status: ts_status ?? 'pending',
           archive_confirmation: archive_confirmation ?? null,

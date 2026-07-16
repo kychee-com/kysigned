@@ -9,6 +9,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { assembleSignatureArtifact, sha256Eml } from './artifactAssembly.js';
+import { keyRecordDigest } from './dkimKeyResolver.js';
 import { createSignatureArtifactsMemoryPool } from '../../db/signatureArtifacts.testpool.js';
 import { createFakeProvider } from '../../timestamp/fake.js';
 import type { TimestampProof, TimestampProvider } from '../../timestamp/contract.js';
@@ -181,6 +182,36 @@ describe('assembleSignatureArtifact — F-6.6 timestamps', () => {
     assert.equal(artifact.archive_status, 'outage');
     assert.equal(artifact.archive_confirmation, 'outage');
     assert.ok(artifact.sha256_eml, 'the signature artifact still persisted through the outage');
+  });
+
+  it('AC-169: the observed-key record carries BOTH anchors — TSA token AND an OTS proof over the same key digest', async () => {
+    const { pool } = createSignatureArtifactsMemoryPool();
+    const observed = { value: 'v=DKIM1; k=rsa; p=AAAA', observedAt: new Date('2026-06-14T10:00:00Z') };
+    const artifact = await assembleSignatureArtifact(pool, baseInput(), {
+      timestampProvider: createFakeProvider(), // OTS
+      tsaProvider: createFakeProvider({ timeSec: 1_800_000_000 }),
+      resolveDkimKey: async () => observed,
+    });
+    // The archive runs NO chain timestamping (OQ16 correction), so the first-party key
+    // observation must carry its own Bitcoin anchor, not just the TSA token.
+    assert.ok(artifact.key_obs_proof, 'TSA token over the key record');
+    assert.ok(artifact.key_obs_ots_proof, 'OTS (Bitcoin) proof over the key record');
+    // Both must commit to the SAME key-record digest.
+    const digest = keyRecordDigest(baseInput().signingDomain, baseInput().selector, observed.value);
+    assert.equal((await createFakeProvider().verify(artifact.key_obs_proof!, digest)).ok, true);
+    assert.equal((await createFakeProvider().verify(artifact.key_obs_ots_proof!, digest)).ok, true);
+  });
+
+  it('AC-169: the key-observation OTS stamp is fail-proof — an OTS outage leaves a null proof, never blocks signing', async () => {
+    const { pool } = createSignatureArtifactsMemoryPool();
+    const artifact = await assembleSignatureArtifact(pool, baseInput(), {
+      timestampProvider: throwingProvider, // OTS calendar down
+      tsaProvider: createFakeProvider(),
+      resolveDkimKey: async () => ({ value: 'v=DKIM1; k=rsa; p=AAAA', observedAt: new Date() }),
+    });
+    assert.equal(artifact.key_obs_ots_proof, null, 'degrades to a null proof');
+    assert.ok(artifact.key_obs_proof, 'the TSA half still stands');
+    assert.equal(artifact.dkim_key, 'v=DKIM1; k=rsa; p=AAAA', 'the observation itself is still recorded');
   });
 
   it('is fail-proof when the DKIM key cannot be resolved (DNS hiccup)', async () => {

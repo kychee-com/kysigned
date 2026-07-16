@@ -2,12 +2,19 @@
  * DKIM public-key archive client — F-6.7 / AC-60 (spec v0.4.0).
  *
  * At signing time, while the signer's provider DKIM key is still live in DNS,
- * kysigned locks in an INDEPENDENT, third-party, timestamped record of that key by
- * checking the public DKIM archive (archive.prove.email, a public archive of
- * ~1M keys, witness.co-timestamped) and contributing the key if it is absent. This
- * is what lets a verifier confirm the key's authenticity decades later even after
+ * kysigned locks in an INDEPENDENT, third-party record of that key by checking the
+ * public DKIM archive (archive.prove.email, a public archive of ~1M keys that
+ * DNS-fetches each key itself) and contributing the key if it is absent. This is
+ * what lets a verifier confirm the key's authenticity decades later even after
  * the provider rotates it — critical for custom-domain signers the archive's
  * top-million crawl never covered.
+ *
+ * The archive's records are server-trusted plain JSON: it runs NO on-chain/witness
+ * timestamping (that path was dropped in its rebuild — confirmed by the archive team
+ * 2026-07-15, zkemail/archive#46). Never describe its records as chain-anchored. The
+ * operator therefore anchors its OWN observed-key record with TSA + OpenTimestamps
+ * (F-6.7.1 / AC-169), and the offline-durable path (OQ17) is a signed archive
+ * statement that kysigned time-anchors itself (verifier: bundle/archiveStatement.ts).
  *
  * Proven end-to-end 2026-06-13 (the operator's DKIM-archive research note):
  *   - lookup:     GET  /api/key/domain?domain=<d>&selector=<s>  → the full record

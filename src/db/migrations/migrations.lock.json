@@ -10,6 +10,7 @@
     "007_idempotency_keys.sql": "sha256:92a95e63a3b6e9d326dde79c392f897d588af5b74b84df3627027dfbdce2b100",
     "008_envelope_webhooks.sql": "sha256:cfc10f9d8401a6fa47ad63090b7231ab72ddbcb7c694ee3f550f2c86578fa663",
     "009_credit_ledger_source_agnostic.sql": "sha256:bdb2530d80ac7efe5d5e9158b401ac9d46999616240b925ff9417e3ba4733232",
-    "010_archive_confirmation.sql": "sha256:06a319308f0dff86a846ad7db95db2f64d9d44b29b5879c7449058ad7493546b"
+    "010_archive_confirmation.sql": "sha256:06a319308f0dff86a846ad7db95db2f64d9d44b29b5879c7449058ad7493546b",
+    "011_key_obs_ots_proof.sql": "sha256:e3134e80ec0a817dcd010b1478b925869fbfaf4713ae3ba83265e66a8f5eeb59"
   }
 }

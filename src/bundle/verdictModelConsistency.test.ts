@@ -44,6 +44,11 @@ const FORBIDDEN = [
   // customer-facing / verify surface (the rotate-and-publish defence is the timestamp bound; the
   // GCD detail defends a corner of a non-event and only reads as doubt in a confidence doc).
   { re: /\bGCD\b|recovery corpus/i, why: 'GCD / recovery-corpus mechanics belong to the internal engineering note, not public trust copy (AC-161, spec 0.44.2) — the public window rule is the plain last-seen upper bound' },
+  // Spec 0.46.0 (AC-161/AC-169): FACTUALLY FALSE since the archive team confirmed
+  // (2026-07-15, zkemail/archive#46) that the witness/on-chain path was dropped in their
+  // rebuild — their records are server-trusted plain JSON. Our own key observation carries
+  // its own OTS anchor instead (AC-169). Never let the claim back onto a surface.
+  { re: /witness\.co|witness[- ]timestamp|Witness (inclusion|→|Ethereum)|tlsnotary/i, why: 'the archive runs NO witness/on-chain timestamping (dropped in its rebuild; confirmed 2026-07-15 on zkemail/archive#46) — describing its records as chain-anchored is false (AC-161, spec 0.46.0)' },
 ];
 
 describe('verdict-model consistency across surfaces (AC-161 / F-019b regression)', () => {

@@ -55,6 +55,7 @@ function mapRow(r: Row): SignatureArtifact {
     ots_proof: coerceProof(r.ots_proof),
     tsa_token: coerceProof(r.tsa_token),
     key_obs_proof: coerceProof(r.key_obs_proof),
+    key_obs_ots_proof: coerceProof(r.key_obs_ots_proof),
     archive_status: (r.archive_status as string | null) ?? null,
     archive_confirmation: (r.archive_confirmation as 'confirmed' | 'unconfirmed' | 'outage' | null) ?? null,
     archive_confirmation_checked_at: coerceDate(r.archive_confirmation_checked_at),
@@ -81,9 +82,9 @@ export async function upsertSignatureArtifact(
         spf_verdict, dkim_verdict, dmarc_verdict,
         dkim_domain, dkim_selector, dkim_key, dkim_observed_at,
         ots_proof, tsa_token, key_obs_proof, archive_status, ts_status,
-        archive_confirmation, archive_confirmation_checked_at)
+        archive_confirmation, archive_confirmation_checked_at, key_obs_ots_proof)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
-             $12::jsonb,$13::jsonb,$14::jsonb,$15,COALESCE($16,'pending'),$17,$18)
+             $12::jsonb,$13::jsonb,$14::jsonb,$15,COALESCE($16,'pending'),$17,$18,$19::jsonb)
      ON CONFLICT (envelope_id, signer_email) DO NOTHING
      RETURNING *`,
     [
@@ -94,6 +95,7 @@ export async function upsertSignatureArtifact(
       jsonParam(input.ots_proof), jsonParam(input.tsa_token), jsonParam(input.key_obs_proof),
       input.archive_status ?? null, input.ts_status ?? null,
       input.archive_confirmation ?? null, input.archive_confirmation_checked_at ?? null,
+      jsonParam(input.key_obs_ots_proof),
     ],
   );
   if (res.rows.length > 0) {

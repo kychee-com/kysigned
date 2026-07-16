@@ -128,6 +128,7 @@ export async function assembleSignatureArtifact(
   let dkimKey: string | null = null;
   let dkimObservedAt: Date | null = null;
   let keyObsProof: TimestampProof | null = null;
+  let keyObsOtsProof: TimestampProof | null = null;
   let archiveStatus: string | null = null;
 
   if (deps.resolveDkimKey && input.selector) {
@@ -140,16 +141,18 @@ export async function assembleSignatureArtifact(
     if (observed) {
       dkimKey = observed.value;
       dkimObservedAt = observed.observedAt;
-      // Timestamp the observation with the TSA (synchronous → complete; no pending
-      // upgrade needed). The Bitcoin/math anchor for the key is the public archive's
-      // witness.co record (confirmKeyAtSigning below); the .eml carries the OTS anchor.
+      // F-6.7.1 / AC-169 — anchor the observation with BOTH anchors over the same
+      // key-record digest: the RFC 3161 token AND OpenTimestamps (Bitcoin). The old
+      // TSA-only rationale ("the key's Bitcoin/math anchor is the archive's witness.co
+      // record") is VOID: the archive runs no chain timestamping (it dropped that path
+      // in its rebuild — confirmed by the archive team 2026-07-15, zkemail/archive#46),
+      // so the first-party observation must carry its own un-backdatable anchor.
+      // Both stamps are fail-proof + deadline-bounded like the `.eml` anchors.
+      const keyDigest = keyRecordDigest(input.signingDomain, input.selector, observed.value);
       if (deps.tsaProvider) {
-        keyObsProof = await safeStamp(
-          deps.tsaProvider,
-          keyRecordDigest(input.signingDomain, input.selector, observed.value),
-          budgets.stamp,
-        );
+        keyObsProof = await safeStamp(deps.tsaProvider, keyDigest, budgets.stamp);
       }
+      keyObsOtsProof = await safeStamp(deps.timestampProvider, keyDigest, budgets.stamp);
     }
   }
 
@@ -188,6 +191,7 @@ export async function assembleSignatureArtifact(
     ots_proof: otsProof,
     tsa_token: tsaToken,
     key_obs_proof: keyObsProof,
+    key_obs_ots_proof: keyObsOtsProof,
     archive_status: archiveStatus,
     archive_confirmation: archiveConfirmation?.outcome ?? null,
     archive_confirmation_checked_at: archiveConfirmation ? new Date() : null,
