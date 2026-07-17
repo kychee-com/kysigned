@@ -8,7 +8,7 @@ import { HashCheckPage } from './pages/HashCheckPage'
 import { MarketingHomePage } from './pages/MarketingHomePage'
 import { PasskeysPage } from './pages/PasskeysPage'
 import { ApiKeysPage } from './pages/ApiKeysPage'
-import { AdminReconciliationPage } from './pages/AdminReconciliationPage'
+import { AdminConsolePage } from './pages/AdminConsolePage'
 import { AuthProvider } from './auth/AuthContext'
 import { RequireAuth } from './auth/RequireAuth'
 import { SignInScreen } from './auth/SignInScreen'
@@ -97,7 +97,7 @@ export function App() {
             path="/admin"
             element={
               <RequireAuth>
-                <AdminReconciliationPage />
+                <AdminConsolePage />
               </RequireAuth>
             }
           />
