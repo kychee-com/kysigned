@@ -11,9 +11,35 @@
  * is deterministic. Credit sums are micros returned as decimal strings (bigint).
  */
 import type { DbPool } from './pool.js';
+import { isInternalIdentity } from '../api/auth/internalIdentity.js';
 
 const H = 3_600_000;
 const D = 24 * H;
+
+/**
+ * F-35 — operator-view internal exclusion. The console's exclude-internal toggle
+ * (default on) drops the operator's own data from every page: an ENVELOPE is
+ * internal when its `internal_test` flag is set OR its creator matches a configured
+ * identity rule; an ACCOUNT-level row (credits / sessions / api-keys) is internal
+ * when its own email matches a rule. `excludeInternal:false` keeps everything.
+ */
+interface ExcludeOpts {
+  excludeInternal: boolean;
+  internalIdentities: readonly string[];
+}
+/** Resolve the toggle (default ON) + rules (default none) from a DAO's opts. */
+function resolveExclude(opts: { excludeInternal?: boolean; internalIdentities?: readonly string[] }): ExcludeOpts {
+  return { excludeInternal: opts.excludeInternal ?? true, internalIdentities: opts.internalIdentities ?? [] };
+}
+/** Drop this identity's account-level rows (credits / sessions / keys) from the view. */
+function identityDropped(email: string | null | undefined, ex: ExcludeOpts): boolean {
+  return ex.excludeInternal && isInternalIdentity(email, ex.internalIdentities);
+}
+/** Drop this envelope: the internal-test flag OR an internal creator identity. */
+function envDropped(e: { sender_email: string; internal_test?: boolean }, ex: ExcludeOpts): boolean {
+  if (!ex.excludeInternal) return false;
+  return Boolean(e.internal_test) || isInternalIdentity(e.sender_email, ex.internalIdentities);
+}
 
 /** In-window iff there is no lower bound, or the timestamp is at/after it. */
 function inWindow(ts: string | Date | null | undefined, since: Date | null): boolean {
@@ -33,25 +59,26 @@ export interface OverviewResult {
 }
 
 interface CreditRow { email: string; source: string; delta_usd_micros: number | string; created_at: string | Date }
-interface EnvRow { sender_email: string; status: string; created_at: string | Date; completed_at?: string | Date | null }
+interface EnvRow { sender_email: string; status: string; created_at: string | Date; completed_at?: string | Date | null; internal_test?: boolean }
 interface SessionRow { email: string; last_used_at: string | Date }
 interface UserRow { email: string; balance_usd_micros: number | string; created_at: string | Date }
 
 export async function getOverview(
   pool: DbPool,
-  opts: { since: Date | null; now: Date },
+  opts: { since: Date | null; now: Date; excludeInternal?: boolean; internalIdentities?: readonly string[] },
 ): Promise<OverviewResult> {
   const { since, now } = opts;
+  const ex = resolveExclude(opts);
   const [users, envelopes, ledger, sessions] = await Promise.all([
     pool.query('SELECT email, balance_usd_micros, created_at FROM user_credits'),
-    pool.query('SELECT sender_email, status, created_at, completed_at FROM envelopes WHERE internal_test = false'),
+    pool.query('SELECT sender_email, status, created_at, completed_at, internal_test FROM envelopes'),
     pool.query('SELECT email, source, delta_usd_micros, created_at FROM credit_ledger'),
     pool.query('SELECT email, last_used_at FROM auth_sessions'),
   ]);
-  const userRows = users.rows as UserRow[];
-  const envRows = envelopes.rows as EnvRow[];
-  const ledgerRows = ledger.rows as CreditRow[];
-  const sessionRows = sessions.rows as SessionRow[];
+  const userRows = (users.rows as UserRow[]).filter((u) => !identityDropped(u.email, ex));
+  const envRows = (envelopes.rows as EnvRow[]).filter((e) => !envDropped(e, ex));
+  const ledgerRows = (ledger.rows as CreditRow[]).filter((l) => !identityDropped(l.email, ex));
+  const sessionRows = (sessions.rows as SessionRow[]).filter((s) => !identityDropped(s.email, ex));
 
   const accountsOpened = userRows.filter((u) => inWindow(u.created_at, since)).length;
 
@@ -117,21 +144,22 @@ export interface AccountRow {
  */
 export async function getAccounts(
   pool: DbPool,
-  opts: { since: Date | null; now: Date },
+  opts: { since: Date | null; now: Date; excludeInternal?: boolean; internalIdentities?: readonly string[] },
 ): Promise<AccountRow[]> {
   const { since } = opts;
+  const ex = resolveExclude(opts);
   const [users, envelopes, ledger, sessions, keys] = await Promise.all([
     pool.query('SELECT email, balance_usd_micros, created_at FROM user_credits'),
-    pool.query('SELECT sender_email, status, created_at, completed_at FROM envelopes WHERE internal_test = false'),
+    pool.query('SELECT sender_email, status, created_at, completed_at, internal_test FROM envelopes'),
     pool.query('SELECT email, source, delta_usd_micros, created_at FROM credit_ledger'),
     pool.query('SELECT email, last_used_at FROM auth_sessions'),
     pool.query('SELECT creator_email, revoked_at FROM api_keys'),
   ]);
-  const userRows = users.rows as UserRow[];
-  const envRows = envelopes.rows as EnvRow[];
-  const ledgerRows = ledger.rows as CreditRow[];
-  const sessionRows = sessions.rows as SessionRow[];
-  const keyRows = keys.rows as ApiKeyRow[];
+  const userRows = (users.rows as UserRow[]).filter((u) => !identityDropped(u.email, ex));
+  const envRows = (envelopes.rows as EnvRow[]).filter((e) => !envDropped(e, ex));
+  const ledgerRows = (ledger.rows as CreditRow[]).filter((l) => !identityDropped(l.email, ex));
+  const sessionRows = (sessions.rows as SessionRow[]).filter((s) => !identityDropped(s.email, ex));
+  const keyRows = (keys.rows as ApiKeyRow[]).filter((k) => !identityDropped(k.creator_email, ex));
 
   const userByEmail = new Map(userRows.map((u) => [u.email, u]));
   const envByEmail = new Map<string, EnvRow[]>();
@@ -193,7 +221,7 @@ export async function getAccounts(
 
 interface EnvListRow {
   id: string; sender_email: string; document_name: string;
-  status: string; created_at: string | Date; completed_at?: string | Date | null;
+  status: string; created_at: string | Date; completed_at?: string | Date | null; internal_test?: boolean;
 }
 
 export interface EnvelopeFunnelResult {
@@ -217,13 +245,14 @@ export interface EnvelopeFunnelResult {
  */
 export async function getEnvelopeFunnel(
   pool: DbPool,
-  opts: { since: Date | null; now: Date },
+  opts: { since: Date | null; now: Date; excludeInternal?: boolean; internalIdentities?: readonly string[] },
 ): Promise<EnvelopeFunnelResult> {
   const { since, now } = opts;
+  const ex = resolveExclude(opts);
   const res = await pool.query(
-    'SELECT id, sender_email, document_name, status, created_at, completed_at FROM envelopes WHERE internal_test = false',
+    'SELECT id, sender_email, document_name, status, created_at, completed_at, internal_test FROM envelopes',
   );
-  const cohort = (res.rows as EnvListRow[]).filter((e) => inWindow(e.created_at, since));
+  const cohort = (res.rows as EnvListRow[]).filter((e) => !envDropped(e, ex) && inWindow(e.created_at, since));
 
   const created = cohort.length;
   const completed = cohort.filter((e) => e.status === 'completed').length;
@@ -284,16 +313,20 @@ export interface SignalsResult {
  * wallet if its creator ever funded via x402 — plus the count of identities holding
  * a non-revoked API key).
  */
-export async function getSignals(pool: DbPool, opts: { since: Date | null }): Promise<SignalsResult> {
+export async function getSignals(
+  pool: DbPool,
+  opts: { since: Date | null; excludeInternal?: boolean; internalIdentities?: readonly string[] },
+): Promise<SignalsResult> {
   const { since } = opts;
+  const ex = resolveExclude(opts);
   const [envs, signers, ledger, keys] = await Promise.all([
-    pool.query('SELECT id, sender_email, created_at FROM envelopes WHERE internal_test = false'),
+    pool.query('SELECT id, sender_email, created_at, internal_test FROM envelopes'),
     pool.query('SELECT envelope_id, status, undeliverable_at FROM envelope_signers'),
     pool.query('SELECT email, source FROM credit_ledger'),
     pool.query('SELECT creator_email, revoked_at FROM api_keys'),
   ]);
-  const inWindowEnvs = (envs.rows as Array<{ id: string; sender_email: string; created_at: string | Date }>)
-    .filter((e) => inWindow(e.created_at, since));
+  const inWindowEnvs = (envs.rows as Array<{ id: string; sender_email: string; created_at: string | Date; internal_test?: boolean }>)
+    .filter((e) => !envDropped(e, ex) && inWindow(e.created_at, since));
   const inWindowIds = new Set(inWindowEnvs.map((e) => String(e.id)));
 
   const relevantSigners = (signers.rows as SignerRow[]).filter((s) => inWindowIds.has(String(s.envelope_id)));
@@ -313,7 +346,9 @@ export async function getSignals(pool: DbPool, opts: { since: Date | null }): Pr
     else humanCreates += 1;
   }
   const apiKeyHolders = new Set(
-    (keys.rows as ApiKeyRow[]).filter((k) => k.revoked_at == null).map((k) => k.creator_email),
+    (keys.rows as ApiKeyRow[])
+      .filter((k) => k.revoked_at == null && !identityDropped(k.creator_email, ex))
+      .map((k) => k.creator_email),
   ).size;
 
   return { deliverability, agentAdoption: { walletCreates, humanCreates, apiKeyHolders } };

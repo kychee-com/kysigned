@@ -12,12 +12,14 @@ import {
   type IdentityType,
 } from '../db/allowedSenders.js';
 import { listOutstandingArchiveConfirmations } from '../db/signatureArtifacts.js';
-import { parseWindow } from './adminWindow.js';
+import { parseWindow, parseExcludeInternal } from './adminWindow.js';
 import { getOverview, getAccounts, getEnvelopeFunnel, getSignals } from '../db/adminAnalytics.js';
 
 export interface AdminContext {
   pool: DbPool;
   operator: string; // identity of the human/system making the change (audit trail)
+  /** F-35 — console internal-identity exclusion rules (from AppDeps.internalIdentities). */
+  internalIdentities?: readonly string[];
 }
 
 export interface AddAllowedSenderRequest {
@@ -97,10 +99,11 @@ export async function handleListArchiveConfirmations(ctx: AdminContext) {
  * KPIs (accounts opened, envelope funnel, credits summary, active users). The
  * `?window=` param normalizes via `parseWindow`; the applied window is echoed back.
  */
-export async function handleGetOverview(ctx: AdminContext, windowParam: string | null) {
+export async function handleGetOverview(ctx: AdminContext, windowParam: string | null, excludeInternalParam: string | null) {
   const w = parseWindow(windowParam);
-  const overview = await getOverview(ctx.pool, { since: w.since, now: new Date() });
-  return { status: 200, body: { window: w.key, ...overview } };
+  const excludeInternal = parseExcludeInternal(excludeInternalParam);
+  const overview = await getOverview(ctx.pool, { since: w.since, now: new Date(), excludeInternal, internalIdentities: ctx.internalIdentities ?? [] });
+  return { status: 200, body: { window: w.key, excludeInternal, ...overview } };
 }
 
 /**
@@ -108,10 +111,11 @@ export async function handleGetOverview(ctx: AdminContext, windowParam: string |
  * active in the window, with a Human/Agent(wallet) classification, per-identity
  * envelope counts, balance, last-seen, and joined.
  */
-export async function handleGetAccounts(ctx: AdminContext, windowParam: string | null) {
+export async function handleGetAccounts(ctx: AdminContext, windowParam: string | null, excludeInternalParam: string | null) {
   const w = parseWindow(windowParam);
-  const accounts = await getAccounts(ctx.pool, { since: w.since, now: new Date() });
-  return { status: 200, body: { window: w.key, accounts } };
+  const excludeInternal = parseExcludeInternal(excludeInternalParam);
+  const accounts = await getAccounts(ctx.pool, { since: w.since, now: new Date(), excludeInternal, internalIdentities: ctx.internalIdentities ?? [] });
+  return { status: 200, body: { window: w.key, excludeInternal, accounts } };
 }
 
 /**
@@ -119,18 +123,20 @@ export async function handleGetAccounts(ctx: AdminContext, windowParam: string |
  * (created/completed + rate, mean time-to-complete, in-process aging, void/expire)
  * plus a drill-down list, for the window.
  */
-export async function handleGetEnvelopes(ctx: AdminContext, windowParam: string | null) {
+export async function handleGetEnvelopes(ctx: AdminContext, windowParam: string | null, excludeInternalParam: string | null) {
   const w = parseWindow(windowParam);
-  const funnel = await getEnvelopeFunnel(ctx.pool, { since: w.since, now: new Date() });
-  return { status: 200, body: { window: w.key, ...funnel } };
+  const excludeInternal = parseExcludeInternal(excludeInternalParam);
+  const funnel = await getEnvelopeFunnel(ctx.pool, { since: w.since, now: new Date(), excludeInternal, internalIdentities: ctx.internalIdentities ?? [] });
+  return { status: 200, body: { window: w.key, excludeInternal, ...funnel } };
 }
 
 /**
  * F-34.5 (#148) — the operator console's signals: signer deliverability + agent
  * adoption for the window.
  */
-export async function handleGetSignals(ctx: AdminContext, windowParam: string | null) {
+export async function handleGetSignals(ctx: AdminContext, windowParam: string | null, excludeInternalParam: string | null) {
   const w = parseWindow(windowParam);
-  const signals = await getSignals(ctx.pool, { since: w.since });
-  return { status: 200, body: { window: w.key, ...signals } };
+  const excludeInternal = parseExcludeInternal(excludeInternalParam);
+  const signals = await getSignals(ctx.pool, { since: w.since, excludeInternal, internalIdentities: ctx.internalIdentities ?? [] });
+  return { status: 200, body: { window: w.key, excludeInternal, ...signals } };
 }

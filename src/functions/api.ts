@@ -552,22 +552,22 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
     }
     case 'adminOverview': {
       // F-34.2 / AC-183 — operator console Overview KPIs (gated above).
-      const r = await handleGetOverview(deps.adminCtx(actorEmail!), url.searchParams.get('window'));
+      const r = await handleGetOverview(deps.adminCtx(actorEmail!), url.searchParams.get('window'), url.searchParams.get('exclude_internal'));
       return json(r.body, r.status);
     }
     case 'adminAccounts': {
       // F-34.3 / AC-184-185 — operator console Accounts page (gated above).
-      const r = await handleGetAccounts(deps.adminCtx(actorEmail!), url.searchParams.get('window'));
+      const r = await handleGetAccounts(deps.adminCtx(actorEmail!), url.searchParams.get('window'), url.searchParams.get('exclude_internal'));
       return json(r.body, r.status);
     }
     case 'adminEnvelopes': {
       // F-34.4 / AC-186 — operator console Envelopes funnel (gated above).
-      const r = await handleGetEnvelopes(deps.adminCtx(actorEmail!), url.searchParams.get('window'));
+      const r = await handleGetEnvelopes(deps.adminCtx(actorEmail!), url.searchParams.get('window'), url.searchParams.get('exclude_internal'));
       return json(r.body, r.status);
     }
     case 'adminSignals': {
       // F-34.5 / AC-187 — operator console deliverability + agent-adoption signals (gated above).
-      const r = await handleGetSignals(deps.adminCtx(actorEmail!), url.searchParams.get('window'));
+      const r = await handleGetSignals(deps.adminCtx(actorEmail!), url.searchParams.get('window'), url.searchParams.get('exclude_internal'));
       return json(r.body, r.status);
     }
     case 'addAllowedSender': {

@@ -509,7 +509,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     // F-13.4 — fire the trial-credit grant on a confirmed magic-link sign-in.
     ...(signupGrantUsdMicros > 0n ? { signupGrantUsdMicros } : {}),
   });
-  const adminCtx = (operator: string): AdminContext => ({ pool, operator });
+  const adminCtx = (operator: string): AdminContext => ({ pool, operator, internalIdentities });
   const signerCtx = (): SignerApiCtx => ({ pool, getPdf, signingEmail });
 
   // ── cron dep builders ───────────────────────────────────────────────────────

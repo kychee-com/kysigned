@@ -41,10 +41,11 @@ export function createAdminAnalyticsMemoryPool(seed: AdminAnalyticsSeed = {}) {
       if (text.includes('FROM auth_sessions')) return ok(rows(seed.authSessions));
       if (text.includes('FROM api_keys')) return ok(rows(seed.apiKeys));
       if (text.includes('FROM envelope_signers')) return ok(rows(seed.signers));
-      // envelopes carries a WHERE internal_test = false — apply that one filter here
-      // so the DAO never has to see internal-test rows (F-3.7 exclusion).
+      // F-35: the envelopes SELECT no longer carries a WHERE — the DAO fetches ALL
+      // rows (incl. internal_test) and applies the exclude-internal filter in JS, so
+      // return every seeded row and let the DAO's own predicate decide.
       if (text.includes('FROM envelopes')) {
-        return ok(rows((seed.envelopes ?? []).filter((e) => !e.internal_test)));
+        return ok(rows(seed.envelopes ?? []));
       }
       return ok([]);
     },

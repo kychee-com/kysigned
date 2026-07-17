@@ -34,3 +34,16 @@ export function parseWindow(param: string | null | undefined, now: Date = new Da
   if (key === 'all') return { key, since: null };
   return { key, since: new Date(now.getTime() - INTERVALS[key]) };
 }
+
+/**
+ * F-35.1 — the operator-console exclude-internal toggle param (`?exclude_internal=`).
+ * The console default is ON (hide the operator's own data), so an ABSENT param means
+ * exclude. Only an explicit off value (`0` / `false` / `no`) turns exclusion off —
+ * anything else stays on, so a garbled value can never accidentally leak internal
+ * data into the default view.
+ */
+export function parseExcludeInternal(param: string | null | undefined): boolean {
+  if (param == null) return true;
+  const v = param.trim().toLowerCase();
+  return !(v === '0' || v === 'false' || v === 'no');
+}

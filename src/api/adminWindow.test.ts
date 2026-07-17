@@ -9,7 +9,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseWindow } from './adminWindow.js';
+import { parseWindow, parseExcludeInternal } from './adminWindow.js';
 
 const NOW = new Date('2026-07-17T12:00:00.000Z');
 const H = 3_600_000;
@@ -56,5 +56,25 @@ describe('parseWindow — F-34.1 / AC-182', () => {
     const r = parseWindow('garbage', NOW);
     assert.equal(r.key, '30d');
     assert.equal(r.since?.toISOString(), new Date(NOW.getTime() - 30 * D).toISOString());
+  });
+});
+
+describe('parseExcludeInternal — F-35.1 / AC-188 (default ON)', () => {
+  it('absent → true (the console default view is internal-excluded)', () => {
+    assert.equal(parseExcludeInternal(null), true);
+    assert.equal(parseExcludeInternal(undefined), true);
+  });
+
+  it('"0" / "false" / "no" → false (operator opted to see everything)', () => {
+    assert.equal(parseExcludeInternal('0'), false);
+    assert.equal(parseExcludeInternal('false'), false);
+    assert.equal(parseExcludeInternal('no'), false);
+    assert.equal(parseExcludeInternal('FALSE'), false);
+  });
+
+  it('"1" / "true" / anything else → true (default on)', () => {
+    assert.equal(parseExcludeInternal('1'), true);
+    assert.equal(parseExcludeInternal('true'), true);
+    assert.equal(parseExcludeInternal('yes'), true);
   });
 });

@@ -202,3 +202,70 @@ describe('getSignals — F-34.5 / AC-187', () => {
     assert.deepEqual(s.agentAdoption, { walletCreates: 1, humanCreates: 1, apiKeyHolders: 1 });
   });
 });
+
+describe('F-35 exclude-internal — the operator-view toggle (AC-188/189)', () => {
+  // An internal_test envelope, an internal-IDENTITY set (staff@kychee.com — matched
+  // by the @kychee.com rule) with its own account/ledger/session/key, and an
+  // external set (ext@customer.com) that must survive both toggle states.
+  const RULES = ['@kychee.com'];
+  const seed = {
+    userCredits: [
+      { email: 'ext@customer.com', balance_usd_micros: 500000, created_at: ago(5 * D) },
+      { email: 'staff@kychee.com', balance_usd_micros: 0, created_at: ago(5 * D) },
+    ],
+    envelopes: [
+      { sender_email: 'ext@customer.com', status: 'completed', created_at: ago(5 * D), completed_at: ago(4 * D) },
+      { sender_email: 'staff@kychee.com', status: 'active', created_at: ago(4 * D), completed_at: null }, // internal identity
+      { sender_email: 'ext@customer.com', status: 'active', created_at: ago(3 * D), completed_at: null, internal_test: true }, // internal_test flag
+    ],
+    creditLedger: [
+      { email: 'ext@customer.com', source: 'x402', delta_usd_micros: 250000, created_at: ago(5 * D) },
+      { email: 'staff@kychee.com', source: 'signup_grant', delta_usd_micros: 1000000, created_at: ago(5 * D) },
+    ],
+    authSessions: [
+      { email: 'ext@customer.com', last_used_at: ago(2 * 3_600_000) },
+      { email: 'staff@kychee.com', last_used_at: ago(2 * 3_600_000) },
+    ],
+    apiKeys: [{ creator_email: 'staff@kychee.com', revoked_at: null }],
+  };
+
+  it('toggle ON → Overview reflects only the external records (identity + internal_test excluded)', async () => {
+    const { pool } = createAdminAnalyticsMemoryPool(seed);
+    const ov = await getOverview(pool, { since: SINCE_30D, now: NOW, excludeInternal: true, internalIdentities: RULES });
+    assert.equal(ov.accountsOpened, 1); // only ext@ (staff excluded by identity)
+    assert.deepEqual(ov.envelopes, { created: 1, completed: 1, inProcess: 0 }); // ext completed only
+    assert.equal(ov.credits.paidInUsdMicros, '250000'); // ext x402
+    assert.equal(ov.credits.grantedUsdMicros, '0'); // staff's grant excluded
+    assert.deepEqual(ov.activeUsers, { dau: 1, wau: 1, mau: 1 }); // ext session only
+  });
+
+  it('toggle OFF → Overview additionally includes the internal records', async () => {
+    const { pool } = createAdminAnalyticsMemoryPool(seed);
+    const ov = await getOverview(pool, { since: SINCE_30D, now: NOW, excludeInternal: false, internalIdentities: RULES });
+    assert.equal(ov.accountsOpened, 2); // ext + staff
+    assert.deepEqual(ov.envelopes, { created: 3, completed: 1, inProcess: 2 }); // all three
+    assert.equal(ov.credits.grantedUsdMicros, '1000000'); // staff's grant now counted
+    assert.deepEqual(ov.activeUsers, { dau: 2, wau: 2, mau: 2 });
+  });
+
+  it('Accounts / Envelopes / Signals honor the toggle; the external identity survives both', async () => {
+    const { pool } = createAdminAnalyticsMemoryPool(seed);
+
+    const accOn = await getAccounts(pool, { since: SINCE_30D, now: NOW, excludeInternal: true, internalIdentities: RULES });
+    const accOff = await getAccounts(pool, { since: SINCE_30D, now: NOW, excludeInternal: false, internalIdentities: RULES });
+    assert.deepEqual(accOn.map((r) => r.email).sort(), ['ext@customer.com']);
+    assert.ok(accOff.map((r) => r.email).includes('staff@kychee.com'));
+    assert.ok(accOn.map((r) => r.email).includes('ext@customer.com'));
+    assert.ok(accOff.map((r) => r.email).includes('ext@customer.com')); // external never excluded
+
+    const fOn = await getEnvelopeFunnel(pool, { since: SINCE_30D, now: NOW, excludeInternal: true, internalIdentities: RULES });
+    const fOff = await getEnvelopeFunnel(pool, { since: SINCE_30D, now: NOW, excludeInternal: false, internalIdentities: RULES });
+    assert.equal(fOn.created, 1);
+    assert.equal(fOff.created, 3);
+
+    const sigOn = await getSignals(pool, { since: SINCE_30D, excludeInternal: true, internalIdentities: RULES });
+    const sigOff = await getSignals(pool, { since: SINCE_30D, excludeInternal: false, internalIdentities: RULES });
+    assert.equal(sigOn.agentAdoption.apiKeyHolders, 0); // staff's key excluded
+    assert.equal(sigOff.agentAdoption.apiKeyHolders, 1);
+  });
+});
