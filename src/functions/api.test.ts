@@ -1233,6 +1233,120 @@ describe('handleRequest — operator overview (F-34.2 / AC-183)', () => {
   });
 });
 
+// ── F-34.3 / AC-184-185 — the operator Accounts page ────────────────────────────
+describe('handleRequest — operator accounts (F-34.3 / AC-184, AC-185)', () => {
+  const cookie = () => `${SESSION_COOKIE}=${VALID_SESSION_ID}`;
+
+  it('a non-operator session is refused → 403 auth_operator_scope', async () => {
+    const res = await handleRequest(
+      req('GET', '/v1/admin/accounts?window=all', { headers: { cookie: cookie() } }),
+      makeDeps({ pool: validSessionPool('creator@example.com'), operatorEmails: ['op@kychee.com'] }),
+    );
+    assert.equal(res.status, 403);
+    assert.equal(((await res.json()) as { code: string }).code, 'auth_operator_scope');
+  });
+
+  it('an operator gets the classified accounts list → 200', async () => {
+    const res = await handleRequest(
+      req('GET', '/v1/admin/accounts?window=all', { headers: { cookie: cookie() } }),
+      makeDeps({
+        pool: validSessionPool('op@kychee.com'),
+        operatorEmails: ['op@kychee.com'],
+        adminCtx: (operator: string) => ({
+          pool: createAdminAnalyticsMemoryPool({
+            userCredits: [{ email: 'w@x.com', balance_usd_micros: 250000, created_at: '2026-07-14T00:00:00Z' }],
+            envelopes: [{ sender_email: 'w@x.com', status: 'active', created_at: '2026-07-14T00:00:00Z', completed_at: null }],
+            creditLedger: [{ email: 'w@x.com', source: 'x402', delta_usd_micros: 250000, created_at: '2026-07-14T00:00:00Z' }],
+          }).pool,
+          operator,
+        }),
+      }),
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { window: string; accounts: Array<{ email: string; kind: string; walletFunded: boolean }> };
+    assert.equal(body.window, 'all');
+    assert.equal(body.accounts.length, 1);
+    assert.equal(body.accounts[0].email, 'w@x.com');
+    assert.equal(body.accounts[0].kind, 'agent'); // x402 + no session
+    assert.equal(body.accounts[0].walletFunded, true);
+  });
+});
+
+// ── F-34.4 / AC-186 — the operator Envelopes funnel ─────────────────────────────
+describe('handleRequest — operator envelopes funnel (F-34.4 / AC-186)', () => {
+  const cookie = () => `${SESSION_COOKIE}=${VALID_SESSION_ID}`;
+
+  it('a non-operator session is refused → 403 auth_operator_scope', async () => {
+    const res = await handleRequest(
+      req('GET', '/v1/admin/envelopes?window=all', { headers: { cookie: cookie() } }),
+      makeDeps({ pool: validSessionPool('creator@example.com'), operatorEmails: ['op@kychee.com'] }),
+    );
+    assert.equal(res.status, 403);
+    assert.equal(((await res.json()) as { code: string }).code, 'auth_operator_scope');
+  });
+
+  it('an operator gets the funnel + drill-down list → 200', async () => {
+    const res = await handleRequest(
+      req('GET', '/v1/admin/envelopes?window=all', { headers: { cookie: cookie() } }),
+      makeDeps({
+        pool: validSessionPool('op@kychee.com'),
+        operatorEmails: ['op@kychee.com'],
+        adminCtx: (operator: string) => ({
+          pool: createAdminAnalyticsMemoryPool({
+            envelopes: [
+              { id: 'e1', sender_email: 'a@x.com', document_name: 'd', status: 'completed', created_at: '2026-07-10T00:00:00Z', completed_at: '2026-07-11T00:00:00Z' },
+              { id: 'e2', sender_email: 'a@x.com', document_name: 'd', status: 'active', created_at: '2026-07-15T00:00:00Z', completed_at: null },
+            ],
+          }).pool,
+          operator,
+        }),
+      }),
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { window: string; created: number; completed: number; list: unknown[] };
+    assert.equal(body.window, 'all');
+    assert.equal(body.created, 2);
+    assert.equal(body.completed, 1);
+    assert.equal(body.list.length, 2);
+  });
+});
+
+// ── F-34.5 / AC-187 — the operator signals ──────────────────────────────────────
+describe('handleRequest — operator signals (F-34.5 / AC-187)', () => {
+  const cookie = () => `${SESSION_COOKIE}=${VALID_SESSION_ID}`;
+
+  it('a non-operator session is refused → 403 auth_operator_scope', async () => {
+    const res = await handleRequest(
+      req('GET', '/v1/admin/signals?window=all', { headers: { cookie: cookie() } }),
+      makeDeps({ pool: validSessionPool('creator@example.com'), operatorEmails: ['op@kychee.com'] }),
+    );
+    assert.equal(res.status, 403);
+    assert.equal(((await res.json()) as { code: string }).code, 'auth_operator_scope');
+  });
+
+  it('an operator gets deliverability + agent-adoption → 200', async () => {
+    const res = await handleRequest(
+      req('GET', '/v1/admin/signals?window=all', { headers: { cookie: cookie() } }),
+      makeDeps({
+        pool: validSessionPool('op@kychee.com'),
+        operatorEmails: ['op@kychee.com'],
+        adminCtx: (operator: string) => ({
+          pool: createAdminAnalyticsMemoryPool({
+            envelopes: [{ id: 'e1', sender_email: 'w@x.com', status: 'active', created_at: '2026-07-14T00:00:00Z' }],
+            creditLedger: [{ email: 'w@x.com', source: 'x402', delta_usd_micros: 250000, created_at: '2026-07-14T00:00:00Z' }],
+            signers: [{ envelope_id: 'e1', status: 'signed', undeliverable_at: null }],
+          }).pool,
+          operator,
+        }),
+      }),
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { deliverability: { invited: number }; agentAdoption: { walletCreates: number } };
+    assert.equal(body.deliverability.invited, 1);
+    assert.equal(body.agentAdoption.walletCreates, 1);
+  });
+});
+
 // ── F-33.3 / AC-180 — the operator reconciliation read ──────────────────────────
 // GET /v1/admin/archive-confirmations is operator-gated and returns the outstanding
 // (non-clean) archive-confirmation backlog, shaped for the dashboard: envelope +

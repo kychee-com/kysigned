@@ -13,7 +13,7 @@ import {
 } from '../db/allowedSenders.js';
 import { listOutstandingArchiveConfirmations } from '../db/signatureArtifacts.js';
 import { parseWindow } from './adminWindow.js';
-import { getOverview } from '../db/adminAnalytics.js';
+import { getOverview, getAccounts, getEnvelopeFunnel, getSignals } from '../db/adminAnalytics.js';
 
 export interface AdminContext {
   pool: DbPool;
@@ -101,4 +101,36 @@ export async function handleGetOverview(ctx: AdminContext, windowParam: string |
   const w = parseWindow(windowParam);
   const overview = await getOverview(ctx.pool, { since: w.since, now: new Date() });
   return { status: 200, body: { window: w.key, ...overview } };
+}
+
+/**
+ * F-34.3 (#148) — the operator console's Accounts page: one row per identity
+ * active in the window, with a Human/Agent(wallet) classification, per-identity
+ * envelope counts, balance, last-seen, and joined.
+ */
+export async function handleGetAccounts(ctx: AdminContext, windowParam: string | null) {
+  const w = parseWindow(windowParam);
+  const accounts = await getAccounts(ctx.pool, { since: w.since, now: new Date() });
+  return { status: 200, body: { window: w.key, accounts } };
+}
+
+/**
+ * F-34.4 (#148) — the operator console's Envelopes page: the create-cohort funnel
+ * (created/completed + rate, mean time-to-complete, in-process aging, void/expire)
+ * plus a drill-down list, for the window.
+ */
+export async function handleGetEnvelopes(ctx: AdminContext, windowParam: string | null) {
+  const w = parseWindow(windowParam);
+  const funnel = await getEnvelopeFunnel(ctx.pool, { since: w.since, now: new Date() });
+  return { status: 200, body: { window: w.key, ...funnel } };
+}
+
+/**
+ * F-34.5 (#148) — the operator console's signals: signer deliverability + agent
+ * adoption for the window.
+ */
+export async function handleGetSignals(ctx: AdminContext, windowParam: string | null) {
+  const w = parseWindow(windowParam);
+  const signals = await getSignals(ctx.pool, { since: w.since });
+  return { status: 200, body: { window: w.key, ...signals } };
 }
