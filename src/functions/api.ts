@@ -36,6 +36,7 @@ import { matchRoute } from '../integrations/run402Router.js';
 import { csrfOk, resolveSession } from '../api/auth/session.js';
 import { resolveApiKey } from '../api/auth/apiKeyAuth.js';
 import { extractBearerKey } from '../api/auth/apiKeyAuth.js';
+import { isOperator } from '../api/auth/operator.js';
 import { resolveTrackingToken, TRACKING_TOKEN_PREFIX } from '../api/trackingToken.js';
 import { handleMintApiKey, handleListApiKeys, handleRevokeApiKey } from '../api/apiKeys.js';
 import { withCreateIdempotency } from '../api/idempotentCreate.js';
@@ -177,6 +178,20 @@ const BEARER_ROUTES: ReadonlySet<string> = new Set([
   'listDocuments',
 ]);
 
+/**
+ * Operator-only routes (F-33.1 / AC-177). A request is authorized iff its
+ * authenticated SESSION email is in the operator allowlist (fail-closed; empty ⇒
+ * nobody). These stay OUT of BEARER_ROUTES so a bearer key 403s (auth_key_scope)
+ * before the operator gate — operator authority is cookie-session only. Before
+ * #157 these routes had no operator check at all (any signed-in creator could
+ * read or mutate the F-3.6 allowlist); the gate below is that check.
+ */
+const OPERATOR_ROUTES: ReadonlySet<string> = new Set([
+  'listAllowedSenders',
+  'addAllowedSender',
+  'removeAllowedSender',
+]);
+
 export async function handleRequest(req: Request, deps: RequestDeps): Promise<Response> {
   // TR-018 / AC-137 — top-level error boundary. An unexpected throw from the auth
   // gate or ANY dispatched handler becomes a clean, taxonomy-coded 500
@@ -268,6 +283,17 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
       actorEmail = actor.email;
       actorSessionId = actor.sessionId;
     }
+  }
+
+  // ── OPERATOR GATE (F-33.1 / AC-177) ──────────────────────────────────────────
+  // Operator-only routes require the authenticated SESSION email to be in the
+  // operator-config allowlist (fail-closed; an empty/absent list authorizes
+  // nobody, so a fresh install and a fresh fork are locked — AC-181). Cookie-only:
+  // OPERATOR_ROUTES ⊄ BEARER_ROUTES, so a bearer key already answered 403
+  // (auth_key_scope) above. This closes #157 (AC-178): a signed-in non-operator
+  // creator could previously read/mutate the F-3.6 allowlist.
+  if (OPERATOR_ROUTES.has(name) && !isOperator(actorEmail, deps.operatorEmails ?? [])) {
+    return json({ error: 'Operator access required', code: 'auth_operator_scope' }, 403);
   }
   // F-29.6 — inbound MAILBOX email is no longer an app webhook route: run402
   // creates a `reply_received` / `bounced` durable run via an EMAIL TRIGGER,

@@ -1119,3 +1119,76 @@ describe('tracking-token observer (F-30.7, AC-173/AC-174)', () => {
     assert.equal(res.status, 200);
   });
 });
+
+// ── F-33.1 / AC-177 + AC-178 — the operator gate on /v1/admin/* ─────────────────
+// The F-3.6 allowlist-management endpoints are operator-only. Before #157 any
+// signed-in creator could reach them (the "operator-gated in the handler" comment
+// gated nothing); the gate now refuses a non-operator SESSION with 403
+// `auth_operator_scope`, is fail-closed on an empty allowlist, and still refuses a
+// bearer key with 403 `auth_key_scope` (allowed-senders are out of BEARER_ROUTES).
+describe('handleRequest — operator gate (F-33.1 / AC-177, AC-178, #157)', () => {
+  const CSRF = () => ({ 'content-type': 'application/json' } as Record<string, string>);
+  const cookie = () => `${SESSION_COOKIE}=${VALID_SESSION_ID}`;
+
+  it('a signed-in NON-operator creator is refused GET /v1/admin/allowed-senders → 403 auth_operator_scope (#157)', async () => {
+    const res = await handleRequest(
+      req('GET', '/v1/admin/allowed-senders', { headers: { cookie: cookie() } }),
+      makeDeps({ pool: validSessionPool('creator@example.com'), operatorEmails: ['op@kychee.com'] }),
+    );
+    assert.equal(res.status, 403);
+    assert.equal(((await res.json()) as { code: string }).code, 'auth_operator_scope');
+  });
+
+  it('a signed-in NON-operator creator is refused POST /v1/admin/allowed-senders → 403 auth_operator_scope (#157)', async () => {
+    const res = await handleRequest(
+      req('POST', '/v1/admin/allowed-senders', {
+        headers: { cookie: cookie(), [CSRF_HEADER]: '1', ...CSRF() },
+        body: JSON.stringify({ identity_type: 'email', identity: 'x@y.com', quota_per_month: null }),
+      }),
+      makeDeps({ pool: validSessionPool('creator@example.com'), operatorEmails: ['op@kychee.com'] }),
+    );
+    assert.equal(res.status, 403);
+    assert.equal(((await res.json()) as { code: string }).code, 'auth_operator_scope');
+  });
+
+  it('a signed-in NON-operator creator is refused DELETE /v1/admin/allowed-senders/:id → 403 auth_operator_scope (#157)', async () => {
+    const res = await handleRequest(
+      req('DELETE', '/v1/admin/allowed-senders/row-1?identity_type=email&identity=x@y.com', {
+        headers: { cookie: cookie(), [CSRF_HEADER]: '1' },
+      }),
+      makeDeps({ pool: validSessionPool('creator@example.com'), operatorEmails: ['op@kychee.com'] }),
+    );
+    assert.equal(res.status, 403);
+    assert.equal(((await res.json()) as { code: string }).code, 'auth_operator_scope');
+  });
+
+  it('FAIL-CLOSED — an empty operator allowlist refuses even an operator-looking session → 403', async () => {
+    const res = await handleRequest(
+      req('GET', '/v1/admin/allowed-senders', { headers: { cookie: cookie() } }),
+      makeDeps({ pool: validSessionPool('op@kychee.com'), operatorEmails: [] }),
+    );
+    assert.equal(res.status, 403);
+    assert.equal(((await res.json()) as { code: string }).code, 'auth_operator_scope');
+  });
+
+  it('an operator session reaches the handler → 200', async () => {
+    const res = await handleRequest(
+      req('GET', '/v1/admin/allowed-senders', { headers: { cookie: cookie() } }),
+      makeDeps({
+        pool: validSessionPool('op@kychee.com'),
+        operatorEmails: ['op@kychee.com'],
+        adminCtx: (operator: string) => ({ pool: makePool(() => []).pool, operator }),
+      }),
+    );
+    assert.equal(res.status, 200);
+  });
+
+  it('a bearer key is still refused on an operator route → 403 auth_key_scope (out of BEARER_ROUTES)', async () => {
+    const res = await handleRequest(
+      req('GET', '/v1/admin/allowed-senders', { headers: { authorization: 'ksk_deadbeef' } }),
+      makeDeps({ operatorEmails: ['op@kychee.com'] }),
+    );
+    assert.equal(res.status, 403);
+    assert.equal(((await res.json()) as { code: string }).code, 'auth_key_scope');
+  });
+});

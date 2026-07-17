@@ -65,6 +65,18 @@ describe('buildAppDeps — F-32.7/F-16.6 operator alert address', () => {
   });
 });
 
+describe('buildAppDeps — F-33.1 operator allowlist', () => {
+  it('KYSIGNED_OPERATOR_EMAILS parses to the operator allowlist', () => {
+    const deps = buildAppDeps({ ...baseEnv, KYSIGNED_OPERATOR_EMAILS: 'op@kychee.com, ops2@kychee.com' }, fakeRuntime());
+    assert.deepEqual(deps.operatorEmails, ['op@kychee.com', 'ops2@kychee.com']);
+  });
+
+  it('unset → empty allowlist (fail-closed: a fresh install/fork has no operators, AC-181)', () => {
+    const deps = buildAppDeps(baseEnv, fakeRuntime());
+    assert.deepEqual(deps.operatorEmails, []);
+  });
+});
+
 describe('buildAppDeps — run402 up generated env', () => {
   it('uses generated Run402 origin and mailbox ids for clone deployments', () => {
     const deps = buildAppDeps(

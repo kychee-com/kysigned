@@ -125,6 +125,8 @@ export interface AppEnv {
   KYSIGNED_ALLOWED_CREATORS?: string;
   /** Optional comma-list of login-email domains allowed internal-test envelopes (F-3.7). */
   KYSIGNED_INTERNAL_TEST_DOMAINS?: string;
+  /** F-33.1 `[both]` — optional comma-list of operator emails (the `/admin` operator surface). Empty/unset = fail-closed (no operators). */
+  KYSIGNED_OPERATOR_EMAILS?: string;
   /**
    * Our signing mailbox id (the `forward-to-sign` mailbox). run402 MAILBOX
    * webhooks are UNSIGNED, so the inbound webhook authenticates by the payload
@@ -272,6 +274,8 @@ export interface AppDeps {
   unsubscribeMailto: string;
   /** F-32.7/F-16.6 — operator alert recipient (default info@<operatorDomain>; kysigned.com routes externally, #149 interim). */
   operatorAlertEmail: string;
+  /** F-33.1 `[both]` — operator allowlist: a session whose authenticated email is a member is an operator. Empty = fail-closed (nobody); kysigned.com's list is `[service]` config set in the private deploy. */
+  operatorEmails?: string[];
   /** F-9.9 / AC-124 — delivery-confirmation backstop window as a run `delay` string (e.g. "24h"). */
   deliveryBackstop: string;
   /** F-16.6 / AC-97 — trial-credit abuse-monitor alert threshold (grants per 24h; 0 disables alerting). */
@@ -334,6 +338,9 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
   const notificationMailboxId = env.KYSIGNED_NOTIFICATION_MAILBOX_ID ?? env.RUN402_MAILBOX_NOTIFICATIONS_ID;
   const allowedCreators = csv(env.KYSIGNED_ALLOWED_CREATORS);
   const internalTestDomains = csv(env.KYSIGNED_INTERNAL_TEST_DOMAINS);
+  // F-33.1 `[both]` — operator allowlist for the /admin operator surface; empty =
+  // fail-closed (no operators). kysigned.com's list is `[service]`, set in deploy.ts.
+  const operatorEmails = csv(env.KYSIGNED_OPERATOR_EMAILS) ?? [];
 
   const pool = createHttpDbPool(runtime.adminDb);
   const emailProvider = createRunEmailProvider({
@@ -621,6 +628,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     unsubscribeMailto,
     signupGrantAlertThreshold,
     operatorAlertEmail,
+    operatorEmails,
     projectId,
     getPdf,
     storePdf,
