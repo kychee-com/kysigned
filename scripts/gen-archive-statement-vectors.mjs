@@ -17,12 +17,12 @@
  * vector is committed once and checked by OUTCOME, not bytes (the test excludes it
  * from the byte-reproduce lock and marks it `deterministic: false`).
  *
- * Run:  node --input-type=module scripts/gen-archive-statement-vectors.mjs
+ * Run:  node scripts/gen-archive-statement-vectors.mjs   (writes ONLY on explicit run, #156)
  */
 import { CompactSign, importJWK, exportJWK, generateKeyPair } from 'jose';
 import { writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'docs', 'test-assets', 'archive-statement-vectors.json');
 
@@ -110,6 +110,15 @@ export async function buildVectors() {
   };
 }
 
-const built = await buildVectors();
-writeFileSync(OUT, JSON.stringify(built, null, 2) + '\n');
-console.log(`wrote ${built.vectors.length} vectors → ${OUT}`);
+// #156 — write ONLY when run as an explicit script
+// (`node scripts/gen-archive-statement-vectors.mjs`), NEVER on import. The
+// suite imports `buildVectors` (pure); an unconditional top-level write re-signs
+// the randomized ES256/unknown-key vectors on every `npm test`, dirtying the
+// tracked fixture. `pathToFileURL` is the cross-platform main-module idiom (a
+// hand-built file:/// URL breaks on posix — see scripts/test-all.mjs).
+const isMainModule = process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false;
+if (isMainModule) {
+  const built = await buildVectors();
+  writeFileSync(OUT, JSON.stringify(built, null, 2) + '\n');
+  console.log(`wrote ${built.vectors.length} vectors → ${OUT}`);
+}
