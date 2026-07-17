@@ -120,6 +120,7 @@ export const API_ROUTES: RouteDef[] = [
   // ── admin allowlist (session, operator-gated in the handler) ─────────────
   { method: 'GET', pattern: '/v1/admin/allowed-senders', name: 'listAllowedSenders', auth: 'session' },
   { method: 'GET', pattern: '/v1/admin/archive-confirmations', name: 'listArchiveConfirmations', auth: 'session' },
+  { method: 'GET', pattern: '/v1/admin/overview', name: 'adminOverview', auth: 'session' },
   { method: 'POST', pattern: '/v1/admin/allowed-senders', name: 'addAllowedSender', auth: 'session' },
   { method: 'DELETE', pattern: '/v1/admin/allowed-senders/:id', name: 'removeAllowedSender', auth: 'session' },
 

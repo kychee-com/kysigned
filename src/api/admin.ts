@@ -12,6 +12,8 @@ import {
   type IdentityType,
 } from '../db/allowedSenders.js';
 import { listOutstandingArchiveConfirmations } from '../db/signatureArtifacts.js';
+import { parseWindow } from './adminWindow.js';
+import { getOverview } from '../db/adminAnalytics.js';
 
 export interface AdminContext {
   pool: DbPool;
@@ -88,4 +90,15 @@ export async function handleListArchiveConfirmations(ctx: AdminContext) {
     created_at: a.created_at.toISOString(),
   }));
   return { status: 200, body: { outstanding } };
+}
+
+/**
+ * F-34.2 (#148) — the operator console's Overview page: window-scoped headline
+ * KPIs (accounts opened, envelope funnel, credits summary, active users). The
+ * `?window=` param normalizes via `parseWindow`; the applied window is echoed back.
+ */
+export async function handleGetOverview(ctx: AdminContext, windowParam: string | null) {
+  const w = parseWindow(windowParam);
+  const overview = await getOverview(ctx.pool, { since: w.since, now: new Date() });
+  return { status: 200, body: { window: w.key, ...overview } };
 }

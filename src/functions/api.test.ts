@@ -14,6 +14,7 @@ import { handleRequest, type RequestDeps } from './api.js';
 import type { AppDeps } from './config.js';
 import type { DbPool } from '../db/pool.js';
 import { CSRF_HEADER, SESSION_COOKIE } from '../api/auth/session.js';
+import { createAdminAnalyticsMemoryPool } from '../db/adminAnalytics.testpool.js';
 
 // ── a recording fake DbPool ──────────────────────────────────────────────────
 interface RecordedQuery {
@@ -1190,6 +1191,45 @@ describe('handleRequest — operator gate (F-33.1 / AC-177, AC-178, #157)', () =
     );
     assert.equal(res.status, 403);
     assert.equal(((await res.json()) as { code: string }).code, 'auth_key_scope');
+  });
+});
+
+// ── F-34.2 / AC-183 — the operator overview KPIs ────────────────────────────────
+describe('handleRequest — operator overview (F-34.2 / AC-183)', () => {
+  const cookie = () => `${SESSION_COOKIE}=${VALID_SESSION_ID}`;
+
+  it('a non-operator session is refused → 403 auth_operator_scope', async () => {
+    const res = await handleRequest(
+      req('GET', '/v1/admin/overview?window=30d', { headers: { cookie: cookie() } }),
+      makeDeps({ pool: validSessionPool('creator@example.com'), operatorEmails: ['op@kychee.com'] }),
+    );
+    assert.equal(res.status, 403);
+    assert.equal(((await res.json()) as { code: string }).code, 'auth_operator_scope');
+  });
+
+  it('an operator gets the overview KPIs + the echoed window → 200', async () => {
+    const res = await handleRequest(
+      req('GET', '/v1/admin/overview?window=all', { headers: { cookie: cookie() } }),
+      makeDeps({
+        pool: validSessionPool('op@kychee.com'),
+        operatorEmails: ['op@kychee.com'],
+        adminCtx: (operator: string) => ({
+          pool: createAdminAnalyticsMemoryPool({
+            userCredits: [{ email: 'a@x.com', balance_usd_micros: 750000, created_at: '2026-07-10T00:00:00Z' }],
+            envelopes: [{ sender_email: 'a@x.com', status: 'completed', created_at: '2026-07-10T00:00:00Z', completed_at: '2026-07-11T00:00:00Z' }],
+          }).pool,
+          operator,
+        }),
+      }),
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      window: string; accountsOpened: number; envelopes: Record<string, number>; credits: unknown; activeUsers: unknown;
+    };
+    assert.equal(body.window, 'all');
+    assert.equal(body.accountsOpened, 1);
+    assert.deepEqual(body.envelopes, { created: 1, completed: 1, inProcess: 0 });
+    assert.ok(body.credits && body.activeUsers);
   });
 });
 
