@@ -16,13 +16,13 @@ import { apiGet, ApiError, formatUsd } from '../lib/api';
 import { AdminReconciliationPage } from './AdminReconciliationPage';
 
 type WindowKey = '24h' | '7d' | '30d' | '365d' | 'all';
-type TabKey = 'overview' | 'accounts' | 'envelopes' | 'reconciliation';
+type TabKey = 'overview' | 'accounts' | 'envelopes' | 'signals' | 'reconciliation';
 
 const WINDOWS: Array<[WindowKey, string]> = [
   ['24h', '24h'], ['7d', '7 days'], ['30d', '30 days'], ['365d', '1 year'], ['all', 'All time'],
 ];
 const TABS: Array<[TabKey, string]> = [
-  ['overview', 'Overview'], ['accounts', 'Accounts'], ['envelopes', 'Envelopes'], ['reconciliation', 'Reconciliation'],
+  ['overview', 'Overview'], ['accounts', 'Accounts'], ['envelopes', 'Envelopes'], ['signals', 'Signals'], ['reconciliation', 'Reconciliation'],
 ];
 
 interface Fetched<T> { data: T | null; loading: boolean; denied: boolean; error: string }
@@ -205,6 +205,28 @@ function EnvelopesTab({ window }: { window: WindowKey }) {
   );
 }
 
+interface Signals {
+  deliverability: { invited: number; signed: number; undeliverable: number };
+  agentAdoption: { walletCreates: number; humanCreates: number; apiKeyHolders: number };
+}
+
+function SignalsTab({ window }: { window: WindowKey }) {
+  const { data, loading, denied, error } = useAdminData<Signals>('/v1/admin/signals', window);
+  if (denied) return <Denied />;
+  if (loading) return <Spinner />;
+  if (error || !data) return <p className="text-sm text-red-700 py-8 text-center" data-testid="admin-error">{error || 'Failed to load'}</p>;
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-3" data-testid="admin-signals">
+      <Tile id="delivInvited" label="Signers invited" value={data.deliverability.invited} />
+      <Tile id="delivSigned" label="Signed" value={data.deliverability.signed} />
+      <Tile id="delivUndeliverable" label="Undeliverable" value={data.deliverability.undeliverable} />
+      <Tile id="walletCreates" label="Wallet-agent creates" value={data.agentAdoption.walletCreates} />
+      <Tile id="humanCreates" label="Human creates" value={data.agentAdoption.humanCreates} />
+      <Tile id="apiKeyHolders" label="API-key holders" value={data.agentAdoption.apiKeyHolders} />
+    </div>
+  );
+}
+
 export function AdminConsolePage() {
   const [tab, setTab] = useState<TabKey>('overview');
   const [window, setWindow] = useState<WindowKey>('30d');
@@ -245,6 +267,7 @@ export function AdminConsolePage() {
       {tab === 'overview' && <OverviewTab window={window} />}
       {tab === 'accounts' && <AccountsTab window={window} />}
       {tab === 'envelopes' && <EnvelopesTab window={window} />}
+      {tab === 'signals' && <SignalsTab window={window} />}
       {tab === 'reconciliation' && <AdminReconciliationPage />}
     </div>
   );

@@ -71,6 +71,17 @@ describe('AdminConsolePage (F-34, #148)', () => {
     expect(screen.getByTestId('admin-account-programmatic-p@x.com')).toBeInTheDocument();
   });
 
+  it('the Signals tab surfaces deliverability + agent-adoption (AC-187)', async () => {
+    const signals = { window: '30d', deliverability: { invited: 4, signed: 3, undeliverable: 1 }, agentAdoption: { walletCreates: 2, humanCreates: 5, apiKeyHolders: 1 } };
+    vi.stubGlobal('fetch', mockFetchByPath({ '/v1/admin/overview': overview, '/v1/admin/signals': signals }));
+    render(<MemoryRouter><AdminConsolePage /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId('admin-kpi-accountsOpened')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('admin-tab-signals'));
+    await waitFor(() => expect(screen.getByTestId('admin-signals')).toBeInTheDocument());
+    expect(screen.getByTestId('admin-kpi-delivUndeliverable')).toHaveTextContent('1');
+    expect(screen.getByTestId('admin-kpi-walletCreates')).toHaveTextContent('2');
+  });
+
   it('a 403 from the operator gate shows access-denied, not data (AC-179)', async () => {
     vi.stubGlobal('fetch', mockFetchByPath({ '/v1/admin/overview': 403 }));
     render(<MemoryRouter><AdminConsolePage /></MemoryRouter>);
