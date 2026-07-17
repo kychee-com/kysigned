@@ -294,6 +294,9 @@ export interface AppDeps {
   /** F-30.2 — parse the gateway-settled payment context off a routed request (runtime-injected). */
   readPaymentContext?: (req: Request) => RoutedHttpPaymentContextV1 | null;
 
+  /** #146 — bounded readiness probes for GET /v1/health?deep=1 (db + signing mailbox). */
+  healthChecks: () => { checkDb: () => Promise<void>; checkMailbox: () => Promise<void> };
+
   // per-request / per-sweep ctx factories
   apiContext: (creatorEmail: string) => ApiContext;
   authCtx: () => AuthHandlerCtx;
@@ -315,7 +318,6 @@ export interface AppDeps {
  */
 export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
   const apiBase = env.RUN402_API_BASE ?? env.RUN402_API_BASE_URL ?? 'https://api.run402.com';
-  void apiBase; // the SDK client is constructed by the entry; kept for documentation/parity.
   const projectId = requireEnv(env, 'RUN402_PROJECT_ID');
   const baseUrl = env.KYSIGNED_BASE_URL ?? env.RUN402_PUBLIC_ORIGIN ?? 'https://kysigned.com';
   const baseUrlParsed = new URL(baseUrl);
@@ -437,6 +439,30 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
   const getPdf = (key: string) => getPdfBlob(pool, key);
   const storePdf = (key: string, data: Uint8Array) => storePdfBlob(pool, key, data);
   const deletePdf = (key: string) => deletePdfBlob(pool, key);
+
+  // #146 — readiness probes for GET /v1/health?deep=1. Bounded by the handler's
+  // timeout; results surface only as ok/fail/timeout (public endpoint).
+  const serviceKey = env.RUN402_SERVICE_KEY ?? '';
+  const healthChecks = () => ({
+    checkDb: async () => {
+      await pool.query('SELECT 1');
+    },
+    checkMailbox: async () => {
+      // A forker without a pinned signing mailbox has nothing to probe — the
+      // check degrades to liveness parity rather than failing their readiness.
+      if (!signingMailboxId) return;
+      const res = await fetch(`${apiBase}/mailboxes/v1`, {
+        headers: { Authorization: `Bearer ${serviceKey}` },
+      });
+      if (!res.ok) throw new Error(`mailboxes read failed (${res.status})`);
+      const body = (await res.json()) as { mailboxes?: Array<{ mailbox_id: string; status?: string }> };
+      const mbx = (body.mailboxes ?? []).find((m) => m.mailbox_id === signingMailboxId);
+      if (!mbx) throw new Error('signing mailbox not found in project');
+      // #134-class: a suspended signing mailbox is a production outage — the
+      // exact state the liveness-only /v1/health served green through.
+      if (mbx.status && mbx.status !== 'active') throw new Error(`signing mailbox status ${mbx.status}`);
+    },
+  });
 
   // ── per-request ctx factories ──────────────────────────────────────────────
   const apiContext = (creatorEmail: string): ApiContext => ({
@@ -606,6 +632,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     ...(testResetPattern ? { testResetPattern } : {}),
     ...(x402 ? { x402 } : {}),
     ...(runtime.readPaymentContext ? { readPaymentContext: runtime.readPaymentContext } : {}),
+    healthChecks,
     apiContext,
     authCtx,
     adminCtx,

@@ -92,6 +92,7 @@ function makeDeps(over: Partial<RequestDeps> = {}): RequestDeps {
     storePdf: async () => {},
     deletePdf: async () => {},
     fetchRawMime: async () => null,
+    healthChecks: () => ({ checkDb: async () => {}, checkMailbox: async () => {} }),
     apiContext: thrower('apiContext') as never,
     authCtx: thrower('authCtx') as never,
     adminCtx: thrower('adminCtx') as never,
@@ -119,9 +120,55 @@ describe('handleRequest — routing + auth gate', () => {
   it('dispatches a public route (health) with no auth', async () => {
     const res = await handleRequest(req('GET', '/v1/health'), makeDeps());
     assert.equal(res.status, 200);
-    const body = (await res.json()) as { status: string; service: string };
+    const body = (await res.json()) as { status: string; service: string; checks?: unknown };
     assert.equal(body.status, 'ok');
     assert.equal(body.service, 'kysigned');
+    assert.equal(body.checks, undefined, '#146: the BARE liveness body is untouched (forker verify.http)');
+  });
+
+  it('#146 — /v1/health?deep=1 runs the readiness probes and reports named checks', async () => {
+    const res = await handleRequest(req('GET', '/v1/health?deep=1'), makeDeps());
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { status: string; checks: { db: string; mailbox: string } };
+    assert.equal(body.status, 'ok');
+    assert.deepEqual(body.checks, { db: 'ok', mailbox: 'ok' });
+  });
+
+  it('#146 — a dead DB turns ?deep=1 into a 503 naming the db check (mailbox still reported)', async () => {
+    const res = await handleRequest(
+      req('GET', '/v1/health?deep=1'),
+      makeDeps({
+        healthChecks: () => ({
+          checkDb: async () => {
+            throw new Error('connection refused');
+          },
+          checkMailbox: async () => {},
+        }),
+      }),
+    );
+    assert.equal(res.status, 503);
+    const body = (await res.json()) as { status: string; checks: { db: string; mailbox: string } };
+    assert.equal(body.status, 'degraded');
+    assert.equal(body.checks.db, 'fail');
+    assert.equal(body.checks.mailbox, 'ok');
+  });
+
+  it('#146 — a suspended signing mailbox turns ?deep=1 into a 503 naming the mailbox check', async () => {
+    const res = await handleRequest(
+      req('GET', '/v1/health?deep=1'),
+      makeDeps({
+        healthChecks: () => ({
+          checkDb: async () => {},
+          checkMailbox: async () => {
+            throw new Error('signing mailbox status suspended');
+          },
+        }),
+      }),
+    );
+    assert.equal(res.status, 503);
+    const body = (await res.json()) as { checks: { db: string; mailbox: string } };
+    assert.equal(body.checks.db, 'ok');
+    assert.equal(body.checks.mailbox, 'fail');
   });
 
   it('a session route with NO cookie → 401', async () => {

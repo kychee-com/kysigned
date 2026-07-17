@@ -40,7 +40,7 @@ import { withCreateIdempotency } from '../api/idempotentCreate.js';
 import { handleX402CreateEnvelope, defaultX402Seams } from '../api/x402Create.js';
 import { handleCreatePreflight } from '../api/createPreflight.js';
 import { buildHostedSenderGate } from '../api/billingGate.js';
-import { handleHealth } from '../api/health.js';
+import { handleHealth, handleDeepHealth } from '../api/health.js';
 import {
   handleAuthMagicLink,
   handleAuthTokenExchange,
@@ -251,6 +251,13 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
   switch (name) {
     // ── health (public) ──
     case 'health': {
+      // #146 — ?deep=1 = readiness (bounded db + signing-mailbox probes, 503
+      // with the failing check named). The BARE body stays liveness-only —
+      // the forker-manifest verify.http pins it.
+      if (url.searchParams.get('deep') === '1') {
+        const r = await handleDeepHealth({ ...deps.healthChecks(), timeoutMs: 2_000 });
+        return json(r.body, r.status);
+      }
       const r = handleHealth();
       return json(r.body, r.status);
     }
