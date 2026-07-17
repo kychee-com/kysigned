@@ -9,6 +9,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildAppDeps, type AppEnv, type Run402Runtime } from './config.js';
 import { isOperator } from '../api/auth/operator.js';
+import { isInternalIdentity } from '../api/auth/internalIdentity.js';
 
 type SentEmail = {
   projectId: string;
@@ -105,6 +106,25 @@ describe('buildAppDeps — F-35 internal-identity list', () => {
   it('unset → empty list (fork default: the exclude-internal toggle then hides only internal_test)', () => {
     const deps = buildAppDeps(baseEnv, fakeRuntime());
     assert.deepEqual(deps.internalIdentities, []);
+  });
+});
+
+describe('F-35.5 / AC-192 — forkable exclude-internal, empty by default', () => {
+  it('a fresh fork (no internal-identity config) ships an EMPTY list → excludes no identity', () => {
+    const deps = buildAppDeps(baseEnv, fakeRuntime());
+    assert.deepEqual(deps.internalIdentities, []); // the public template bakes in NO identity
+    assert.equal(isInternalIdentity('barry@kychee.com', deps.internalIdentities ?? []), false);
+    assert.equal(isInternalIdentity('anyone@fork.example', deps.internalIdentities ?? []), false);
+  });
+
+  it('a fork starts excluding an identity purely by configuring its own list (no code change)', () => {
+    const deps = buildAppDeps(
+      { ...baseEnv, KYSIGNED_INTERNAL_IDENTITIES: '@lawfirm.example, redteam-*@lawfirm.example' },
+      fakeRuntime(),
+    );
+    assert.equal(isInternalIdentity('ops@lawfirm.example', deps.internalIdentities ?? []), true);
+    assert.equal(isInternalIdentity('redteam-bot@lawfirm.example', deps.internalIdentities ?? []), true);
+    assert.equal(isInternalIdentity('client@customer.example', deps.internalIdentities ?? []), false);
   });
 });
 
