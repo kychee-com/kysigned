@@ -19,6 +19,11 @@
         "in": "cookie",
         "name": "kysigned_session",
         "description": "The browser session cookie (magic-link or passkey sign-in). Unsafe methods additionally require the `X-Kysigned-Csrf` header."
+      },
+      "trackingToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "An envelope-scoped, READ-ONLY tracking token (`ktt_…`) returned in every create response's `tracking.token` (F-30.7). Sent in the Authorization header (bare or `Bearer`), it authorizes GET /v1/envelope/{id} for exactly its own envelope — no account, API key, or session. Any other envelope id answers 404; every mutating/listing/download route refuses it (403 auth_tracking_scope)."
       }
     },
     "schemas": {
@@ -205,7 +210,7 @@
       "get": {
         "summary": "Envelope status: per-signer signing state, signed times, delivery_status",
         "description": "Three accepted authorities: creator session, creator API key (ksk_…), or the envelope's OWN tracking token (ktt_…, from the create response's `tracking.token`) sent as the Authorization header. The tracking token is the read-only observer path (F-30.7): no account needed, full signer roster returned, exactly this envelope readable — any other envelope id answers the same 404 a stranger gets, and the token is refused (403 auth_tracking_scope) by every mutating or listing route.",
-        "security": [{ "apiKey": [] }, { "session": [] }],
+        "security": [{ "apiKey": [] }, { "session": [] }, { "trackingToken": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Status", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EnvelopeStatus" } } } }, "404": { "$ref": "#/components/responses/Error" } }
       }
