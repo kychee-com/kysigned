@@ -252,7 +252,7 @@ export function AdminConsolePage() {
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h1 className="text-2xl font-semibold">Operator console</h1>
         {tab !== 'reconciliation' && (
-          <div className="flex gap-1" role="group" aria-label="Time window">
+          <div className="flex flex-wrap gap-1" role="group" aria-label="Time window">
             {WINDOWS.map(([key, label]) => (
               <button
                 key={key}
@@ -267,12 +267,12 @@ export function AdminConsolePage() {
         )}
       </div>
 
-      <div className="flex gap-1 border-b border-gray-200 mb-6">
+      <div className="flex gap-1 border-b border-gray-200 mb-6 overflow-x-auto">
         {TABS.map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
-            className={`text-sm px-3 py-2 -mb-px border-b-2 ${tab === key ? 'border-gray-900 font-medium' : 'border-transparent text-gray-600 hover:text-gray-900'}`}
+            className={`text-sm px-3 py-2 -mb-px border-b-2 whitespace-nowrap shrink-0 ${tab === key ? 'border-gray-900 font-medium' : 'border-transparent text-gray-600 hover:text-gray-900'}`}
             data-testid={`admin-tab-${key}`}
           >
             {label}
