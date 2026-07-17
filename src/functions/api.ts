@@ -547,7 +547,7 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
     }
     case 'listArchiveConfirmations': {
       // F-33.3 / AC-180 — operator-only reconciliation view (gated above).
-      const r = await handleListArchiveConfirmations(deps.adminCtx(actorEmail!));
+      const r = await handleListArchiveConfirmations(deps.adminCtx(actorEmail!), url.searchParams.get('exclude_internal'));
       return json(r.body, r.status);
     }
     case 'adminOverview': {

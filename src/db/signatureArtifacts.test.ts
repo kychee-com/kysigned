@@ -17,6 +17,7 @@ import {
 } from './signatureArtifacts.js';
 import { createSignatureArtifactsMemoryPool } from './signatureArtifacts.testpool.js';
 import type { TimestampProof } from '../timestamp/contract.js';
+import type { DbPool } from './pool.js';
 
 const ENV = '18267982-ca76-45dc-a294-e86039a6343d';
 const OTS_PENDING: TimestampProof = { provider: 'ots', version: 1, status: 'pending', data: 'AAEC', meta: { calendars: ['https://a.pool.opentimestamps.org'] } };
@@ -190,5 +191,53 @@ describe('archive-confirmation state (F-32.6/F-32.7, migration 010)', () => {
     });
     assert.equal(still?.archive_confirmation, 'unconfirmed');
     assert.ok(still?.archive_confirmation_healed_at, 'healed_at is preserved when the update omits it');
+  });
+});
+
+describe('listOutstandingArchiveConfirmations — F-35.3 exclude-internal (AC-190)', () => {
+  // A dedicated pool: the reconciliation query returns three outstanding rows — one
+  // whose envelope creator is internal (@kychee.com), one internal_test, one external.
+  // The DAO filters on the joined creator_email / internal_test.
+  const NOW = '2026-07-17T00:00:00.000Z';
+  const baseRow = (over: Record<string, unknown>) => ({
+    id: 'sa', envelope_id: 'env', signer_email: 's@ext.com', sha256_eml: 'h',
+    message_id: null, spf_verdict: null, dkim_verdict: null, dmarc_verdict: null,
+    dkim_domain: 'ext.com', dkim_selector: 'sel', dkim_key: null, dkim_observed_at: null,
+    ots_proof: null, tsa_token: null, key_obs_proof: null, key_obs_ots_proof: null,
+    archive_status: null, archive_confirmation: null,
+    archive_confirmation_checked_at: null, archive_confirmation_healed_at: null,
+    ts_status: 'complete', created_at: NOW, updated_at: NOW,
+    creator_email: 'ext@customer.com', internal_test: false,
+    ...over,
+  });
+  const seededRows = [
+    baseRow({ id: 'sa-ext', envelope_id: 'e-ext', creator_email: 'ext@customer.com' }),
+    baseRow({ id: 'sa-staff', envelope_id: 'e-staff', creator_email: 'staff@kychee.com' }), // internal identity
+    baseRow({ id: 'sa-itest', envelope_id: 'e-itest', creator_email: 'ext2@customer.com', internal_test: true }), // internal_test
+  ];
+  const pool = {
+    async query(text: string) {
+      if (text.includes('created_at DESC') && text.includes('archive_confirmation IS NULL OR')) {
+        return { rows: seededRows.map((r) => ({ ...r })), rowCount: seededRows.length };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    async end() {},
+  } as unknown as DbPool;
+  const RULES = ['@kychee.com'];
+
+  it('toggle ON → drops the internal-creator + internal_test rows, keeps external', async () => {
+    const out = await listOutstandingArchiveConfirmations(pool, { excludeInternal: true, internalIdentities: RULES });
+    assert.deepEqual(out.map((a) => a.id).sort(), ['sa-ext']);
+  });
+
+  it('toggle OFF → keeps every outstanding row', async () => {
+    const out = await listOutstandingArchiveConfirmations(pool, { excludeInternal: false, internalIdentities: RULES });
+    assert.deepEqual(out.map((a) => a.id).sort(), ['sa-ext', 'sa-itest', 'sa-staff']);
+  });
+
+  it('defaults to ON when no opts are passed (matches the console default)', async () => {
+    const out = await listOutstandingArchiveConfirmations(pool, { internalIdentities: RULES });
+    assert.deepEqual(out.map((a) => a.id).sort(), ['sa-ext']);
   });
 });

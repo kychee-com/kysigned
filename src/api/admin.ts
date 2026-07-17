@@ -79,8 +79,9 @@ export async function handleListAllowedSenders(ctx: AdminContext) {
  * confirmation state (NULL surfaced as `unknown`), and the confirmation timestamps —
  * read from the same signature_artifacts fields F-32.6/F-32.7 write (no parallel store).
  */
-export async function handleListArchiveConfirmations(ctx: AdminContext) {
-  const artifacts = await listOutstandingArchiveConfirmations(ctx.pool);
+export async function handleListArchiveConfirmations(ctx: AdminContext, excludeInternalParam: string | null) {
+  const excludeInternal = parseExcludeInternal(excludeInternalParam);
+  const artifacts = await listOutstandingArchiveConfirmations(ctx.pool, { excludeInternal, internalIdentities: ctx.internalIdentities ?? [] });
   const outstanding = artifacts.map((a) => ({
     envelope_id: a.envelope_id,
     signer_email: a.signer_email,
@@ -91,7 +92,7 @@ export async function handleListArchiveConfirmations(ctx: AdminContext) {
     healed_at: a.archive_confirmation_healed_at ? a.archive_confirmation_healed_at.toISOString() : null,
     created_at: a.created_at.toISOString(),
   }));
-  return { status: 200, body: { outstanding } };
+  return { status: 200, body: { excludeInternal, outstanding } };
 }
 
 /**

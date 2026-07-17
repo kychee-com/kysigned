@@ -13,6 +13,7 @@
 import type { DbPool } from './pool.js';
 import type { SignatureArtifact, CreateSignatureArtifactInput } from './types.js';
 import type { TimestampProof } from '../timestamp/contract.js';
+import { isInternalIdentity } from '../api/auth/internalIdentity.js';
 
 function coerceDate(v: unknown): Date | null {
   if (v == null) return null;
@@ -187,14 +188,29 @@ export async function listArtifactsForArchiveReconciliation(
  * window — the dashboard shows the whole standing backlog, the sweep re-checks one
  * day's slice. Confirmed rows are excluded (they are not outstanding).
  */
-export async function listOutstandingArchiveConfirmations(pool: DbPool): Promise<SignatureArtifact[]> {
+export async function listOutstandingArchiveConfirmations(
+  pool: DbPool,
+  opts: { excludeInternal?: boolean; internalIdentities?: readonly string[] } = {},
+): Promise<SignatureArtifact[]> {
+  // F-35.3 — the console's exclude-internal toggle (default ON) hides confirmations
+  // belonging to the operator's own envelopes. The LEFT JOIN carries the envelope's
+  // creator + internal_test so a missing envelope (creator NULL) is treated as
+  // external and never hidden — the backlog fails safe toward showing work.
+  const excludeInternal = opts.excludeInternal ?? true;
+  const rules = opts.internalIdentities ?? [];
   const res = await pool.query(
-    `SELECT * FROM signature_artifacts
-      WHERE dkim_selector IS NOT NULL
-        AND (archive_confirmation IS NULL OR archive_confirmation IN ('unconfirmed', 'outage'))
-      ORDER BY created_at DESC`,
+    `SELECT sa.*, e.sender_email AS creator_email, e.internal_test
+       FROM signature_artifacts sa
+       LEFT JOIN envelopes e ON e.id = sa.envelope_id
+      WHERE sa.dkim_selector IS NOT NULL
+        AND (sa.archive_confirmation IS NULL OR sa.archive_confirmation IN ('unconfirmed', 'outage'))
+      ORDER BY sa.created_at DESC`,
   );
-  return (res.rows as Row[]).map(mapRow);
+  const rows = res.rows as Array<Row & { creator_email?: string | null; internal_test?: boolean }>;
+  const kept = excludeInternal
+    ? rows.filter((r) => !(Boolean(r.internal_test) || isInternalIdentity(r.creator_email, rules)))
+    : rows;
+  return kept.map(mapRow);
 }
 
 /** Record a sweep re-check outcome (F-32.7): state + checked-at, healed-at when it healed. */

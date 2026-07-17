@@ -1364,7 +1364,7 @@ describe('handleRequest — operator archive-confirmations read (F-33.3 / AC-180
       pool: validSessionPool('op@kychee.com'),
       operatorEmails: ['op@kychee.com'],
       adminCtx: (operator: string) => ({
-        pool: makePool((text) => (text.includes('ORDER BY created_at DESC') ? [row] : [])).pool,
+        pool: makePool((text) => (text.includes('created_at DESC') ? [row] : [])).pool,
         operator,
       }),
     });

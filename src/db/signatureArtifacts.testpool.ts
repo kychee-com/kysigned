@@ -53,9 +53,10 @@ export function createSignatureArtifactsMemoryPool() {
       }
 
       // listOutstandingArchiveConfirmations — full-backlog non-clean, newest first (F-33.3, #148).
-      // Shares the non-clean predicate with the sweep query; disambiguated by `ORDER BY ... DESC`
-      // (the sweep uses ASC + a created_at window), so this MUST precede the window branch.
-      if (text.includes('ORDER BY created_at DESC') && text.includes('archive_confirmation IS NULL OR archive_confirmation IN')) {
+      // Shares the non-clean predicate with the sweep query; disambiguated by `... created_at DESC`
+      // (the sweep uses ASC + a created_at window), so this MUST precede the window branch. F-35
+      // added a LEFT JOIN envelopes + `sa.` qualifiers, so match the unqualified substrings.
+      if (text.includes('created_at DESC') && text.includes('archive_confirmation IS NULL OR')) {
         const out = rows
           .filter((r) => r.dkim_selector != null &&
             (r.archive_confirmation == null || r.archive_confirmation === 'unconfirmed' || r.archive_confirmation === 'outage'))
