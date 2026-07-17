@@ -121,12 +121,23 @@ server.registerTool(
   'check_envelope_status',
   {
     description:
-      "Check a signing envelope: per-signer signing status and times, plus each signer's delivery_status (pending / delivered / undeliverable — whether the signing-request email reached them, distinct from whether they signed).",
-    inputSchema: { envelope_id: z.string().min(1).describe('The envelope ID to check') },
+      "Check a signing envelope: per-signer signing status and times, plus each signer's delivery_status (pending / delivered / undeliverable — whether the signing-request email reached them, distinct from whether they signed). " +
+      'Accepts EITHER the ambient KYSIGNED_AUTHORIZATION creator key OR a per-envelope tracking_token (ktt_…, ' +
+      'returned by every create — F-30.7): the token needs NO API key and reads exactly its own envelope, so the ' +
+      'no-key wallet path polls through the same tool it created with. An explicit tracking_token wins over the ambient key.',
+    inputSchema: {
+      envelope_id: z.string().min(1).describe('The envelope ID to check'),
+      tracking_token: z
+        .string()
+        .optional()
+        .describe('Envelope-scoped read-only observer token (ktt_…) from the create result — no API key needed.'),
+    },
     annotations: { title: 'Check envelope status', readOnlyHint: true, openWorldHint: true },
   },
-  async ({ envelope_id }) => {
-    const auth = requireAuth();
+  async ({ envelope_id, tracking_token }) => {
+    // F-30.7 — explicit-over-ambient: a per-call tracking token beats the env
+    // key (same principle as the #151 payer sources). No token → creator auth.
+    const auth = tracking_token && tracking_token.trim() ? tracking_token.trim() : requireAuth();
     if (typeof auth !== 'string') return auth;
     const r = await apiRequest(getEndpoint(), `/v1/envelope/${encodeURIComponent(envelope_id)}`, { auth });
     if (!r.ok) return r.result;
@@ -278,8 +289,8 @@ server.registerTool(
       'replays the same envelope without paying twice. The payer resolves once from: an explicit allowance file ' +
       '(KYSIGNED_RUN402_ALLOWANCE_PATH), an embedder-injected opaque signer (KMS/HSM), or the host-local run402 ' +
       'allowance wallet (`run402 init`); its key is never a tool argument and never appears in output. On success the ' +
-      'result carries the payment receipt and a tracking note (status links need creator auth — sign in later with ' +
-      'creator_email).',
+      'result carries the payment receipt and a tracking block whose ktt_ token polls this envelope with NO account ' +
+      '(pass it to check_envelope_status as tracking_token); creator_email sign-in stays available for the dashboard.',
     inputSchema: {
       creator_email: z
         .string()

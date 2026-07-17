@@ -19,6 +19,7 @@ export const CREATE_201_RESULT_FIELDS = [
   'delivery',
   'callback_secret',
   'suggestion',
+  'tracking',
 ] as const;
 
 export type Create201ResultField = (typeof CREATE_201_RESULT_FIELDS)[number];

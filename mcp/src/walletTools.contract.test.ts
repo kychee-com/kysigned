@@ -138,6 +138,9 @@ const ENVELOPE_201 = {
   delivery: { delivered: 1, undeliverable: [], failed: [] },
   callback_secret: CALLBACK_SECRET,
   suggestion: { has_existing_signatures: false, signed_count: 0, total_count: 1, missing_signers: [] },
+  // F-30.7 — the envelope-observer handle rides the create result (and the
+  // stored replay body) on both rails.
+  tracking: { token: 'ktt_' + 'T'.repeat(43), poll: 'GET https://wallet-contract.test/v1/envelope/env-x1' },
 };
 
 const PAID_201 = {
@@ -151,7 +154,13 @@ const PAID_201 = {
     settlement_reference: '0xtx',
     settled_at: '2026-07-10T00:00:00Z',
   },
-  tracking: { status_url_auth: 'creator', creator_email: 'agent@example.com', note: 'sign in via magic link' },
+  tracking: {
+    token: 'ktt_' + 'T'.repeat(43),
+    poll: 'GET https://wallet-contract.test/v1/envelope/env-x1',
+    status_url_auth: 'creator_or_tracking_token',
+    creator_email: 'agent@example.com',
+    note: 'poll with the tracking token; sign in via magic link for the dashboard',
+  },
 };
 
 beforeEach(() => setWalletSeamsForTests(undefined));
@@ -392,7 +401,9 @@ describe('create_envelope_x402 — AC-144/AC-145 over the tool surface, NO auth 
     assert.ok(!r2.isError, r2.content[0]!.text);
     const out2 = JSON.parse(r2.content[0]!.text) as Record<string, unknown>;
 
-    const envKeys1 = Object.keys(out1).filter((k) => !['payment', 'tracking', 'spending_intent_key'].includes(k)).sort();
+    // F-30.7: `tracking` is an envelope-result field now (present on BOTH the
+    // first call and the replay); only `payment` stays a first-call extra.
+    const envKeys1 = Object.keys(out1).filter((k) => !['payment', 'spending_intent_key'].includes(k)).sort();
     const envKeys2 = Object.keys(out2).filter((k) => !['replayed', 'note', 'spending_intent_key'].includes(k)).sort();
     assert.deepEqual(envKeys1, envKeys2, 'first-call and replay envelope-result schemas must match');
   });
@@ -590,6 +601,34 @@ describe('spend disclosure + custody hard lines (AC-146)', () => {
     for (const n of names) {
       assert.doesNotMatch(n, /private|secret|mnemonic|seed|wallet_key/i, `suspicious schema property: ${n}`);
       if (/key/i.test(n)) assert.equal(n, 'idempotency_key', `unexpected key-like property: ${n}`);
+    }
+  });
+});
+
+// ── F-30.7 (#154) — no-key status polling with the tracking token ────────────
+describe('check_envelope_status + tracking_token — NO auth env (F-30.7 / AC-173)', () => {
+  it('polls the envelope with the tracking token as the Authorization — no KYSIGNED_AUTHORIZATION, no local-auth failure', async () => {
+    const TRACKING = 'ktt_' + 'T'.repeat(43);
+    const realFetch = globalThis.fetch;
+    const calls: Array<{ url: string; auth: string | undefined }> = [];
+    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), auth: ((init?.headers as Record<string, string>) ?? {})['Authorization'] });
+      return new Response(
+        JSON.stringify({ id: 'env-x1', status: 'active', signers: [{ email: 'signer@example.com', status: 'pending', delivery_status: 'pending' }] }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }) as typeof fetch;
+    try {
+      assert.equal(process.env.KYSIGNED_AUTHORIZATION, undefined, 'precondition: no auth env');
+      const r = await call('check_envelope_status', { envelope_id: 'env-x1', tracking_token: TRACKING });
+      assert.ok(!r.isError, r.content[0]!.text);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0]!.url, 'https://wallet-contract.test/v1/envelope/env-x1');
+      assert.equal(calls[0]!.auth, TRACKING, 'the token IS the Authorization — verbatim');
+      const body = JSON.parse(r.content[0]!.text) as { signers: Array<{ email: string }> };
+      assert.equal(body.signers[0]!.email, 'signer@example.com', 'full roster passes through verbatim');
+    } finally {
+      globalThis.fetch = realFetch;
     }
   });
 });

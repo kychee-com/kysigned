@@ -100,6 +100,23 @@ describe('handleX402CreateEnvelope — guards (F-30.2)', () => {
     assert.equal(r.status, 201);
   });
 
+  it('F-30.7 — the create 201s tracking token block LEADS the merged x402 tracking (sign-in prose demoted)', async () => {
+    const { seams } = recordingSeams({
+      runCreate: async () => ({
+        status: 201,
+        body: { id: 'env-1', tracking: { token: 'ktt_test_token_ABC', poll: 'GET https://kysigned.com/v1/envelope/env-1' } },
+      }),
+    });
+    const r = await handleX402CreateEnvelope(CONFIG, PAYMENT, seams, { ...BODY });
+    assert.equal(r.status, 201);
+    const tracking = (r.body as Record<string, unknown>).tracking as Record<string, unknown>;
+    assert.equal(tracking.token, 'ktt_test_token_ABC', 'the observer token SURVIVES the x402 merge');
+    assert.ok(String(tracking.poll).includes('/v1/envelope/'), 'the runnable poll instruction survives');
+    assert.equal(tracking.status_url_auth, 'creator_or_tracking_token', 'auth field reflects the new capability');
+    assert.equal(tracking.creator_email, 'agent@example.com', 'the sign-in handoff stays as the secondary path');
+    assert.match(String(tracking.note), /magic link|sign in/i);
+  });
+
   it('missing creator_email → 400 validation_creator_email, no credit', async () => {
     const { credited, seams } = recordingSeams();
     const { creator_email: _drop, ...noEmail } = BODY;

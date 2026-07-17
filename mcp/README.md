@@ -118,6 +118,18 @@ Get the current status of an envelope by ID, including per-signer status and sig
 { "envelope_id": "abc123-..." }
 ```
 
+**No-key observer mode (F-30.7):** every create result carries `tracking.token` (`ktt_…`) — an
+envelope-scoped, READ-ONLY tracking token. Pass it as `tracking_token` and this tool needs no
+`KYSIGNED_AUTHORIZATION` at all (the wallet-paid path polls through the same tool it created with):
+
+```json
+{ "envelope_id": "abc123-...", "tracking_token": "ktt_..." }
+```
+
+An explicit `tracking_token` wins over the ambient key. The token reads exactly its own envelope
+(anything else 404s), every mutation refuses it (`auth_tracking_scope`), and it survives agent
+restarts: the free preflight spending-intent replay returns the same create body, token included.
+
 ### `list_envelopes`
 
 List the envelopes created by the authenticated creator (the key holder). No arguments.

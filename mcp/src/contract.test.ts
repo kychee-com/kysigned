@@ -276,6 +276,22 @@ describe('check_envelope_status', () => {
     assert.match(r.content[0]!.text, /404/);
     assert.match(r.content[0]!.text, /not_found/);
   });
+
+  it('F-30.7 — an explicit tracking_token wins over the ambient bearer key (explicit-over-ambient)', async () => {
+    const TRACKING = 'ktt_' + 'P'.repeat(43);
+    queue.push({ status: 200, body: { id: 'env-1', status: 'active', signers: [] } });
+    await callTool('check_envelope_status', { envelope_id: 'env-1', tracking_token: TRACKING });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]!.headers['Authorization'], TRACKING, 'the per-call token beats the ambient env key');
+  });
+
+  it('F-30.7 — tracking_token is an optional schema field (envelope_id stays the only required arg)', async () => {
+    const { tools } = await client.listTools();
+    const t = tools.find((x) => x.name === 'check_envelope_status')!;
+    const schema = t.inputSchema as { required?: string[]; properties: Record<string, unknown> };
+    assert.deepEqual(schema.required ?? [], ['envelope_id']);
+    assert.ok('tracking_token' in schema.properties, 'tracking_token present in the schema');
+  });
 });
 
 describe('list_envelopes', () => {

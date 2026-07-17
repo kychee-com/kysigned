@@ -90,7 +90,15 @@
             }
           },
           "callback_secret": { "type": "string", "description": "whs_… webhook signing secret — returned EXACTLY ONCE, only when callback_url was supplied" },
-          "delivery": { "type": "object", "description": "Per-signer send outcome (delivered / undeliverable / failed counts)" }
+          "delivery": { "type": "object", "description": "Per-signer send outcome (delivered / undeliverable / failed counts)" },
+          "tracking": {
+            "type": "object",
+            "description": "The envelope-observer handle (returned on EVERY create). `token` (ktt_…) is an envelope-scoped READ-ONLY credential: present it as the Authorization on GET /v1/envelope/{id} to poll status (full signer roster + delivery) with no account, API key, or session. It reads exactly this one envelope — any other id answers 404, and every mutation/list/download refuses it (403 auth_tracking_scope). Lost after a restart? The free POST /v1/envelope/preflight spending-intent replay (creator_email + your idempotency_key) returns this same create body, token included. Valid while the envelope exists (completion and void stay readable); dies with retention expiry or account deletion.",
+            "properties": {
+              "token": { "type": "string", "description": "ktt_… envelope-scoped read-only tracking token" },
+              "poll": { "type": "string", "description": "Runnable poll instruction for the token" }
+            }
+          }
         }
       },
       "EnvelopeStatus": {
@@ -171,7 +179,7 @@
         ],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/X402CreateEnvelopeRequest" } } } },
         "responses": {
-          "201": { "description": "Created. Identical to POST /v1/envelope PLUS a `payment` receipt (payment_id, network, amount_usd_micros, asset, pay_to, settlement_reference, settled_at) and a `tracking` block (status_url requires creator auth; wallet-only creators sign in to creator_email to track). Reconcile the spend via `payment.payment_id` / `settlement_reference`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateEnvelopeResponse" } } } },
+          "201": { "description": "Created. Identical to POST /v1/envelope PLUS a `payment` receipt (payment_id, network, amount_usd_micros, asset, pay_to, settlement_reference, settled_at) and a merged `tracking` block LED by the ktt_ tracking token — a wallet-only creator polls GET /v1/envelope/{id} with it, no account needed (status_url_auth: creator_or_tracking_token); creator_email sign-in stays available for the full dashboard. Reconcile the spend via `payment.payment_id` / `settlement_reference`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateEnvelopeResponse" } } } },
           "400": { "description": "Deterministic validation failed (plus-alias signer, bad email, unparseable/oversize PDF, …). If the payment already settled, the response carries `payment_banked: true` + `credit_email` + `next_actions` — the money became recoverable account credit for creator_email, not a loss. Call POST /v1/envelope/preflight (free) BEFORE paying to avoid this.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "402": { "description": "x402 payment challenge for an unpaid call — emitted by the platform (x402 protocol payment-requirements shape, not the {error, code} envelope). Pay per the challenge and retry. A paid retry from a wallet with insufficient USDC on Base mainnet returns 402 payment_insufficient_funds with a fund_wallet next_action (network, asset, minimum_amount_usd_micros) — fund the wallet and retry." },
           "404": { "$ref": "#/components/responses/Error" },
@@ -196,6 +204,7 @@
     "/v1/envelope/{id}": {
       "get": {
         "summary": "Envelope status: per-signer signing state, signed times, delivery_status",
+        "description": "Three accepted authorities: creator session, creator API key (ksk_…), or the envelope's OWN tracking token (ktt_…, from the create response's `tracking.token`) sent as the Authorization header. The tracking token is the read-only observer path (F-30.7): no account needed, full signer roster returned, exactly this envelope readable — any other envelope id answers the same 404 a stranger gets, and the token is refused (403 auth_tracking_scope) by every mutating or listing route.",
         "security": [{ "apiKey": [] }, { "session": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Status", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EnvelopeStatus" } } } }, "404": { "$ref": "#/components/responses/Error" } }

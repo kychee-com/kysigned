@@ -167,19 +167,27 @@ export async function handleX402CreateEnvelope(
     // #133 — return a durable payment receipt so a wallet agent can reconcile the
     // spend with the envelope. #131 — the status_url needs creator auth, which a
     // wallet-only creator does not have; point them at the creator_email sign-in.
+    // F-30.7 (#154): the create's own tracking block (token + poll) LEADS the
+    // merged x402 tracking; the creator sign-in handoff stays as the secondary
+    // path. status_url_auth reflects live capability: with a token, the status
+    // URL is readable by creator auth OR the tracking token.
+    const envelopeTracking =
+      resultBody['tracking'] && typeof resultBody['tracking'] === 'object'
+        ? (resultBody['tracking'] as Record<string, unknown>)
+        : undefined;
     return {
       status: 201,
       body: {
         ...resultBody,
         payment: receipt,
         tracking: {
-          status_url_auth: 'creator',
+          ...(envelopeTracking ?? {}),
+          status_url_auth: envelopeTracking?.['token'] ? 'creator_or_tracking_token' : 'creator',
           creator_email: creatorEmail,
           note:
-            `status_url requires creator authentication. As a wallet-only creator, sign in to ` +
-            `${creatorEmail} (request a magic link at POST /v1/auth/magic-link) to track this envelope in ` +
-            `the dashboard; the creation email, completion notice, and the evidence bundle are all sent to ` +
-            `${creatorEmail}.`,
+            `As a wallet-only creator you can poll status with the tracking token (no account). For the full ` +
+            `dashboard, sign in to ${creatorEmail} (request a magic link at POST /v1/auth/magic-link); the ` +
+            `creation email, completion notice, and the evidence bundle are all sent to ${creatorEmail}.`,
         },
       },
     };

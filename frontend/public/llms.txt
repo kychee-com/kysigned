@@ -167,9 +167,16 @@ The full surface is also machine-readable as OpenAPI 3.1 at `/openapi.json`.
      "callback_url": "https://your-agent.example.com/kysigned-hook"
    }
    ```
-   → `{ "envelope_id", "status", "document_hash", "status_url", "verify_url", "signing_links": [...], "callback_secret"? }`
+   → `{ "envelope_id", "status", "document_hash", "status_url", "verify_url", "signing_links": [...], "callback_secret"?, "tracking" }`
    (`callback_secret` appears only when you sent `callback_url`, and only this once — store it to
    verify webhook deliveries.)
+   `tracking.token` (`ktt_…`) is the envelope-observer handle, returned on EVERY create: send it as
+   the `Authorization` header on `GET /v1/envelope/:id` to poll status — full signer roster with
+   per-signer signing + delivery state — with no account, API key, or session. It is read-only and
+   envelope-scoped: any other envelope answers 404, and every mutating/listing route refuses it
+   (`403 auth_tracking_scope`). Hand it to a CI job or a third party to share tracking WITHOUT
+   sharing your API key. Lost it after a restart? The free `POST /v1/envelope/preflight` replay
+   (`creator_email` + your `idempotency_key`) returns the same create body, token included.
    Each `signing_links[]` entry is `{ email, name, link, review_link }`. `review_link`
    (`/review/:id/:token`) is the human, browser-openable review page you can hand a signer directly.
    `link` (`/v1/sign/:id/:token`) is the programmatic signer-token API base (`GET .../info` plus the
@@ -198,7 +205,8 @@ The full surface is also machine-readable as OpenAPI 3.1 at `/openapi.json`.
 `KYSIGNED_ENDPOINT` + `KYSIGNED_AUTHORIZATION`:
 
 - **create_envelope** — `POST /v1/envelope` (`document_name`, `pdf_base64` | `pdf_url`, `signers[]`, `message?`)
-- **check_envelope_status** — `GET /v1/envelope/:id`
+- **check_envelope_status** — `GET /v1/envelope/:id`; also accepts `tracking_token` (`ktt_…` from any
+  create result) instead of the key — the no-key observer path, envelope-scoped and read-only
 - **list_envelopes** — `GET /v1/envelopes` (the creator's own envelopes)
 - **send_reminder** — `POST /v1/envelope/:id/remind`
 - **void_envelope** — `POST /v1/envelope/:id/void`

@@ -40,6 +40,7 @@ import { scheduleEnvelopeExpiry } from './expirySchedule.js';
 import { scheduleDeliveryBackstop } from './deliveryBackstop.js';
 import { validateCallbackUrl } from './webhookDeliver.js';
 import { mintWebhookSecret } from './webhookSignature.js';
+import { mintTrackingToken, storeTrackingToken } from './trackingToken.js';
 import { setEnvelopeWebhook } from '../db/envelopeWebhooks.js';
 import type { CreateRun } from '../functions/runs.js';
 import { randomUUID, randomBytes } from 'node:crypto';
@@ -754,6 +755,24 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
     };
   }
 
+  // F-30.7 / #154 (DD-37) — the envelope-observer handle, minted at this ONE
+  // choke point so key-authed creates, x402 creates, AND the stored idempotent
+  // replay body all carry it (the replay is the restart-recovery path, AC-175).
+  // A store failure degrades to a 201 WITHOUT tracking — never a dead token.
+  let tracking: { token: string; poll: string } | undefined;
+  try {
+    const minted = mintTrackingToken();
+    await storeTrackingToken(ctx.pool, result.envelope.id, minted.raw);
+    tracking = {
+      token: minted.raw,
+      poll:
+        `GET ${ctx.baseUrl}/v1/envelope/${result.envelope.id} with header "Authorization: <tracking token>" — ` +
+        `read-only status (per-signer signing + delivery), no account needed.`,
+    };
+  } catch (err) {
+    console.error(`tracking-token store failed for ${result.envelope.id}: ${(err as Error).message}`);
+  }
+
   return {
     status: 201,
     body: {
@@ -779,6 +798,7 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
       // F-30.3 — the webhook signing secret, shown EXACTLY ONCE (AC-138).
       ...(callbackSecret ? { callback_secret: callbackSecret } : {}),
       ...(suggestion ? { suggestion } : {}),
+      ...(tracking ? { tracking } : {}),
     },
   };
 }
@@ -846,6 +866,28 @@ export async function handleGetEnvelope(
       }),
     },
   };
+}
+
+/**
+ * F-30.7 (#154) — the OBSERVER read: the tracking token's one grant. The
+ * caller resolves the token to its bound envelope id; this returns the SAME
+ * status body the creator sees (delegation, so the two views can never
+ * drift), gated on the binding: any other envelope id gets the stranger's
+ * 404. No mutation, listing, or download flows through here.
+ */
+export async function handleGetEnvelopeAsObserver(
+  ctx: { pool: DbPool; baseUrl: string },
+  requestedEnvelopeId: string,
+  tokenEnvelopeId: string,
+) {
+  if (requestedEnvelopeId !== tokenEnvelopeId) {
+    return { status: 404, body: { error: 'Envelope not found', code: 'not_found' } };
+  }
+  const envelope = await getEnvelope(ctx.pool, requestedEnvelopeId);
+  if (!envelope) {
+    return { status: 404, body: { error: 'Envelope not found', code: 'not_found' } };
+  }
+  return handleGetEnvelope(ctx, requestedEnvelopeId, envelope.sender_email);
 }
 
 export async function handleVoidEnvelope(

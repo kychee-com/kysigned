@@ -35,6 +35,8 @@
 import { matchRoute } from '../integrations/run402Router.js';
 import { csrfOk, resolveSession } from '../api/auth/session.js';
 import { resolveApiKey } from '../api/auth/apiKeyAuth.js';
+import { extractBearerKey } from '../api/auth/apiKeyAuth.js';
+import { resolveTrackingToken, TRACKING_TOKEN_PREFIX } from '../api/trackingToken.js';
 import { handleMintApiKey, handleListApiKeys, handleRevokeApiKey } from '../api/apiKeys.js';
 import { withCreateIdempotency } from '../api/idempotentCreate.js';
 import { handleX402CreateEnvelope, defaultX402Seams } from '../api/x402Create.js';
@@ -59,6 +61,7 @@ import {
 import {
   handleCreateEnvelope,
   handleGetEnvelope,
+  handleGetEnvelopeAsObserver,
   handleVoidEnvelope,
   handleRemind,
   handleListDocuments,
@@ -219,6 +222,30 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
   //     before they have proven they are authenticated — an unauthenticated
   //     request is always a flat 401 regardless of the CSRF header (system-test
   //     F-001 / AC-5 / AC-32).
+  // F-30.7 (#154) — the envelope-observer branch. A ktt_ tracking token is the
+  // NARROWEST authority: it may read exactly its own envelope's status and
+  // nothing else. It is handled BEFORE the session/bearer gate so it can never
+  // fall through into (or be confused with) creator authority; every other
+  // authenticated route refuses it machine-readably before any handler or DB
+  // work (AC-174).
+  {
+    const candidate = extractBearerKey(req.headers.get('authorization'));
+    if (candidate?.startsWith(TRACKING_TOKEN_PREFIX)) {
+      if (name !== 'getEnvelope') {
+        return json(
+          { error: 'Tracking tokens are read-only observer credentials for one envelope status', code: 'auth_tracking_scope' },
+          403,
+        );
+      }
+      const boundEnvelopeId = await resolveTrackingToken(deps.pool, candidate);
+      if (!boundEnvelopeId) {
+        return json({ error: 'Authentication required', code: 'auth_invalid_key' }, 401);
+      }
+      const r = await handleGetEnvelopeAsObserver({ pool: deps.pool, baseUrl: deps.baseUrl }, params.id!, boundEnvelopeId);
+      return json(r.body, r.status);
+    }
+  }
+
   let actorEmail: string | null = null;
   let actorSessionId: string | null = null;
   if (auth === 'session') {

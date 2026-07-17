@@ -787,6 +787,49 @@ describe('handleRequest — Idempotency-Key on createEnvelope (F-30.3 / AC-136)'
 
     assert.equal(createCount(), 1, 'the create CTE ran exactly once — one envelope, one debit');
     assert.equal(secondBody.envelope_id, firstBody.envelope_id, 'the retry returns the SAME envelope');
+
+    // F-30.7 / AC-173+AC-175 — every create 201 carries the observer handle,
+    // and the stored replay body carries the SAME token (the recovery path).
+    const t1 = (firstBody as unknown as { tracking?: { token?: string; poll?: string } }).tracking;
+    const t2 = (secondBody as unknown as { tracking?: { token?: string; poll?: string } }).tracking;
+    assert.match(String(t1?.token), /^ktt_[A-Za-z0-9_-]{43}$/, 'create 201 returns the ktt_ observer token');
+    assert.match(String(t1?.poll), /\/v1\/envelope\//, 'a runnable poll instruction accompanies the token');
+    assert.equal(t2?.token, t1?.token, 'the idempotent replay returns the SAME token — restart recovery');
+  });
+
+  it('F-30.7 — a tracking-token store failure degrades gracefully: 201 WITHOUT tracking, never a dead token', async () => {
+    const { pool } = idemPool();
+    const wrapped: DbPool = {
+      async query(text: string, values?: unknown[]) {
+        if (/INSERT INTO envelope_tracking_tokens/i.test(text)) throw new Error('tokens table down');
+        return pool.query(text, values);
+      },
+      async end() {},
+    };
+    const deps = makeDeps({
+      pool: wrapped,
+      apiContext: () => ({
+        pool: wrapped,
+        emailProvider: { async send() { return { messageId: 'm' }; } },
+        baseUrl: 'https://kysigned.com',
+        senderIdentity: 'agent@example.com',
+        internalTestDomains: ['kychee.com'],
+        storePdf: async () => {},
+        deletePdf: async () => {},
+        senderGate: { getCreditBalance: async () => 10_000_000 },
+      }) as never,
+    });
+    const TINY2 = 'JVBERi0xLjcKJYGBgYEKCjEgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFsgNCAwIFIgXQovQ291bnQgMQo+PgplbmRvYmoKCjIgMCBvYmoKPDwKL1R5cGUgL0NhdGFsb2cKL1BhZ2VzIDEgMCBSCj4+CmVuZG9iagoKMyAwIG9iago8PAovUHJvZHVjZXIgPEZFRkYwMDc0MDA2NTAwNzMwMDc0MDAyRDAwNjYwMDY5MDA3ODAwNzQwMDc1MDA3MjAwNjU+Ci9Nb2REYXRlIChEOjIwMjAwMTAxMDAwMDAwWikKL0NyZWF0b3IgPEZFRkYwMDcwMDA2NDAwNjYwMDJEMDA2QzAwNjkwMDYyMDAyMDAwMjgwMDY4MDA3NDAwNzQwMDcwMDA3MzAwM0EwMDJGMDAyRjAwNjcwMDY5MDA3NDAwNjgwMDc1MDA2MjAwMkUwMDYzMDA2RjAwNkQwMDJGMDA0ODAwNkYwMDcwMDA2NDAwNjkwMDZFMDA2NzAwMkYwMDcwMDA2NDAwNjYwMDJEMDA2QzAwNjkwMDYyMDAyOT4KL0NyZWF0aW9uRGF0ZSAoRDoyMDIwMDEwMTAwMDAwMFopCi9UaXRsZSA8RkVGRjAwNzQwMDY1MDA3MzAwNzQ+Cj4+CmVuZG9iagoKNCAwIG9iago8PAovVHlwZSAvUGFnZQovUGFyZW50IDEgMCBSCi9SZXNvdXJjZXMgPDwKL0ZvbnQgPDwKL0hlbHZldGljYS03MDk4NDgwNzg5IDUgMCBSCj4+Ci9YT2JqZWN0IDw8Cj4+Ci9FeHRHU3RhdGUgPDwKPj4KPj4KL01lZGlhQm94IFsgMCAwIDYxMiA3OTIgXQovQW5ub3RzIFsgXQovQ29udGVudHMgWyA2IDAgUiBdCj4+CmVuZG9iagoKNSAwIG9iago8PAovVHlwZSAvRm9udAovU3VidHlwZSAvVHlwZTEKL0Jhc2VGb250IC9IZWx2ZXRpY2EKL0VuY29kaW5nIC9XaW5BbnNpRW5jb2RpbmcKPj4KZW5kb2JqCgo2IDAgb2JqCjw8Ci9GaWx0ZXIgL0ZsYXRlRGVjb2RlCi9MZW5ndGggOTYKPj4Kc3RyZWFtCnicK+RyCuEyUADBonQufY/UnLLUkszkRF1zA0sLEwsDcwtLBSMThZA0LhDpw2UIVgohQ3K5bMxNzEzNjc1NjAzMzMwszS3MTcxNzY3MTO0UQrK4QrS4XEO4ArkAobMWLQplbmRzdHJlYW0KZW5kb2JqCgp4cmVmCjAgNwowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMTYgMDAwMDAgbiAKMDAwMDAwMDA3NiAwMDAwMCBuIAowMDAwMDAwMTI2IDAwMDAwIG4gCjAwMDAwMDA0OTggMDAwMDAgbiAKMDAwMDAwMDY5MyAwMDAwMCBuIAowMDAwMDAwNzkxIDAwMDAwIG4gCgp0cmFpbGVyCjw8Ci9TaXplIDcKL1Jvb3QgMiAwIFIKL0luZm8gMyAwIFIKPj4KCnN0YXJ0eHJlZgo5NTkKJSVFT0Y=';
+    const res = await handleRequest(
+      req('POST', '/v1/envelope', {
+        headers: { authorization: `Bearer ${RAW_KEY}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ document_name: 'Degrade', pdf_base64: TINY2, signers: [{ email: 's@example.com', name: 'S' }] }),
+      }),
+      deps,
+    );
+    assert.equal(res.status, 201, 'a token-store failure must NOT fail the create');
+    const body = (await res.json()) as { tracking?: unknown };
+    assert.ok(!('tracking' in body), 'no dead token: tracking is OMITTED when the store failed');
   });
 
   // ── F-30.3 / AC-138 — callback_url on create: stored + secret returned once ──
@@ -953,5 +996,126 @@ describe('handleRequest — x402 create dispatch gates (F-30.2)', () => {
     );
     assert.equal(res.status, 400);
     assert.equal(((await res.json()) as { code: string }).code, 'validation_creator_email');
+  });
+});
+
+// ── F-30.7 / #154 — the envelope-observer branch (tracking token) ─────────────
+describe('tracking-token observer (F-30.7, AC-173/AC-174)', () => {
+  const TOKEN = 'ktt_' + 'A'.repeat(43);
+  const OTHER = 'ktt_' + 'B'.repeat(43);
+
+  function observerPool(boundEnvelopeId: string | null) {
+    return makePool((text) => {
+      if (/FROM envelope_tracking_tokens/i.test(text)) {
+        return boundEnvelopeId ? [{ envelope_id: boundEnvelopeId }] : [];
+      }
+      if (/SELECT \* FROM envelopes WHERE id = \$1/i.test(text)) {
+        return [{
+          id: 'env-7', sender_email: 'creator@example.com', document_name: 'NDA',
+          document_hash: 'h', status: 'active', auto_close: true,
+          created_at: new Date('2026-07-17T00:00:00Z'), completed_at: null,
+          completion_distributed_at: null, expiry_at: null, pdf_deleted_at: null,
+        }];
+      }
+      if (/FROM envelope_signers/i.test(text)) {
+        return [{
+          id: 'sg-1', envelope_id: 'env-7', email: 'alice@example.com', name: 'Alice',
+          on_behalf_of: null, status: 'pending', signing_method: null, signed_at: null,
+          undeliverable_at: null, delivery_confirmed_at: null, completion_email_provider_msg_id: null,
+          signing_token: 't', reminder_count: 0,
+        }];
+      }
+      if (/FROM signature_artifacts/i.test(text)) return [];
+      return [];
+    });
+  }
+
+  it('AC-173 — a valid token reads its OWN envelope: 200 with the FULL roster (email, signing + delivery status), no session', async () => {
+    const { pool } = observerPool('env-7');
+    const res = await handleRequest(
+      req('GET', '/v1/envelope/env-7', { headers: { authorization: TOKEN } }),
+      makeDeps({ pool }),
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { id: string; status: string; signers: Array<Record<string, unknown>> };
+    assert.equal(body.id, 'env-7');
+    assert.equal(body.status, 'active');
+    assert.equal(body.signers[0]!.email, 'alice@example.com', 'FULL roster: signer emails present (Barry decision 2)');
+    assert.equal(body.signers[0]!.status, 'pending');
+    assert.equal(body.signers[0]!.delivery_status, 'pending', 'per-signer delivery status present');
+  });
+
+  it('AC-174 — a valid token against ANY OTHER envelope gets the stranger 404', async () => {
+    const { pool } = observerPool('env-7');
+    const res = await handleRequest(
+      req('GET', '/v1/envelope/env-8', { headers: { authorization: TOKEN } }),
+      makeDeps({ pool }),
+    );
+    assert.equal(res.status, 404);
+    assert.equal(((await res.json()) as { code: string }).code, 'not_found');
+  });
+
+  it('an unknown/revoked token → 401 auth_invalid_key (an invalid credential, not a 404 oracle)', async () => {
+    const { pool } = observerPool(null);
+    const res = await handleRequest(
+      req('GET', '/v1/envelope/env-7', { headers: { authorization: OTHER } }),
+      makeDeps({ pool }),
+    );
+    assert.equal(res.status, 401);
+    assert.equal(((await res.json()) as { code: string }).code, 'auth_invalid_key');
+  });
+
+  it('AC-174 — the refusal matrix: every mutation/list/download route refuses ktt_ machine-readably, handlers never run', async () => {
+    const { pool, queries } = observerPool('env-7');
+    const deps = makeDeps({ pool });
+    const attempts: Array<[string, string]> = [
+      ['POST', '/v1/envelope/env-7/remind'],
+      ['POST', '/v1/envelope/env-7/void'],
+      ['POST', '/v1/envelope/env-7/seal'],
+      ['GET', '/v1/envelopes'],
+      ['GET', '/v1/envelope/env-7/pdf'],
+      ['POST', '/v1/api-keys'],
+    ];
+    for (const [method, path] of attempts) {
+      const res = await handleRequest(req(method, path, { headers: { authorization: TOKEN } }), deps);
+      assert.equal(res.status, 403, `${method} ${path} must refuse a tracking token`);
+      assert.equal(((await res.json()) as { code: string }).code, 'auth_tracking_scope', `${method} ${path}`);
+    }
+    assert.equal(queries.length, 0, 'refusals happen BEFORE any handler/DB work');
+  });
+
+  it('AC-175 — the token keeps reading through completion AND void (the observer sees the outcome)', async () => {
+    for (const status of ['completed', 'voided']) {
+      const { pool } = makePool((text) => {
+        if (/FROM envelope_tracking_tokens/i.test(text)) return [{ envelope_id: 'env-7' }];
+        if (/SELECT \* FROM envelopes WHERE id = \$1/i.test(text)) {
+          return [{
+            id: 'env-7', sender_email: 'creator@example.com', document_name: 'NDA',
+            document_hash: 'h', status, auto_close: true,
+            created_at: new Date('2026-07-17T00:00:00Z'),
+            completed_at: status === 'completed' ? new Date('2026-07-17T01:00:00Z') : null,
+            completion_distributed_at: null, expiry_at: null, pdf_deleted_at: null,
+          }];
+        }
+        if (/FROM envelope_signers/i.test(text)) return [];
+        if (/FROM signature_artifacts/i.test(text)) return [];
+        return [];
+      });
+      const res = await handleRequest(
+        req('GET', '/v1/envelope/env-7', { headers: { authorization: TOKEN } }),
+        makeDeps({ pool }),
+      );
+      assert.equal(res.status, 200, `observer read must survive status=${status}`);
+      assert.equal(((await res.json()) as { status: string }).status, status);
+    }
+  });
+
+  it('Bearer-prefixed tracking tokens are accepted on the observer read (header spelling parity with ksk_)', async () => {
+    const { pool } = observerPool('env-7');
+    const res = await handleRequest(
+      req('GET', '/v1/envelope/env-7', { headers: { authorization: `Bearer ${TOKEN}` } }),
+      makeDeps({ pool }),
+    );
+    assert.equal(res.status, 200);
   });
 });

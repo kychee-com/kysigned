@@ -22,6 +22,7 @@ export const ENVELOPE_RESULT_FIELDS = [
   'delivery',
   'callback_secret',
   'suggestion',
+  'tracking',
 ] as const;
 
 /** Allowlist-project a create-envelope result body; absent fields stay absent. */
