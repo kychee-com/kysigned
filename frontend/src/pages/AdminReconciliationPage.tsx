@@ -28,7 +28,7 @@ interface OutstandingRow {
   created_at: string;
 }
 
-export function AdminReconciliationPage() {
+export function AdminReconciliationPage({ excludeInternal = true }: { excludeInternal?: boolean } = {}) {
   const [rows, setRows] = useState<OutstandingRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [denied, setDenied] = useState(false);
@@ -38,7 +38,9 @@ export function AdminReconciliationPage() {
     let active = true;
     void (async () => {
       try {
-        const data = await apiGet<{ outstanding: OutstandingRow[] }>('/v1/admin/archive-confirmations');
+        const data = await apiGet<{ outstanding: OutstandingRow[] }>(
+          `/v1/admin/archive-confirmations?exclude_internal=${excludeInternal ? '1' : '0'}`,
+        );
         if (active) setRows(data.outstanding ?? []);
       } catch (e) {
         if (!active) return;
@@ -51,7 +53,7 @@ export function AdminReconciliationPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [excludeInternal]);
 
   if (loading) {
     return (

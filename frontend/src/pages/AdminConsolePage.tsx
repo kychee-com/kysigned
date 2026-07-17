@@ -27,12 +27,12 @@ const TABS: Array<[TabKey, string]> = [
 
 interface Fetched<T> { data: T | null; loading: boolean; denied: boolean; error: string }
 
-function useAdminData<T>(path: string, window: WindowKey): Fetched<T> {
+function useAdminData<T>(path: string, window: WindowKey, excludeInternal: boolean): Fetched<T> {
   const [state, setState] = useState<Fetched<T>>({ data: null, loading: true, denied: false, error: '' });
   useEffect(() => {
     let active = true;
     setState((s) => ({ ...s, loading: true }));
-    apiGet<T>(`${path}?window=${encodeURIComponent(window)}`)
+    apiGet<T>(`${path}?window=${encodeURIComponent(window)}&exclude_internal=${excludeInternal ? '1' : '0'}`)
       .then((data) => { if (active) setState({ data, loading: false, denied: false, error: '' }); })
       .catch((e) => {
         if (!active) return;
@@ -40,7 +40,7 @@ function useAdminData<T>(path: string, window: WindowKey): Fetched<T> {
         else setState({ data: null, loading: false, denied: false, error: (e as Error).message ?? 'Failed to load' });
       });
     return () => { active = false; };
-  }, [path, window]);
+  }, [path, window, excludeInternal]);
   return state;
 }
 
@@ -77,8 +77,8 @@ interface Overview {
   activeUsers: { dau: number; wau: number; mau: number };
 }
 
-function OverviewTab({ window }: { window: WindowKey }) {
-  const { data, loading, denied, error } = useAdminData<Overview>('/v1/admin/overview', window);
+function OverviewTab({ window, excludeInternal }: { window: WindowKey; excludeInternal: boolean }) {
+  const { data, loading, denied, error } = useAdminData<Overview>('/v1/admin/overview', window, excludeInternal);
   if (denied) return <Denied />;
   if (loading) return <Spinner />;
   if (error || !data) return <p className="text-sm text-red-700 py-8 text-center" data-testid="admin-error">{error || 'Failed to load'}</p>;
@@ -107,8 +107,8 @@ function badgeText(r: AccountRow): string {
   return r.walletFunded ? 'Human · wallet-funded' : 'Human';
 }
 
-function AccountsTab({ window }: { window: WindowKey }) {
-  const { data, loading, denied, error } = useAdminData<{ accounts: AccountRow[] }>('/v1/admin/accounts', window);
+function AccountsTab({ window, excludeInternal }: { window: WindowKey; excludeInternal: boolean }) {
+  const { data, loading, denied, error } = useAdminData<{ accounts: AccountRow[] }>('/v1/admin/accounts', window, excludeInternal);
   if (denied) return <Denied />;
   if (loading) return <Spinner />;
   if (error || !data) return <p className="text-sm text-red-700 py-8 text-center" data-testid="admin-error">{error || 'Failed to load'}</p>;
@@ -162,8 +162,8 @@ interface Funnel {
   list: Array<{ id: string; sender_email: string; document_name: string; status: string; created_at: string; completed_at: string | null }>;
 }
 
-function EnvelopesTab({ window }: { window: WindowKey }) {
-  const { data, loading, denied, error } = useAdminData<Funnel>('/v1/admin/envelopes', window);
+function EnvelopesTab({ window, excludeInternal }: { window: WindowKey; excludeInternal: boolean }) {
+  const { data, loading, denied, error } = useAdminData<Funnel>('/v1/admin/envelopes', window, excludeInternal);
   if (denied) return <Denied />;
   if (loading) return <Spinner />;
   if (error || !data) return <p className="text-sm text-red-700 py-8 text-center" data-testid="admin-error">{error || 'Failed to load'}</p>;
@@ -210,8 +210,8 @@ interface Signals {
   agentAdoption: { walletCreates: number; humanCreates: number; apiKeyHolders: number };
 }
 
-function SignalsTab({ window }: { window: WindowKey }) {
-  const { data, loading, denied, error } = useAdminData<Signals>('/v1/admin/signals', window);
+function SignalsTab({ window, excludeInternal }: { window: WindowKey; excludeInternal: boolean }) {
+  const { data, loading, denied, error } = useAdminData<Signals>('/v1/admin/signals', window, excludeInternal);
   if (denied) return <Denied />;
   if (loading) return <Spinner />;
   if (error || !data) return <p className="text-sm text-red-700 py-8 text-center" data-testid="admin-error">{error || 'Failed to load'}</p>;
@@ -230,6 +230,8 @@ function SignalsTab({ window }: { window: WindowKey }) {
 export function AdminConsolePage() {
   const [tab, setTab] = useState<TabKey>('overview');
   const [window, setWindow] = useState<WindowKey>('30d');
+  // F-35 — exclude the operator's own data by default (internal_test + configured identities).
+  const [excludeInternal, setExcludeInternal] = useState(true);
   const [access, setAccess] = useState<'checking' | 'operator' | 'denied'>('checking');
 
   // Gate the WHOLE console at the shell, not per-tab: a non-operator must see the
@@ -251,20 +253,32 @@ export function AdminConsolePage() {
     <div className="max-w-5xl mx-auto px-4 py-8" data-testid="admin-console">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h1 className="text-2xl font-semibold">Operator console</h1>
-        {tab !== 'reconciliation' && (
-          <div className="flex flex-wrap gap-1" role="group" aria-label="Time window">
-            {WINDOWS.map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => setWindow(key)}
-                className={`text-xs px-2 py-1 rounded border ${window === key ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}`}
-                data-testid={`admin-window-${key}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-3">
+          {tab !== 'reconciliation' && (
+            <div className="flex flex-wrap gap-1" role="group" aria-label="Time window">
+              {WINDOWS.map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setWindow(key)}
+                  className={`text-xs px-2 py-1 rounded border ${window === key ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}`}
+                  data-testid={`admin-window-${key}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+          <label className="flex items-center gap-1.5 text-xs text-gray-700 whitespace-nowrap cursor-pointer" data-testid="admin-exclude-internal">
+            <input
+              type="checkbox"
+              checked={excludeInternal}
+              onChange={(e) => setExcludeInternal(e.target.checked)}
+              className="rounded border-gray-300"
+              data-testid="admin-exclude-internal-input"
+            />
+            Exclude internal
+          </label>
+        </div>
       </div>
 
       <div className="flex gap-1 border-b border-gray-200 mb-6 overflow-x-auto">
@@ -280,11 +294,11 @@ export function AdminConsolePage() {
         ))}
       </div>
 
-      {tab === 'overview' && <OverviewTab window={window} />}
-      {tab === 'accounts' && <AccountsTab window={window} />}
-      {tab === 'envelopes' && <EnvelopesTab window={window} />}
-      {tab === 'signals' && <SignalsTab window={window} />}
-      {tab === 'reconciliation' && <AdminReconciliationPage />}
+      {tab === 'overview' && <OverviewTab window={window} excludeInternal={excludeInternal} />}
+      {tab === 'accounts' && <AccountsTab window={window} excludeInternal={excludeInternal} />}
+      {tab === 'envelopes' && <EnvelopesTab window={window} excludeInternal={excludeInternal} />}
+      {tab === 'signals' && <SignalsTab window={window} excludeInternal={excludeInternal} />}
+      {tab === 'reconciliation' && <AdminReconciliationPage excludeInternal={excludeInternal} />}
     </div>
   );
 }

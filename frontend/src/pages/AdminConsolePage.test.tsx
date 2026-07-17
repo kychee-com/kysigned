@@ -94,3 +94,39 @@ describe('AdminConsolePage (F-34, #148)', () => {
     expect(screen.queryByTestId('admin-kpi-accountsOpened')).not.toBeInTheDocument();
   });
 });
+
+describe('AdminConsolePage — F-35 exclude-internal toggle (#148)', () => {
+  it('renders the toggle checked by default; every fetch carries exclude_internal=1 (AC-188)', async () => {
+    const fetchMock = mockFetchByPath({ '/v1/admin/overview': overview });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<MemoryRouter><AdminConsolePage /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId('admin-kpi-accountsOpened')).toBeInTheDocument());
+    expect(screen.getByTestId('admin-exclude-internal-input')).toBeChecked();
+    // the Overview tab fetch (not the shell access-probe) carries the default-on param
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('exclude_internal=1'))).toBe(true);
+  });
+
+  it('unchecking the toggle re-fetches with exclude_internal=0 (AC-189)', async () => {
+    const fetchMock = mockFetchByPath({ '/v1/admin/overview': overview });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<MemoryRouter><AdminConsolePage /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId('admin-kpi-accountsOpened')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('admin-exclude-internal-input'));
+    await waitFor(() => expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('exclude_internal=0'))).toBe(true));
+  });
+
+  it('the reconciliation tab fetch also carries the toggle (AC-190)', async () => {
+    const fetchMock = mockFetchByPath({ '/v1/admin/overview': overview, '/v1/admin/archive-confirmations': { outstanding: [] } });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<MemoryRouter><AdminConsolePage /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId('admin-kpi-accountsOpened')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('admin-tab-reconciliation'));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          (c) => String(c[0]).includes('/v1/admin/archive-confirmations') && String(c[0]).includes('exclude_internal='),
+        ),
+      ).toBe(true),
+    );
+  });
+});
