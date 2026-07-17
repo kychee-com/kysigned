@@ -230,6 +230,22 @@ function SignalsTab({ window }: { window: WindowKey }) {
 export function AdminConsolePage() {
   const [tab, setTab] = useState<TabKey>('overview');
   const [window, setWindow] = useState<WindowKey>('30d');
+  const [access, setAccess] = useState<'checking' | 'operator' | 'denied'>('checking');
+
+  // Gate the WHOLE console at the shell, not per-tab: a non-operator must see the
+  // access-denied message ALONE — no title, window selector, or tabs (AC-179). One
+  // probe against an operator route decides access (it doesn't vary by window/tab);
+  // a non-403 error still renders the console so the tab can surface its own error.
+  useEffect(() => {
+    let active = true;
+    apiGet('/v1/admin/overview')
+      .then(() => { if (active) setAccess('operator'); })
+      .catch((e) => { if (active) setAccess(e instanceof ApiError && e.status === 403 ? 'denied' : 'operator'); });
+    return () => { active = false; };
+  }, []);
+
+  if (access === 'checking') return <Spinner />;
+  if (access === 'denied') return <Denied />;
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8" data-testid="admin-console">

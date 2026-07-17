@@ -48,7 +48,8 @@ describe('AdminConsolePage (F-34, #148)', () => {
     vi.stubGlobal('fetch', fetchMock);
     render(<MemoryRouter><AdminConsolePage /></MemoryRouter>);
     await waitFor(() => expect(screen.getByTestId('admin-kpi-accountsOpened')).toHaveTextContent('3'));
-    expect(fetchMock.mock.calls[0][0]).toContain('window=30d'); // default window
+    // the Overview tab fetches with the default window (a preceding call is the shell access probe)
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('window=30d'))).toBe(true);
   });
 
   it('switching the window re-fetches with the new window (AC-182)', async () => {
@@ -82,10 +83,14 @@ describe('AdminConsolePage (F-34, #148)', () => {
     expect(screen.getByTestId('admin-kpi-walletCreates')).toHaveTextContent('2');
   });
 
-  it('a 403 from the operator gate shows access-denied, not data (AC-179)', async () => {
+  it('a 403 shows ONLY the access-denied message — no console chrome (AC-179)', async () => {
     vi.stubGlobal('fetch', mockFetchByPath({ '/v1/admin/overview': 403 }));
     render(<MemoryRouter><AdminConsolePage /></MemoryRouter>);
     await waitFor(() => expect(screen.getByTestId('admin-denied')).toBeInTheDocument());
+    // A non-operator sees the message alone — no title/tabs/window selector/data.
+    expect(screen.queryByTestId('admin-console')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('admin-tab-accounts')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('admin-window-7d')).not.toBeInTheDocument();
     expect(screen.queryByTestId('admin-kpi-accountsOpened')).not.toBeInTheDocument();
   });
 });
