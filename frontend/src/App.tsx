@@ -8,6 +8,7 @@ import { HashCheckPage } from './pages/HashCheckPage'
 import { MarketingHomePage } from './pages/MarketingHomePage'
 import { PasskeysPage } from './pages/PasskeysPage'
 import { ApiKeysPage } from './pages/ApiKeysPage'
+import { AdminReconciliationPage } from './pages/AdminReconciliationPage'
 import { AuthProvider } from './auth/AuthContext'
 import { RequireAuth } from './auth/RequireAuth'
 import { SignInScreen } from './auth/SignInScreen'
@@ -85,6 +86,18 @@ export function App() {
             element={
               <RequireAuth>
                 <ApiKeysPage />
+              </RequireAuth>
+            }
+          />
+          {/* F-33 (#148) operator surface — NOT linked from the nav. RequireAuth
+              blocks anonymous visitors (sign-in screen); the page's data endpoint
+              is operator-gated server-side (F-33.1), so a signed-in non-operator
+              gets the access-denied view rather than the reconciliation data. */}
+          <Route
+            path="/admin"
+            element={
+              <RequireAuth>
+                <AdminReconciliationPage />
               </RequireAuth>
             }
           />

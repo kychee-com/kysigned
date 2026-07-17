@@ -8,6 +8,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildAppDeps, type AppEnv, type Run402Runtime } from './config.js';
+import { isOperator } from '../api/auth/operator.js';
 
 type SentEmail = {
   projectId: string;
@@ -74,6 +75,21 @@ describe('buildAppDeps — F-33.1 operator allowlist', () => {
   it('unset → empty allowlist (fail-closed: a fresh install/fork has no operators, AC-181)', () => {
     const deps = buildAppDeps(baseEnv, fakeRuntime());
     assert.deepEqual(deps.operatorEmails, []);
+  });
+});
+
+describe('F-33.4 / AC-181 — forkable operator surface, fail-closed by default', () => {
+  it('a fresh fork (no operator config) has an EMPTY allowlist → every session is locked out', () => {
+    const deps = buildAppDeps(baseEnv, fakeRuntime());
+    assert.deepEqual(deps.operatorEmails, []); // the public template bakes in NO operator identity
+    assert.equal(isOperator('anyone@fork.example', deps.operatorEmails ?? []), false); // fail-closed
+    assert.equal(isOperator('barry@kychee.com', deps.operatorEmails ?? []), false);
+  });
+
+  it('a fork grants operator access purely by configuring its own allowlist (no code change)', () => {
+    const deps = buildAppDeps({ ...baseEnv, KYSIGNED_OPERATOR_EMAILS: 'ops@lawfirm.example' }, fakeRuntime());
+    assert.equal(isOperator('ops@lawfirm.example', deps.operatorEmails ?? []), true);
+    assert.equal(isOperator('stranger@lawfirm.example', deps.operatorEmails ?? []), false);
   });
 });
 

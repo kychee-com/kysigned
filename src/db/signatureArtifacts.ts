@@ -179,6 +179,24 @@ export async function listArtifactsForArchiveReconciliation(
   return (res.rows as Row[]).map(mapRow);
 }
 
+/**
+ * F-33.3 (#148) — the operator dashboard's outstanding-confirmation backlog: every
+ * artifact with a selector whose archive confirmation is NOT clean (`unconfirmed` /
+ * `outage` / unknown-NULL), across ALL time, newest first. Same non-clean predicate
+ * as the F-32.7 sweep (`listArtifactsForArchiveReconciliation`) MINUS the 24-48h
+ * window — the dashboard shows the whole standing backlog, the sweep re-checks one
+ * day's slice. Confirmed rows are excluded (they are not outstanding).
+ */
+export async function listOutstandingArchiveConfirmations(pool: DbPool): Promise<SignatureArtifact[]> {
+  const res = await pool.query(
+    `SELECT * FROM signature_artifacts
+      WHERE dkim_selector IS NOT NULL
+        AND (archive_confirmation IS NULL OR archive_confirmation IN ('unconfirmed', 'outage'))
+      ORDER BY created_at DESC`,
+  );
+  return (res.rows as Row[]).map(mapRow);
+}
+
 /** Record a sweep re-check outcome (F-32.7): state + checked-at, healed-at when it healed. */
 export async function updateArtifactArchiveConfirmation(
   pool: DbPool,

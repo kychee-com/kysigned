@@ -83,6 +83,7 @@ import {
   handleAddAllowedSender,
   handleRemoveAllowedSender,
   handleListAllowedSenders,
+  handleListArchiveConfirmations,
   type AddAllowedSenderRequest,
 } from '../api/admin.js';
 import type { AppDeps } from './config.js';
@@ -190,6 +191,7 @@ const OPERATOR_ROUTES: ReadonlySet<string> = new Set([
   'listAllowedSenders',
   'addAllowedSender',
   'removeAllowedSender',
+  'listArchiveConfirmations',
 ]);
 
 export async function handleRequest(req: Request, deps: RequestDeps): Promise<Response> {
@@ -533,6 +535,11 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
     // ── admin allowlist (session; operator-gated in the handler) ──
     case 'listAllowedSenders': {
       const r = await handleListAllowedSenders(deps.adminCtx(actorEmail!));
+      return json(r.body, r.status);
+    }
+    case 'listArchiveConfirmations': {
+      // F-33.3 / AC-180 — operator-only reconciliation view (gated above).
+      const r = await handleListArchiveConfirmations(deps.adminCtx(actorEmail!));
       return json(r.body, r.status);
     }
     case 'addAllowedSender': {

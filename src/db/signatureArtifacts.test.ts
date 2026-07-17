@@ -13,6 +13,7 @@ import {
   updateArtifactTimestamps,
   listArtifactsForArchiveReconciliation,
   updateArtifactArchiveConfirmation,
+  listOutstandingArchiveConfirmations,
 } from './signatureArtifacts.js';
 import { createSignatureArtifactsMemoryPool } from './signatureArtifacts.testpool.js';
 import type { TimestampProof } from '../timestamp/contract.js';
@@ -150,6 +151,23 @@ describe('archive-confirmation state (F-32.6/F-32.7, migration 010)', () => {
     const due = await listArtifactsForArchiveReconciliation(pool, NOW);
     const who = due.map((a) => a.signer_email).sort();
     assert.deepEqual(who, ['in-null@x.com', 'in-outage@x.com', 'in-unconfirmed@x.com']);
+  });
+
+  it('outstanding list (dashboard, #148/F-33.3): every non-clean artifact across the FULL backlog (no window), newest first; confirmed + selector-less excluded', async () => {
+    const { pool } = createSignatureArtifactsMemoryPool();
+    // Insertion order fixes created_at (testpool assigns increasing timestamps by seq).
+    await upsertSignatureArtifact(pool, baseInput({ signer_email: 'unconfirmed@x.com', archive_confirmation: 'unconfirmed' })); // seq1 (oldest)
+    await upsertSignatureArtifact(pool, baseInput({ signer_email: 'outage@x.com', archive_confirmation: 'outage' }));          // seq2
+    await upsertSignatureArtifact(pool, baseInput({ signer_email: 'unknown@x.com' }));                                        // seq3 (null state)
+    await upsertSignatureArtifact(pool, baseInput({ signer_email: 'confirmed@x.com', archive_confirmation: 'confirmed' }));   // excluded
+    await upsertSignatureArtifact(pool, baseInput({ signer_email: 'noselector@x.com', archive_confirmation: 'outage', dkim_selector: null })); // excluded
+
+    const out = await listOutstandingArchiveConfirmations(pool);
+    // confirmed + selector-less excluded; the three non-clean present, NEWEST FIRST.
+    assert.deepEqual(
+      out.map((a) => a.signer_email),
+      ['unknown@x.com', 'outage@x.com', 'unconfirmed@x.com'],
+    );
   });
 
   it('updateArtifactArchiveConfirmation heals a row: confirmed + healed_at set, checked_at advanced', async () => {

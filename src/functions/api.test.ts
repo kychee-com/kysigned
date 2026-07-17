@@ -1192,3 +1192,62 @@ describe('handleRequest — operator gate (F-33.1 / AC-177, AC-178, #157)', () =
     assert.equal(((await res.json()) as { code: string }).code, 'auth_key_scope');
   });
 });
+
+// ── F-33.3 / AC-180 — the operator reconciliation read ──────────────────────────
+// GET /v1/admin/archive-confirmations is operator-gated and returns the outstanding
+// (non-clean) archive-confirmation backlog, shaped for the dashboard: envelope +
+// signer context, the state (NULL → "unknown"), and the confirmation timestamps.
+describe('handleRequest — operator archive-confirmations read (F-33.3 / AC-180)', () => {
+  const cookie = () => `${SESSION_COOKIE}=${VALID_SESSION_ID}`;
+  const artifactRow = (over: Record<string, unknown> = {}) => ({
+    id: 'sa-1', envelope_id: 'env-9', signer_email: 'signer@x.com', sha256_eml: 'a'.repeat(64),
+    dkim_domain: 'x.com', dkim_selector: 'sel', archive_confirmation: 'outage', ts_status: 'pending',
+    archive_confirmation_checked_at: new Date('2026-07-16T08:00:00Z'), archive_confirmation_healed_at: null,
+    created_at: new Date('2026-07-15T08:00:00Z'), updated_at: new Date('2026-07-15T08:00:00Z'), ...over,
+  });
+  const operatorDepsReturning = (row: Record<string, unknown>) =>
+    makeDeps({
+      pool: validSessionPool('op@kychee.com'),
+      operatorEmails: ['op@kychee.com'],
+      adminCtx: (operator: string) => ({
+        pool: makePool((text) => (text.includes('ORDER BY created_at DESC') ? [row] : [])).pool,
+        operator,
+      }),
+    });
+
+  it('a non-operator session is refused → 403 auth_operator_scope (the route is operator-gated)', async () => {
+    const res = await handleRequest(
+      req('GET', '/v1/admin/archive-confirmations', { headers: { cookie: cookie() } }),
+      makeDeps({ pool: validSessionPool('creator@example.com'), operatorEmails: ['op@kychee.com'] }),
+    );
+    assert.equal(res.status, 403);
+    assert.equal(((await res.json()) as { code: string }).code, 'auth_operator_scope');
+  });
+
+  it('an operator gets the outstanding artifacts shaped for the dashboard → 200', async () => {
+    const res = await handleRequest(
+      req('GET', '/v1/admin/archive-confirmations', { headers: { cookie: cookie() } }),
+      operatorDepsReturning(artifactRow()),
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { outstanding: Array<Record<string, unknown>> };
+    assert.equal(body.outstanding.length, 1);
+    assert.equal(body.outstanding[0].envelope_id, 'env-9');
+    assert.equal(body.outstanding[0].signer_email, 'signer@x.com');
+    assert.equal(body.outstanding[0].dkim_domain, 'x.com');
+    assert.equal(body.outstanding[0].dkim_selector, 'sel');
+    assert.equal(body.outstanding[0].state, 'outage');
+    assert.equal(body.outstanding[0].checked_at, '2026-07-16T08:00:00.000Z');
+    assert.equal(body.outstanding[0].healed_at, null);
+  });
+
+  it('a NULL archive_confirmation surfaces as the "unknown" state', async () => {
+    const res = await handleRequest(
+      req('GET', '/v1/admin/archive-confirmations', { headers: { cookie: cookie() } }),
+      operatorDepsReturning(artifactRow({ archive_confirmation: null, archive_confirmation_checked_at: null })),
+    );
+    const body = (await res.json()) as { outstanding: Array<{ state: string; checked_at: unknown }> };
+    assert.equal(body.outstanding[0].state, 'unknown');
+    assert.equal(body.outstanding[0].checked_at, null);
+  });
+});

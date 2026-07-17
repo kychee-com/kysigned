@@ -11,6 +11,7 @@ import {
   listAllowedSenders,
   type IdentityType,
 } from '../db/allowedSenders.js';
+import { listOutstandingArchiveConfirmations } from '../db/signatureArtifacts.js';
 
 export interface AdminContext {
   pool: DbPool;
@@ -66,4 +67,25 @@ export async function handleRemoveAllowedSender(
 export async function handleListAllowedSenders(ctx: AdminContext) {
   const rows = await listAllowedSenders(ctx.pool);
   return { status: 200, body: rows };
+}
+
+/**
+ * F-33.3 (#148) — the operator dashboard's archive-confirmation reconciliation view.
+ * Returns the outstanding (non-clean) artifacts with envelope + signer context, the
+ * confirmation state (NULL surfaced as `unknown`), and the confirmation timestamps —
+ * read from the same signature_artifacts fields F-32.6/F-32.7 write (no parallel store).
+ */
+export async function handleListArchiveConfirmations(ctx: AdminContext) {
+  const artifacts = await listOutstandingArchiveConfirmations(ctx.pool);
+  const outstanding = artifacts.map((a) => ({
+    envelope_id: a.envelope_id,
+    signer_email: a.signer_email,
+    dkim_domain: a.dkim_domain,
+    dkim_selector: a.dkim_selector,
+    state: a.archive_confirmation ?? 'unknown',
+    checked_at: a.archive_confirmation_checked_at ? a.archive_confirmation_checked_at.toISOString() : null,
+    healed_at: a.archive_confirmation_healed_at ? a.archive_confirmation_healed_at.toISOString() : null,
+    created_at: a.created_at.toISOString(),
+  }));
+  return { status: 200, body: { outstanding } };
 }
