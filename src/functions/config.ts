@@ -127,6 +127,8 @@ export interface AppEnv {
   KYSIGNED_INTERNAL_TEST_DOMAINS?: string;
   /** F-33.1 `[both]` — optional comma-list of operator emails (the `/admin` operator surface). Empty/unset = fail-closed (no operators). */
   KYSIGNED_OPERATOR_EMAILS?: string;
+  /** F-35 `[both]` — optional comma-list of operator/test identity rules the console excludes when "exclude internal" is on (exact email / `@domain` / `prefix*@domain`). Empty/unset = exclude nothing beyond internal_test envelopes. kysigned.com's list is `[service]` config. */
+  KYSIGNED_INTERNAL_IDENTITIES?: string;
   /**
    * Our signing mailbox id (the `forward-to-sign` mailbox). run402 MAILBOX
    * webhooks are UNSIGNED, so the inbound webhook authenticates by the payload
@@ -276,6 +278,8 @@ export interface AppDeps {
   operatorAlertEmail: string;
   /** F-33.1 `[both]` — operator allowlist: a session whose authenticated email is a member is an operator. Empty = fail-closed (nobody); kysigned.com's list is `[service]` config set in the private deploy. */
   operatorEmails?: string[];
+  /** F-35 `[both]` — console internal-identity exclusion rules (exact / `@domain` / `prefix*@domain`). Empty = only internal_test envelopes count as internal; kysigned.com's list is `[service]` config in the private deploy. */
+  internalIdentities?: string[];
   /** F-9.9 / AC-124 — delivery-confirmation backstop window as a run `delay` string (e.g. "24h"). */
   deliveryBackstop: string;
   /** F-16.6 / AC-97 — trial-credit abuse-monitor alert threshold (grants per 24h; 0 disables alerting). */
@@ -341,6 +345,10 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
   // F-33.1 `[both]` — operator allowlist for the /admin operator surface; empty =
   // fail-closed (no operators). kysigned.com's list is `[service]`, set in deploy.ts.
   const operatorEmails = csv(env.KYSIGNED_OPERATOR_EMAILS) ?? [];
+  // F-35 `[both]` — console exclude-internal identity rules; empty = fork default
+  // (the toggle then hides only internal_test envelopes). kysigned.com's list is
+  // `[service]`, set in deploy.ts.
+  const internalIdentities = csv(env.KYSIGNED_INTERNAL_IDENTITIES) ?? [];
 
   const pool = createHttpDbPool(runtime.adminDb);
   const emailProvider = createRunEmailProvider({
@@ -629,6 +637,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     signupGrantAlertThreshold,
     operatorAlertEmail,
     operatorEmails,
+    internalIdentities,
     projectId,
     getPdf,
     storePdf,

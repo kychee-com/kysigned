@@ -93,6 +93,21 @@ describe('F-33.4 / AC-181 — forkable operator surface, fail-closed by default'
   });
 });
 
+describe('buildAppDeps — F-35 internal-identity list', () => {
+  it('KYSIGNED_INTERNAL_IDENTITIES parses to the console internal-identity rules', () => {
+    const deps = buildAppDeps(
+      { ...baseEnv, KYSIGNED_INTERNAL_IDENTITIES: '@kychee.com, volinskey@gmail.com, redteam-*@kysigned.com' },
+      fakeRuntime(),
+    );
+    assert.deepEqual(deps.internalIdentities, ['@kychee.com', 'volinskey@gmail.com', 'redteam-*@kysigned.com']);
+  });
+
+  it('unset → empty list (fork default: the exclude-internal toggle then hides only internal_test)', () => {
+    const deps = buildAppDeps(baseEnv, fakeRuntime());
+    assert.deepEqual(deps.internalIdentities, []);
+  });
+});
+
 describe('buildAppDeps — run402 up generated env', () => {
   it('uses generated Run402 origin and mailbox ids for clone deployments', () => {
     const deps = buildAppDeps(
