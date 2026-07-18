@@ -16,7 +16,7 @@
  * per the documented recipe). Mirrors the `mailauth.d.ts` ambient-shim pattern.
  *
  * Keep these in lock-step with the real package signatures
- * (`@run402/functions@3.7.1`, `@run402/sdk@4.2.1`). Add to the shim only when a
+ * (`@run402/functions@3.9.0`, `@run402/sdk@4.8.0`). Add to the shim only when a
  * non-test module imports a new symbol. (The 3.7.1 caller idempotency key rides
  * the `x-run402-idempotency-key` request header — read directly, no new import.)
  */
@@ -100,6 +100,32 @@ declare module '@run402/functions' {
   export function getRoutedPaymentContext(
     source: Request | { headers: { get(name: string): string | null } },
   ): RoutedHttpPaymentContextV1 | null;
+
+  // ── F-36 app events (project event feed) ───────────────────────────────────
+  // `events.emit` writes a business fact into the project's cursored event
+  // feed (class/source `"app"`). Gateway owns type grammar
+  // (`/^[a-z][a-z0-9_]{2,63}$/`, platform names reserved), the 8 KiB payload
+  // bound (truncates, never rejects), and FOREVER dedup on
+  // `(project_id, idempotency_key)` — a replay returns the original event
+  // with `deduplicated: true`. Mirrors `@run402/functions@3.9.0` `events.d.ts`.
+  // On non-2xx it throws (Run402EventsPlatformError — carries structural
+  // `code`/`status`); kysigned's seam catches structurally (the platform
+  // bundles its own copy at deploy, so cross-copy `instanceof` is unreliable).
+  export interface EventEmitOptions {
+    idempotencyKey?: string;
+  }
+  export interface EventEmitResult {
+    cursor: string;
+    event_type: string;
+    payload: Record<string, unknown>;
+    payload_truncated?: true;
+    occurred_at: string;
+    deduplicated: boolean;
+    [key: string]: unknown;
+  }
+  export const events: {
+    emit(type: string, payload?: Record<string, unknown>, opts?: EventEmitOptions): Promise<EventEmitResult>;
+  };
 }
 
 declare module '@run402/sdk' {
