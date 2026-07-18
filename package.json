@@ -33,7 +33,7 @@
     "test:all": "node scripts/test-all.mjs"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.1.1",
     "@types/pg": "^8.20.0",
     "esbuild": "^0.28.1",
     "tsx": "^4.19.0",
