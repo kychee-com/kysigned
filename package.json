@@ -24,6 +24,7 @@
     "build:run402-cloud": "node scripts/build-run402-cloud.mjs",
     "test": "node --test --import tsx src/**/*.test.ts",
     "test:run402-app": "node --test test/run402-app-manifest.test.mjs",
+    "test:live": "node scripts/test-live.mjs",
     "test:timestamp:live": "node --test --import tsx src/timestamp/**/*.live.ts",
     "test:e2e": "node --test --import tsx test/e2e/*.test.ts",
     "test:e2e:smoke": "node --test --import tsx test/e2e-smoke/*.test.ts",
