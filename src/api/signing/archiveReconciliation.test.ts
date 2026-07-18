@@ -9,6 +9,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { runArchiveReconciliation } from './archiveReconciliation.js';
+import { emitAppEvent as seamEmitAppEvent } from '../../integrations/appEvents.js';
 import { createSignatureArtifactsMemoryPool } from '../../db/signatureArtifacts.testpool.js';
 import { upsertSignatureArtifact } from '../../db/signatureArtifacts.js';
 import type { EmailMessage, EmailProvider } from '../../email/types.js';
@@ -118,6 +119,38 @@ describe('runArchiveReconciliation — the F-32.7 daily backstop', () => {
         payload: { monitor: 'archive_reconciliation', still_failing: 1, healed: 0 },
       },
     ]);
+  });
+
+  it('F-36/AC-196: the sweep finishes and still emails when the events surface fails (real seam)', async () => {
+    const { pool, rows } = createSignatureArtifactsMemoryPool();
+    await seed(pool, rows, { signer_email: 'alice@customer.example' });
+    const { provider, sends } = capturingEmail();
+    const { fetchFn } = archiveFetch([]);
+    const logs: string[] = [];
+    const failingSeam = (async (type: never, ids: readonly string[], payload: never) =>
+      seamEmitAppEvent(
+        {
+          emitRuntimeEvent: async () => {
+            throw Object.assign(new Error('gateway 503'), { status: 503 });
+          },
+          log: (m: string) => void logs.push(m),
+        },
+        type,
+        ids,
+        payload,
+      )) as never;
+
+    const result = await runArchiveReconciliation(pool, {
+      emailProvider: provider,
+      operatorDomain: 'kysigned.com',
+      archive: { fetchFn },
+      now: NOW,
+      emitAppEvent: failingSeam,
+    });
+    assert.equal(result.alerted, true, 'the sweep is never gated by an emit failure');
+    assert.equal(sends.length, 1, 'the operator alert email still sends');
+    assert.equal(logs.length, 1);
+    assert.match(logs[0], /sweep_anomaly/);
   });
 
   it('still-failing artifacts produce EXACTLY ONE aggregated operator email to info@ — never to customers (AC-165/AC-166)', async () => {

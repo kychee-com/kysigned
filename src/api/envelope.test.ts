@@ -25,6 +25,7 @@ import {
   unsubscribeHeader,
 } from './envelope.js';
 import type { DbPool } from '../db/pool.js';
+import { emitAppEvent as seamEmitAppEvent } from '../integrations/appEvents.js';
 import type { EmailProvider, EmailMessage } from '../email/types.js';
 import type { Envelope, EnvelopeSigner } from '../db/types.js';
 
@@ -1182,6 +1183,35 @@ describe('Envelope API — from spec acceptance criteria', () => {
       const r2 = await handleUndeliverableSigningRequest(ctx, envId, 'bounce2@nope.com');
       assert.equal(r2.body.marked, false);
       assert.equal(events.length, 1, 'unmarked re-fire emits nothing');
+    });
+
+    it('F-36/AC-196: the undeliverable mark completes when the events surface fails (real seam)', async () => {
+      await handleCreateEnvelope(
+        { pool: db.pool, emailProvider: email, baseUrl: 'https://kysigned.com', senderIdentity: 'creator@acme.com' },
+        { pdf_base64: TEST_FIXTURE_PDF_B64, document_name: 'UndelivFault', signers: [{ email: 'bounce3@nope.com', name: 'Bo' }] }
+      );
+      const envId = db.envelopes[db.envelopes.length - 1].id;
+      const logs: string[] = [];
+      const failingSeam = (async (type: never, ids: readonly string[], payload: never) =>
+        seamEmitAppEvent(
+          {
+            emitRuntimeEvent: async () => {
+              throw new Error('socket hang up');
+            },
+            log: (m: string) => void logs.push(m),
+          },
+          type,
+          ids,
+          payload,
+        )) as never;
+      const r = await handleUndeliverableSigningRequest(
+        { pool: db.pool, emailProvider: email, baseUrl: 'https://kysigned.com', emitAppEvent: failingSeam },
+        envId,
+        'bounce3@nope.com',
+      );
+      assert.equal(r.body.marked, true, 'the mark is never gated by an emit failure');
+      assert.equal(logs.length, 1);
+      assert.match(logs[0], /envelope_undeliverable/);
     });
 
     it('marks the signer undeliverable and notifies the creator; idempotent (AC-50)', async () => {

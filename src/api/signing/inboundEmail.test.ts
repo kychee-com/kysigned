@@ -8,6 +8,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { handleReplyReceived, handleBounce, readReceiptVerdicts, type InboundEmailCtx } from './inboundEmail.js';
+import { emitAppEvent } from '../../integrations/appEvents.js';
 import { RetryableRunError, PermanentRunError, type CreateRunOptions } from '../../functions/runs.js';
 import type { DbPool } from '../../db/pool.js';
 import type { EmailMessage } from '../../email/types.js';
@@ -262,5 +263,34 @@ describe('inboundEmail — F-36 app events (60.3)', () => {
         payload: { envelope_id: 'env-1', message_id: 'msg-2', code: 'wrong_phrase' },
       },
     ]);
+  });
+
+  it('F-36/AC-196: signing completes when the events surface fails (real seam, throwing runtime emitter)', async () => {
+    const r = recorder();
+    const logs: string[] = [];
+    const failingSeam = ((type: never, ids: readonly string[], payload: never) =>
+      emitAppEvent(
+        {
+          emitRuntimeEvent: async () => {
+            throw Object.assign(new Error('gateway 500'), { status: 500 });
+          },
+          log: (m: string) => void logs.push(m),
+        },
+        type,
+        ids,
+        payload,
+      )) as never;
+    const pool = fakePool([
+      { match: 'UPDATE envelope_signers SET acceptance_notified_at', rows: [{ id: 's-1' }] },
+      { match: 'FROM envelopes WHERE id', rows: ENV_ROWS },
+      { match: 'ORDER BY name', rows: SIGNER_ROWS },
+      { match: 'COUNT(*)', rows: [{ total: '2', signed: '1' }] },
+    ]);
+    const ctx: InboundEmailCtx = { ...ctxWith(pool, r, signedOutcome), emitAppEvent: failingSeam };
+    const out = await handleReplyReceived(ctx, { event: { message_id: 'msg-1' } });
+    assert.equal(out.action, 'signed', 'the transition is never gated by an emit failure');
+    assert.equal(logs.length, 1);
+    assert.match(logs[0], /signature_completed/);
+    assert.match(logs[0], /500/);
   });
 });

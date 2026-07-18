@@ -17,6 +17,7 @@ import {
 } from './signupGrantMonitor.js';
 import type { DbPool } from '../db/pool.js';
 import type { EmailMessage, EmailProvider } from '../email/types.js';
+import { emitAppEvent as seamEmitAppEvent } from '../integrations/appEvents.js';
 
 const NOW = new Date('2026-06-29T12:00:00Z');
 const within = new Date('2026-06-29T06:00:00Z'); // 6h ago (inside a 24h window)
@@ -125,6 +126,36 @@ describe('runSignupGrantMonitor', () => {
     });
     assert.equal(quiet.alerted, false);
     assert.equal(events.length, 0, 'no anomaly, no event');
+  });
+
+  it('F-36/AC-196: the monitor finishes and still emails when the events surface fails (real seam)', async () => {
+    const logs: string[] = [];
+    const failingSeam = (async (type: never, ids: readonly string[], payload: never) =>
+      seamEmitAppEvent(
+        {
+          emitRuntimeEvent: async () => {
+            throw Object.assign(new Error('quota'), { code: 'QUOTA_EXCEEDED', status: 403 });
+          },
+          log: (m: string) => void logs.push(m),
+        },
+        type,
+        ids,
+        payload,
+      )) as never;
+    const ledger = Array.from({ length: 5 }, (_, i) => ({ email: `u${i}@x.com`, source: 'signup_grant', created_at: within }));
+    const { provider, sent } = captureEmail();
+    const r = await runSignupGrantMonitor(statsPool(ledger), {
+      emailProvider: provider,
+      operatorDomain: 'kysigned.com',
+      alertThreshold: 3,
+      now: NOW,
+      emitAppEvent: failingSeam,
+    });
+    assert.equal(r.alerted, true, 'the monitor is never gated by an emit failure');
+    assert.equal(sent.length, 1, 'the operator alert email still sends');
+    assert.equal(logs.length, 1);
+    assert.match(logs[0], /sweep_anomaly/);
+    assert.match(logs[0], /QUOTA_EXCEEDED/);
   });
 
   it('routes the alert to the configured operator alert address when set (interim external routing, #149)', async () => {

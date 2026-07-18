@@ -18,6 +18,7 @@ import {
 } from './distributeBundle.js';
 import type { DbPool } from '../db/pool.js';
 import type { EmailMessage, EmailProvider } from '../email/types.js';
+import { emitAppEvent as seamEmitAppEvent } from '../integrations/appEvents.js';
 
 const ENV = 'e8a1f0c2-0000-4000-8000-000000000001';
 const BUNDLE = new Uint8Array(Buffer.from('%PDF-1.7\nbundle\n%%EOF\n'));
@@ -309,5 +310,30 @@ describe('distributeBundle — F-36 app events (60.3)', () => {
     for (const e of events.slice(1)) {
       assert.deepEqual({ type: e.type, ids: e.ids }, { type: events[0].type, ids: events[0].ids });
     }
+  });
+
+  it('F-36/AC-196: distribution completes when the events surface fails (real seam, throwing emitter)', async () => {
+    const logs: string[] = [];
+    const failingSeam = ((type: never, ids: readonly string[], payload: never) =>
+      seamEmitAppEvent(
+        {
+          emitRuntimeEvent: async () => {
+            throw Object.assign(new Error('quota'), { code: 'QUOTA_EXCEEDED', status: 403 });
+          },
+          log: (m: string) => void logs.push(m),
+        },
+        type,
+        ids,
+        payload,
+      )) as never;
+    const { pool } = makePool({
+      senderEmail: 'carol@acme.com',
+      signers: [{ id: 's1', email: 'alice@x.com', name: 'Alice' }],
+    });
+    const r = await distributeEnvelopeBundle(pool, ENV, deps({ emitAppEvent: failingSeam }));
+    assert.equal(r.action, 'distributed', 'distribution is never gated by an emit failure');
+    assert.equal(logs.length, 1);
+    assert.match(logs[0], /envelope_completed/);
+    assert.match(logs[0], /QUOTA_EXCEEDED/);
   });
 });
