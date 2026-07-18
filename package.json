@@ -36,13 +36,13 @@
     "@types/node": "^22.0.0",
     "@types/pg": "^8.20.0",
     "esbuild": "^0.28.1",
-    "tsx": "^4.19.0",
+    "tsx": "^4.23.1",
     "typescript": "^5.9.3"
   },
   "dependencies": {
     "@noble/hashes": "^2.2.0",
     "@pdf-lib/fontkit": "^1.1.1",
-    "@run402/sdk": "^4.2.1",
+    "@run402/sdk": "^4.8.0",
     "@types/qrcode": "^1.5.6",
     "bidi-js": "^1.0.3",
     "crypto-js": "^4.2.0",
