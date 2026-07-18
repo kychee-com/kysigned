@@ -184,6 +184,12 @@ kysigned runs **entirely** on [run402](https://run402.com): routed-HTTP function
 
 All run402 I/O **defaults to the [`@run402/sdk`](https://www.npmjs.com/package/@run402/sdk)**, the SDK owns the wire translation, so the app keeps no hand-maintained `snake_case` boundary adapters. The two raw-HTTP exceptions are documented and contained: the auth helpers call run402's `/auth/v1/*` endpoints directly (passing the project anon key), and the database pool wraps run402's HTTP SQL surface. Both map run402's `lower_snake_case` wire shape at the boundary.
 
+### Business events, dashboard, and paging built in
+
+Every deployment emits its business facts as run402 app events: `signature_completed`, `signer_declined`, `envelope_completed`, `envelope_undeliverable`, and `sweep_anomaly` from the two daily monitors. There is nothing to configure. Events land in your own project's feed, so you get an activity dashboard on your project page at console.run402.com, agent-readable catch-up via `run402 events --source app`, and optional Telegram paging through `run402 notifications` rules on your operator account.
+
+Payloads carry opaque ids and counts only. No signer emails or names, no document names or content ever leave your deployment. Event emission is best-effort by design: if the events surface is unavailable, the signing flow is never affected.
+
 ## License
 
 [Apache-2.0](LICENSE), the whole repository, with no per-file exceptions. Every dependency is permissive (MIT/Apache-2.0); there is no GPL or other copyleft anywhere in the tree, so forking and commercial use are unrestricted. See [LICENSES.md](LICENSES.md) for the dependency inventory and [LEGAL.md](LEGAL.md) for signature-validity disclaimers and jurisdictional limitations.

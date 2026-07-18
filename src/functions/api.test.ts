@@ -9,6 +9,8 @@
  */
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type pg from 'pg';
 import { handleRequest, type RequestDeps } from './api.js';
 import type { AppDeps } from './config.js';
@@ -1403,5 +1405,92 @@ describe('handleRequest — operator archive-confirmations read (F-33.3 / AC-180
     const body = (await res.json()) as { outstanding: Array<{ state: string; checked_at: unknown }> };
     assert.equal(body.outstanding[0].state, 'unknown');
     assert.equal(body.outstanding[0].checked_at, null);
+  });
+});
+
+// ── F-33.5 / AC-197 — metadata-only operator surface (documents never shown) ────
+describe('handleRequest — F-33.5 metadata-only operator surface (AC-197)', () => {
+  const cookie = () => `${SESSION_COOKIE}=${VALID_SESSION_ID}`;
+
+  it('the admin-surface inventory is exactly the registered metadata set (drift guard)', () => {
+    // Every admin-surface handler invocation flows through `deps.adminCtx(` —
+    // the single choke point. A new admin read/write must bump this count AND
+    // join the metadata-only sweep below.
+    const src = readFileSync(join(import.meta.dirname, 'api.ts'), 'utf8');
+    const adminCtxCalls = src.match(/deps\.adminCtx\(/g) ?? [];
+    assert.equal(
+      adminCtxCalls.length,
+      8,
+      'a NEW admin-surface handler appeared — register it here and cover it in the metadata-only sweep below',
+    );
+  });
+
+  it('every admin GET returns JSON metadata — never document bytes or base64 payloads', async () => {
+    const routes = [
+      '/v1/admin/overview?window=all',
+      '/v1/admin/accounts?window=all',
+      '/v1/admin/envelopes?window=all',
+      '/v1/admin/signals?window=all',
+      '/v1/admin/archive-confirmations',
+      '/v1/admin/allowed-senders',
+    ];
+    for (const path of routes) {
+      const res = await handleRequest(
+        req('GET', path, { headers: { cookie: cookie() } }),
+        makeDeps({
+          pool: validSessionPool('op@kychee.com'),
+          operatorEmails: ['op@kychee.com'],
+          adminCtx: (operator: string) => ({ pool: makePool(() => []).pool, operator, internalIdentities: [] }),
+        }),
+      );
+      assert.equal(res.status, 200, path);
+      assert.match(res.headers.get('content-type') ?? '', /application\/json/, `${path}: JSON only`);
+      const body = await res.text();
+      assert.ok(!body.includes('%PDF-'), `${path}: no PDF bytes`);
+      assert.ok(!/base64/i.test(body), `${path}: no base64 payload fields`);
+      JSON.parse(body);
+    }
+  });
+
+  it('operator status opens no document path: the envelope PDF route refuses an operator on a non-owned envelope', async () => {
+    const future = new Date(Date.now() + 60 * 60 * 1000);
+    const pool: DbPool = {
+      async query(text: string) {
+        if (text.includes('FROM auth_sessions')) {
+          return {
+            rows: [{
+              session_id: VALID_SESSION_ID,
+              email: 'op@kychee.com',
+              run402_access_token: 'a',
+              run402_refresh_token: 'r',
+              access_token_expires_at: future,
+              session_expires_at: future,
+              created_at: future,
+            }],
+            rowCount: 1,
+          } as never;
+        }
+        if (/SELECT \* FROM envelopes WHERE id = \$1/i.test(text)) {
+          return {
+            rows: [{
+              id: 'env-9', sender_email: 'other-creator@x.com', document_name: 'NDA',
+              document_hash: 'h', status: 'active', auto_close: true,
+              created_at: future, completed_at: null, completion_distributed_at: null,
+              expiry_at: null, pdf_deleted_at: null,
+            }],
+            rowCount: 1,
+          } as never;
+        }
+        return { rows: [], rowCount: 0 } as never;
+      },
+      async end() {},
+    };
+    const res = await handleRequest(
+      req('GET', '/v1/envelope/env-9/pdf', { headers: { cookie: cookie() } }),
+      makeDeps({ pool, operatorEmails: ['op@kychee.com'] }),
+    );
+    assert.ok(res.status === 403 || res.status === 404, `operator gets no document: ${res.status}`);
+    const body = await res.text();
+    assert.ok(!body.includes('%PDF-'), 'no document bytes in the refusal');
   });
 });
