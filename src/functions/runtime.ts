@@ -23,7 +23,7 @@ let _verifyWebhook: ((headers: Headers, raw: string, secret: string) => { valid:
 /** Build (once) the wired AppDeps from env + the real run402 runtime. */
 export async function getRuntimeDeps(): Promise<AppDeps> {
   if (_appDeps) return _appDeps;
-  const { adminDb, functions, getRoutedPaymentContext } = await import('@run402/functions');
+  const { adminDb, functions, getRoutedPaymentContext, events } = await import('@run402/functions');
   const { run402 } = await import('@run402/sdk');
   const env = process.env as Record<string, string | undefined>;
 
@@ -75,6 +75,19 @@ export async function getRuntimeDeps(): Promise<AppDeps> {
       typeof getRoutedPaymentContext === 'function'
         ? (req: Request) => getRoutedPaymentContext(req)
         : (req: Request) => parsePaymentContextFromHeaders(req.headers),
+    // F-36 — the app-events emitter. The platform bundles ITS copy of
+    // `@run402/functions` at deploy; a copy predating 3.9.0 has no `events`
+    // namespace, so guard here and let the appEvents seam degrade to a
+    // logged no-op instead of an outage (DD-43, same lag posture as above).
+    ...(events && typeof events.emit === 'function'
+      ? {
+          emitEvent: (
+            type: string,
+            payload?: Record<string, unknown>,
+            opts?: { idempotencyKey?: string },
+          ) => events.emit(type, payload, opts),
+        }
+      : {}),
   });
   return _appDeps;
 }

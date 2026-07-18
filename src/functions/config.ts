@@ -66,6 +66,7 @@ import { createOtsProvider } from '../timestamp/ots/provider.js';
 import { assembleBundle } from '../bundle/assembleBundle.js';
 import { resolveDocumentKey } from '../pdf/documentKey.js';
 import type { BundleSignerInput } from '../bundle/types.js';
+import { emitAppEvent, type EmitAppEvent, type RuntimeEventEmitter } from '../integrations/appEvents.js';
 
 // ── The run402 runtime surface (structural) ────────────────────────────────
 // The deployed-function entry injects the real `@run402/functions` adminDb()
@@ -95,6 +96,13 @@ export interface Run402Runtime {
    * predating tenant x402.
    */
   readPaymentContext?: (req: Request) => RoutedHttpPaymentContextV1 | null;
+  /**
+   * F-36 — `events.emit` from the platform-injected `@run402/functions`
+   * (3.9.0+): write a business fact into the project's event feed. Optional:
+   * absent on a runtime predating the events surface — the appEvents seam
+   * degrades to a logged no-op (DD-43).
+   */
+  emitEvent?: RuntimeEventEmitter;
 }
 
 // ── Env ────────────────────────────────────────────────────────────────────
@@ -301,6 +309,8 @@ export interface AppDeps {
   x402?: X402Config;
   /** F-30.2 — parse the gateway-settled payment context off a routed request (runtime-injected). */
   readPaymentContext?: (req: Request) => RoutedHttpPaymentContextV1 | null;
+  /** F-36 — emit a business fact into the project's run402 event feed. The DD-43 seam: never throws, stable idempotency keys, ids-only payloads. */
+  emitAppEvent: EmitAppEvent;
 
   /** #146 — bounded readiness probes for GET /v1/health?deep=1 (db + signing mailbox). */
   healthChecks: () => { checkDb: () => Promise<void>; checkMailbox: () => Promise<void> };
@@ -624,6 +634,20 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     createRun: runtime.createRun,
   });
 
+  // F-36 — the app-events seam over the runtime emitter (DD-43): never throws,
+  // logs failures with type + subject ids, derives the durable idempotency key.
+  // An absent runtime surface (lagging platform module) is a logged no-op.
+  const emitAppEventDep: EmitAppEvent = (type, subjectIds, payload) =>
+    emitAppEvent(
+      {
+        ...(runtime.emitEvent ? { emitRuntimeEvent: runtime.emitEvent } : {}),
+        log: (message) => console.error(message),
+      },
+      type,
+      subjectIds,
+      payload,
+    );
+
   return {
     pool,
     emailProvider,
@@ -644,6 +668,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     deletePdf,
     fetchRawMime,
     createRun: runtime.createRun,
+    emitAppEvent: emitAppEventDep,
     deliveryBackstop,
     ...(testResetSecret ? { testResetSecret } : {}),
     ...(testResetPattern ? { testResetPattern } : {}),

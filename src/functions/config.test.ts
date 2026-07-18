@@ -67,6 +67,34 @@ describe('buildAppDeps — F-32.7/F-16.6 operator alert address', () => {
   });
 });
 
+describe('buildAppDeps — F-36 app-events seam (DD-43)', () => {
+  it('wires emitAppEvent; without a runtime events surface it resolves as a no-op (never throws)', async () => {
+    const deps = buildAppDeps(baseEnv, fakeRuntime());
+    assert.equal(typeof deps.emitAppEvent, 'function');
+    await assert.doesNotReject(
+      deps.emitAppEvent('signature_completed', ['env-1'], { envelope_id: 'env-1' }),
+    );
+  });
+
+  it('routes through a present runtime emitter with the derived idempotency key', async () => {
+    const calls: Array<{ type: string; opts?: { idempotencyKey?: string } }> = [];
+    const runtime = fakeRuntime();
+    (runtime as { emitEvent?: unknown }).emitEvent = async (
+      type: string,
+      _payload?: Record<string, unknown>,
+      opts?: { idempotencyKey?: string },
+    ) => {
+      calls.push({ type, opts });
+      return {};
+    };
+    const deps = buildAppDeps(baseEnv, runtime);
+    await deps.emitAppEvent('envelope_completed', ['env-7'], { envelope_id: 'env-7' });
+    assert.deepEqual(calls, [
+      { type: 'envelope_completed', opts: { idempotencyKey: 'envelope_completed:env-7' } },
+    ]);
+  });
+});
+
 describe('buildAppDeps — F-33.1 operator allowlist', () => {
   it('KYSIGNED_OPERATOR_EMAILS parses to the operator allowlist', () => {
     const deps = buildAppDeps({ ...baseEnv, KYSIGNED_OPERATOR_EMAILS: 'op@kychee.com, ops2@kychee.com' }, fakeRuntime());
