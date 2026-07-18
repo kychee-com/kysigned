@@ -573,7 +573,10 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
   // throw surfaced as an opaque "Internal function error" (500) AFTER the
   // envelope was written and a credit debited.
   const signersToNotify = result.signers;
-  const delivered: string[] = [];
+  // F-12.4 (#160) — `sent` = run402 ACCEPTED the signing email for delivery.
+  // Never called "delivered": that word belongs to the per-signer
+  // delivery_status, which flips only on a provider event or a signature.
+  const sent: string[] = [];
   const undeliverable: string[] = [];
   const failed: string[] = [];
 
@@ -619,7 +622,7 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
         }],
         headers: unsubscribeHeader(ctx),
       });
-      delivered.push(signer.email);
+      sent.push(signer.email);
     } catch (err) {
       if (isUndeliverableRecipientError(err)) {
         // F-9.8 synchronous path: the address is suppressed/invalid → mark the
@@ -798,7 +801,7 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
       spam_notice: 'If signers do not receive the email, ask them to check their spam folder.',
       // Per-signer send outcome (2026-06-21). `undeliverable`/`failed` let the UI
       // warn the creator instead of a misleading all-green "sent" banner.
-      delivery: { delivered: delivered.length, undeliverable, failed },
+      delivery: { sent: sent.length, undeliverable, failed },
       // F-30.3 — the webhook signing secret, shown EXACTLY ONCE (AC-138).
       ...(callbackSecret ? { callback_secret: callbackSecret } : {}),
       ...(suggestion ? { suggestion } : {}),

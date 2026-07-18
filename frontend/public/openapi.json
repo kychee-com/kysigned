@@ -3,7 +3,7 @@
   "info": {
     "title": "kysigned API",
     "description": "Self-verifying e-signatures: create an envelope from a PDF plus signers; each human signer signs by forwarding one email (their provider DKIM-signs it); every party receives an offline-verifiable evidence bundle. This document describes the public /v1 surface of a kysigned instance. Machine-readable errors: every error response is `{ \"error\": string, \"code\": string }` where `code` is a stable taxonomy value (`auth_*`, `csrf_*`, `payment_*`, `validation_*`, `state_*`, `not_found`, `rate_size_*`, `idempotency_*`, `internal_*`). Completion webhooks: pass `callback_url` at create; deliveries are signed with `X-Kysigned-Signature: t=<unix>,v1=<hex hmac-sha256(callback_secret, \"<t>.<rawBody>\")>` — verify by recomputing the HMAC over `t + \".\" + rawBody` with the `callback_secret` returned once in the create response, comparing constant-time, and rejecting timestamps outside your tolerance window.",
-    "version": "0.53.0",
+    "version": "0.54.0",
     "license": { "name": "Apache-2.0", "identifier": "Apache-2.0" }
   },
   "servers": [{ "url": "/", "description": "This kysigned instance (origin-relative)" }],
@@ -95,7 +95,7 @@
             }
           },
           "callback_secret": { "type": "string", "description": "whs_… webhook signing secret — returned EXACTLY ONCE, only when callback_url was supplied" },
-          "delivery": { "type": "object", "description": "Per-signer send outcome (delivered / undeliverable / failed counts)" },
+          "delivery": { "type": "object", "description": "Per-envelope send outcome (sent / undeliverable / failed) - sent means run402 accepted the email; confirmed delivery is the per-signer delivery_status" },
           "tracking": {
             "type": "object",
             "description": "The envelope-observer handle (returned on EVERY create). `token` (ktt_…) is an envelope-scoped READ-ONLY credential: present it as the Authorization on GET /v1/envelope/{id} to poll status (full signer roster + delivery) with no account, API key, or session. It reads exactly this one envelope — any other id answers 404, and every mutation/list/download refuses it (403 auth_tracking_scope). Lost after a restart? The free POST /v1/envelope/preflight spending-intent replay (creator_email + your idempotency_key) returns this same create body, token included. Valid while the envelope exists (completion and void stay readable); dies with retention expiry or account deletion.",

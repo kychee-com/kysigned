@@ -88,6 +88,7 @@ import {
   handleGetAccounts,
   handleGetEnvelopes,
   handleGetSignals,
+  handleGetLedger,
   type AddAllowedSenderRequest,
 } from '../api/admin.js';
 import type { AppDeps } from './config.js';
@@ -202,6 +203,7 @@ const OPERATOR_ROUTES: ReadonlySet<string> = new Set([
   'adminAccounts',
   'adminEnvelopes',
   'adminSignals',
+  'adminLedger',
 ]);
 
 export async function handleRequest(req: Request, deps: RequestDeps): Promise<Response> {
@@ -576,6 +578,16 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
     case 'adminSignals': {
       // F-34.5 / AC-187 — operator console deliverability + agent-adoption signals (gated above).
       const r = await handleGetSignals(deps.adminCtx(actorEmail!), url.searchParams.get('window'), url.searchParams.get('exclude_internal'));
+      return json(r.body, r.status);
+    }
+    case 'adminLedger': {
+      // F-34.6 / AC-201 — the money-KPI drill-down: ledger rows behind one Overview tile.
+      const r = await handleGetLedger(
+        deps.adminCtx(actorEmail!),
+        url.searchParams.get('window'),
+        url.searchParams.get('exclude_internal'),
+        url.searchParams.get('group'),
+      );
       return json(r.body, r.status);
     }
     case 'addAllowedSender': {

@@ -27,12 +27,12 @@ const TABS: Array<[TabKey, string]> = [
 
 interface Fetched<T> { data: T | null; loading: boolean; denied: boolean; error: string }
 
-function useAdminData<T>(path: string, window: WindowKey, excludeInternal: boolean): Fetched<T> {
+function useAdminData<T>(path: string, window: WindowKey, excludeInternal: boolean, extra = ''): Fetched<T> {
   const [state, setState] = useState<Fetched<T>>({ data: null, loading: true, denied: false, error: '' });
   useEffect(() => {
     let active = true;
     setState((s) => ({ ...s, loading: true }));
-    apiGet<T>(`${path}?window=${encodeURIComponent(window)}&exclude_internal=${excludeInternal ? '1' : '0'}`)
+    apiGet<T>(`${path}?window=${encodeURIComponent(window)}&exclude_internal=${excludeInternal ? '1' : '0'}${extra}`)
       .then((data) => { if (active) setState({ data, loading: false, denied: false, error: '' }); })
       .catch((e) => {
         if (!active) return;
@@ -40,7 +40,7 @@ function useAdminData<T>(path: string, window: WindowKey, excludeInternal: boole
         else setState({ data: null, loading: false, denied: false, error: (e as Error).message ?? 'Failed to load' });
       });
     return () => { active = false; };
-  }, [path, window, excludeInternal]);
+  }, [path, window, excludeInternal, extra]);
   return state;
 }
 
@@ -61,11 +61,93 @@ function Spinner() {
   );
 }
 
-function Tile({ id, label, value }: { id: string; label: string; value: string | number }) {
-  return (
-    <div className="border border-gray-200 rounded-lg bg-white px-4 py-3" data-testid={`admin-kpi-${id}`}>
+function Tile({ id, label, value, onClick }: { id: string; label: string; value: string | number; onClick?: () => void }) {
+  const inner = (
+    <>
       <div className="text-xs text-gray-600">{label}</div>
       <div className="text-2xl font-semibold">{value}</div>
+    </>
+  );
+  if (onClick) {
+    // F-34.6 — a money tile is an entry point: click opens the ledger behind it.
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="border border-gray-200 rounded-lg bg-white px-4 py-3 text-left hover:border-gray-400 cursor-pointer"
+        data-testid={`admin-kpi-${id}`}
+      >
+        {inner}
+      </button>
+    );
+  }
+  return (
+    <div className="border border-gray-200 rounded-lg bg-white px-4 py-3" data-testid={`admin-kpi-${id}`}>
+      {inner}
+    </div>
+  );
+}
+
+type LedgerGroup = 'paid_in' | 'granted' | 'consumed';
+const LEDGER_TITLES: Record<LedgerGroup, string> = {
+  paid_in: 'Paid in — ledger',
+  granted: 'Free credit granted — ledger',
+  consumed: 'Credit consumed — ledger',
+};
+
+interface LedgerRow {
+  id: string; email: string; delta_usd_micros: string; source: string;
+  external_ref: string | null; created_at: string;
+}
+
+function LedgerPanel({ group, window, excludeInternal, onClose }: {
+  group: LedgerGroup; window: WindowKey; excludeInternal: boolean; onClose: () => void;
+}) {
+  const { data, loading, denied, error } = useAdminData<{ rows: LedgerRow[] }>(
+    '/v1/admin/ledger', window, excludeInternal, `&group=${group}`,
+  );
+  return (
+    <div className="mt-4 border border-gray-200 rounded-lg bg-white" data-testid="admin-ledger">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100">
+        <div className="text-sm font-semibold">{LEDGER_TITLES[group]}</div>
+        <button type="button" onClick={onClose} className="text-sm text-gray-600 hover:text-gray-900" data-testid="admin-ledger-close">
+          Close
+        </button>
+      </div>
+      {denied && <Denied />}
+      {!denied && loading && <Spinner />}
+      {!denied && !loading && (error || !data) && (
+        <p className="text-sm text-red-700 py-6 text-center" data-testid="admin-error">{error || 'Failed to load'}</p>
+      )}
+      {!denied && !loading && data && data.rows.length === 0 && (
+        <p className="text-sm text-gray-600 py-6 text-center" data-testid="admin-empty">No ledger entries in this window.</p>
+      )}
+      {!denied && !loading && data && data.rows.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr className="text-left text-xs text-gray-600">
+                <th className="px-4 py-2">Who</th>
+                <th className="px-4 py-2">Amount</th>
+                <th className="px-4 py-2">Source</th>
+                <th className="px-4 py-2">Reference</th>
+                <th className="px-4 py-2">When</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map((r) => (
+                <tr key={r.id} className="border-t border-gray-100">
+                  <td className="px-4 py-2 whitespace-nowrap">{r.email}</td>
+                  <td className="px-4 py-2 whitespace-nowrap">{formatUsd(r.delta_usd_micros)}</td>
+                  <td className="px-4 py-2 whitespace-nowrap">{r.source}</td>
+                  <td className="px-4 py-2 whitespace-nowrap text-gray-600">{r.external_ref ?? '—'}</td>
+                  <td className="px-4 py-2 whitespace-nowrap text-gray-600">{new Date(r.created_at).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -79,19 +161,25 @@ interface Overview {
 
 function OverviewTab({ window, excludeInternal }: { window: WindowKey; excludeInternal: boolean }) {
   const { data, loading, denied, error } = useAdminData<Overview>('/v1/admin/overview', window, excludeInternal);
+  const [drill, setDrill] = useState<LedgerGroup | null>(null);
   if (denied) return <Denied />;
   if (loading) return <Spinner />;
   if (error || !data) return <p className="text-sm text-red-700 py-8 text-center" data-testid="admin-error">{error || 'Failed to load'}</p>;
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="admin-overview">
-      <Tile id="accountsOpened" label="Accounts opened" value={data.accountsOpened} />
-      <Tile id="envelopesCreated" label="Envelopes created" value={data.envelopes.created} />
-      <Tile id="envelopesCompleted" label="Completed" value={data.envelopes.completed} />
-      <Tile id="envelopesInProcess" label="In process" value={data.envelopes.inProcess} />
-      <Tile id="paidIn" label="Paid in" value={formatUsd(data.credits.paidInUsdMicros)} />
-      <Tile id="granted" label="Free credit granted" value={formatUsd(data.credits.grantedUsdMicros)} />
-      <Tile id="consumed" label="Credit consumed" value={formatUsd(data.credits.consumedUsdMicros)} />
-      <Tile id="active" label="Active (D/W/M)" value={`${data.activeUsers.dau} / ${data.activeUsers.wau} / ${data.activeUsers.mau}`} />
+    <div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="admin-overview">
+        <Tile id="accountsOpened" label="Accounts opened" value={data.accountsOpened} />
+        <Tile id="envelopesCreated" label="Envelopes created" value={data.envelopes.created} />
+        <Tile id="envelopesCompleted" label="Completed" value={data.envelopes.completed} />
+        <Tile id="envelopesInProcess" label="In process" value={data.envelopes.inProcess} />
+        <Tile id="paidIn" label="Paid in" value={formatUsd(data.credits.paidInUsdMicros)} onClick={() => setDrill('paid_in')} />
+        <Tile id="granted" label="Free credit granted" value={formatUsd(data.credits.grantedUsdMicros)} onClick={() => setDrill('granted')} />
+        <Tile id="consumed" label="Credit consumed" value={formatUsd(data.credits.consumedUsdMicros)} onClick={() => setDrill('consumed')} />
+        <Tile id="active" label="Active (D/W/M)" value={`${data.activeUsers.dau} / ${data.activeUsers.wau} / ${data.activeUsers.mau}`} />
+      </div>
+      {drill && (
+        <LedgerPanel group={drill} window={window} excludeInternal={excludeInternal} onClose={() => setDrill(null)} />
+      )}
     </div>
   );
 }

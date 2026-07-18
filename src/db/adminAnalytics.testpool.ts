@@ -19,7 +19,15 @@ export interface AdminAnalyticsSeed {
     completed_at?: string | Date | null;
     internal_test?: boolean;
   }>;
-  creditLedger?: Array<{ email: string; source: string; delta_usd_micros: number | string; created_at: string | Date }>;
+  creditLedger?: Array<{
+    email: string;
+    source: string;
+    delta_usd_micros: number | string;
+    created_at: string | Date;
+    /** F-34.6 drill-down fields (optional — the Overview aggregation ignores them). */
+    id?: string;
+    external_ref?: string | null;
+  }>;
   authSessions?: Array<{ email: string; last_used_at: string | Date }>;
   apiKeys?: Array<{ creator_email: string; revoked_at?: string | Date | null }>;
   signers?: Array<{

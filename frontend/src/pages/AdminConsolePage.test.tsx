@@ -43,6 +43,30 @@ const accounts = {
 };
 
 describe('AdminConsolePage (F-34, #148)', () => {
+  it('F-34.6/AC-201: clicking the Paid in tile opens the ledger drill-down (group on the fetch), close returns to tiles', async () => {
+    const ledger = {
+      window: '30d', excludeInternal: true, group: 'paid_in',
+      rows: [
+        { id: 'l1', email: 'buyer@x.com', delta_usd_micros: '250000', source: 'x402', external_ref: 'txp_1', created_at: '2026-07-18T20:27:25.000Z' },
+      ],
+    };
+    const fetchMock = mockFetchByPath({ '/v1/admin/overview': overview, '/v1/admin/ledger': ledger });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<MemoryRouter><AdminConsolePage /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId('admin-kpi-paidIn')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('admin-kpi-paidIn'));
+    await waitFor(() => expect(screen.getByTestId('admin-ledger')).toBeInTheDocument());
+    expect(
+      fetchMock.mock.calls.some((c) => String(c[0]).includes('/v1/admin/ledger') && String(c[0]).includes('group=paid_in')),
+    ).toBe(true);
+    const panel = screen.getByTestId('admin-ledger');
+    expect(panel).toHaveTextContent('buyer@x.com');
+    expect(panel).toHaveTextContent('x402');
+    expect(panel).toHaveTextContent('txp_1');
+    fireEvent.click(screen.getByTestId('admin-ledger-close'));
+    await waitFor(() => expect(screen.queryByTestId('admin-ledger')).not.toBeInTheDocument());
+  });
+
   it('renders the Overview KPIs by default with the window param on the fetch (AC-182/183)', async () => {
     const fetchMock = mockFetchByPath({ '/v1/admin/overview': overview });
     vi.stubGlobal('fetch', fetchMock);

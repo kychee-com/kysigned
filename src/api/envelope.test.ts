@@ -1627,7 +1627,7 @@ describe('handleCreateEnvelope — send-failure resilience (crash + ordering)', 
     assert.equal(result.status, 201);
     assert.ok(result.body.envelope_id);
     // (b) per-signer delivery outcome is reported
-    assert.deepEqual(result.body.delivery, { delivered: 1, undeliverable: ['bad@example.com'], failed: [] });
+    assert.deepEqual(result.body.delivery, { sent: 1, undeliverable: ['bad@example.com'], failed: [] });
     // (c) the bad signer is marked undeliverable; the good one is untouched (F-9.8)
     assert.ok(db.signers.find((s) => s.email === 'bad@example.com')?.undeliverable_at, 'bad signer stamped undeliverable_at');
     assert.equal(db.signers.find((s) => s.email === 'good@example.com')?.undeliverable_at, null, 'good signer untouched');
@@ -1644,7 +1644,7 @@ describe('handleCreateEnvelope — send-failure resilience (crash + ordering)', 
       { document_name: 'NDA', pdf_base64: TEST_FIXTURE_PDF_B64, signers: [{ email: 'flaky@example.com', name: 'Flaky' }] },
     );
     assert.equal(result.status, 201);
-    assert.deepEqual(result.body.delivery, { delivered: 0, undeliverable: [], failed: ['flaky@example.com'] });
+    assert.deepEqual(result.body.delivery, { sent: 0, undeliverable: [], failed: ['flaky@example.com'] });
     // A transient failure must NOT mark the signer undeliverable (recoverable via reminder).
     assert.equal(db.signers.find((s) => s.email === 'flaky@example.com')?.undeliverable_at, null, 'transient leaves signer pending');
   });
@@ -1684,7 +1684,8 @@ describe('handleCreateEnvelope — send-failure resilience (crash + ordering)', 
       { document_name: 'NDA', pdf_base64: TEST_FIXTURE_PDF_B64, signers: [{ email: 'signer@example.com', name: 'Signer' }] },
     );
     assert.equal(result.status, 201);
-    assert.deepEqual(result.body.delivery, { delivered: 1, undeliverable: [], failed: [] });
+    assert.deepEqual(result.body.delivery, { sent: 1, undeliverable: [], failed: [] });
+    assert.ok(!('delivered' in (result.body.delivery as object)), 'AC-200: the create summary never claims delivered');
   });
 
   it('charges exactly one credit, debited AFTER the signer sends (ordering fix), even when a recipient is suppressed', async () => {

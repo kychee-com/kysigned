@@ -13,7 +13,7 @@ import {
 } from '../db/allowedSenders.js';
 import { listOutstandingArchiveConfirmations } from '../db/signatureArtifacts.js';
 import { parseWindow, parseExcludeInternal } from './adminWindow.js';
-import { getOverview, getAccounts, getEnvelopeFunnel, getSignals } from '../db/adminAnalytics.js';
+import { getOverview, getAccounts, getEnvelopeFunnel, getSignals, listCreditLedger } from '../db/adminAnalytics.js';
 
 export interface AdminContext {
   pool: DbPool;
@@ -105,6 +105,48 @@ export async function handleGetOverview(ctx: AdminContext, windowParam: string |
   const excludeInternal = parseExcludeInternal(excludeInternalParam);
   const overview = await getOverview(ctx.pool, { since: w.since, now: new Date(), excludeInternal, internalIdentities: ctx.internalIdentities ?? [] });
   return { status: 200, body: { window: w.key, excludeInternal, ...overview } };
+}
+
+/**
+ * F-34.6 (#161) — the money-KPI drill-down: the ledger rows behind one Overview
+ * tile (paid_in / granted / consumed) for the same window + exclude-internal
+ * state. Identities and amounts are operator metadata (F-33.5) — this is where
+ * the F-36 events' ids join back to people, inside kysigned.
+ */
+export async function handleGetLedger(
+  ctx: AdminContext,
+  windowParam: string | null,
+  excludeInternalParam: string | null,
+  groupParam: string | null,
+) {
+  const group = groupParam ?? '';
+  if (group !== 'paid_in' && group !== 'granted' && group !== 'consumed') {
+    return { status: 400, body: { error: 'group must be paid_in, granted, or consumed', code: 'validation_group' } };
+  }
+  const w = parseWindow(windowParam);
+  const excludeInternal = parseExcludeInternal(excludeInternalParam);
+  const rows = await listCreditLedger(ctx.pool, {
+    since: w.since,
+    group,
+    excludeInternal,
+    internalIdentities: ctx.internalIdentities ?? [],
+  });
+  return {
+    status: 200,
+    body: {
+      window: w.key,
+      excludeInternal,
+      group,
+      rows: rows.map((r) => ({
+        id: r.id,
+        email: r.email,
+        delta_usd_micros: r.deltaUsdMicros,
+        source: r.source,
+        external_ref: r.externalRef,
+        created_at: r.createdAt,
+      })),
+    },
+  };
 }
 
 /**

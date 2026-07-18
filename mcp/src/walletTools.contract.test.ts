@@ -135,7 +135,7 @@ const ENVELOPE_201 = {
   verify_url: 'https://wallet-contract.test/verify',
   signing_links: [{ email: 'signer@example.com' }],
   spam_notice: 'If signers do not receive the email, ask them to check their spam folder.',
-  delivery: { delivered: 1, undeliverable: [], failed: [] },
+  delivery: { sent: 1, undeliverable: [], failed: [] },
   callback_secret: CALLBACK_SECRET,
   suggestion: { has_existing_signatures: false, signed_count: 0, total_count: 1, missing_signers: [] },
   // F-30.7 — the envelope-observer handle rides the create result (and the

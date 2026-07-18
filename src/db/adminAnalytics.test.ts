@@ -9,7 +9,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getOverview, getAccounts, getEnvelopeFunnel, getSignals } from './adminAnalytics.js';
+import { getOverview, getAccounts, getEnvelopeFunnel, getSignals, listCreditLedger } from './adminAnalytics.js';
 import { createAdminAnalyticsMemoryPool } from './adminAnalytics.testpool.js';
 
 const NOW = new Date('2026-07-17T12:00:00.000Z');
@@ -267,5 +267,50 @@ describe('F-35 exclude-internal — the operator-view toggle (AC-188/189)', () =
     const sigOff = await getSignals(pool, { since: SINCE_30D, excludeInternal: false, internalIdentities: RULES });
     assert.equal(sigOn.agentAdoption.apiKeyHolders, 0); // staff's key excluded
     assert.equal(sigOff.agentAdoption.apiKeyHolders, 1);
+  });
+});
+
+describe('listCreditLedger — F-34.6 / AC-201 money-KPI drill-down', () => {
+  const RULES = ['@kychee.com'];
+  const seed = {
+    creditLedger: [
+      { id: 'l1', email: 'buyer@x.com', source: 'x402', delta_usd_micros: 250000, external_ref: 'txp_1', created_at: ago(2 * D) },
+      { id: 'l2', email: 'tal@kychee.com', source: 'stripe', delta_usd_micros: 500000, external_ref: 'cs_1', created_at: ago(3 * D) },
+      { id: 'l3', email: 'new@x.com', source: 'signup_grant', delta_usd_micros: 1000000, external_ref: 'new@x.com', created_at: ago(1 * D) },
+      { id: 'l4', email: 'buyer@x.com', source: 'envelope', delta_usd_micros: -250000, external_ref: 'env-1', created_at: ago(1 * D) },
+      { id: 'l5', email: 'buyer@x.com', source: 'x402', delta_usd_micros: 250000, external_ref: 'txp_old', created_at: ago(40 * D) }, // out of window
+    ],
+  };
+
+  it('paid_in returns the window rows newest-first and its sum equals the Overview tile (toggle semantics shared)', async () => {
+    const { pool } = createAdminAnalyticsMemoryPool(seed);
+    const rows = await listCreditLedger(pool, { since: SINCE_30D, group: 'paid_in', internalIdentities: RULES });
+    // toggle default ON → tal@kychee.com (internal) hidden; l5 out of window.
+    assert.deepEqual(rows.map((r) => r.id), ['l1']);
+    assert.deepEqual(
+      { email: rows[0]!.email, deltaUsdMicros: rows[0]!.deltaUsdMicros, source: rows[0]!.source, externalRef: rows[0]!.externalRef },
+      { email: 'buyer@x.com', deltaUsdMicros: '250000', source: 'x402', externalRef: 'txp_1' },
+    );
+    const ov = await getOverview(pool, { since: SINCE_30D, now: NOW, internalIdentities: RULES });
+    const sum = rows.reduce((acc, r) => acc + BigInt(r.deltaUsdMicros), 0n);
+    assert.equal(sum.toString(), ov.credits.paidInUsdMicros, 'drill-down sum equals the tile');
+  });
+
+  it('toggle OFF includes internal identities, newest first', async () => {
+    const { pool } = createAdminAnalyticsMemoryPool(seed);
+    const rows = await listCreditLedger(pool, { since: SINCE_30D, group: 'paid_in', excludeInternal: false, internalIdentities: RULES });
+    assert.deepEqual(rows.map((r) => r.id), ['l1', 'l2']);
+  });
+
+  it('granted and consumed groups mirror the Overview classification', async () => {
+    const { pool } = createAdminAnalyticsMemoryPool(seed);
+    const granted = await listCreditLedger(pool, { since: SINCE_30D, group: 'granted', internalIdentities: RULES });
+    assert.deepEqual(granted.map((r) => r.id), ['l3']);
+    const consumed = await listCreditLedger(pool, { since: SINCE_30D, group: 'consumed', internalIdentities: RULES });
+    assert.deepEqual(consumed.map((r) => r.id), ['l4']);
+    assert.equal(consumed[0]!.deltaUsdMicros, '-250000', 'signed delta shown (debit)');
+    const ov = await getOverview(pool, { since: SINCE_30D, now: NOW, internalIdentities: RULES });
+    const consumedSum = consumed.reduce((acc, r) => acc + -BigInt(r.deltaUsdMicros), 0n);
+    assert.equal(consumedSum.toString(), ov.credits.consumedUsdMicros, 'consumed drill-down nets to the tile');
   });
 });

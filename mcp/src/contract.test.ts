@@ -133,7 +133,7 @@ describe('create_envelope', () => {
         verify_url: 'v',
         signing_links: [{ email: 'a@b.co', link: 'l' }],
         spam_notice: 'If signers do not receive the email, ask them to check their spam folder.',
-        delivery: { delivered: 1, undeliverable: [], failed: [] },
+        delivery: { sent: 1, undeliverable: [], failed: [] },
         callback_secret: CALLBACK_SECRET,
         suggestion: { has_existing_signatures: false, signed_count: 0, total_count: 1, missing_signers: [] },
         internal_flag: 'MUST_NOT_PASS',
@@ -178,7 +178,7 @@ describe('create_envelope', () => {
     ]);
     assert.equal(parsed.envelope_id, 'env-1');
     assert.equal(parsed.callback_secret, CALLBACK_SECRET, 'the one-time secret passes VERBATIM');
-    assert.deepEqual(parsed.delivery, { delivered: 1, undeliverable: [], failed: [] });
+    assert.deepEqual(parsed.delivery, { sent: 1, undeliverable: [], failed: [] });
   });
 
   it('#155 — optional fields absent from the API result stay absent (no undefined keys)', async () => {
@@ -192,7 +192,7 @@ describe('create_envelope', () => {
         verify_url: 'v',
         signing_links: [{ email: 'a@b.co', link: 'l' }],
         spam_notice: 'check spam',
-        delivery: { delivered: 1, undeliverable: [], failed: [] },
+        delivery: { sent: 1, undeliverable: [], failed: [] },
       },
     });
     const text = await callTool('create_envelope', {

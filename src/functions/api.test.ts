@@ -1420,7 +1420,7 @@ describe('handleRequest — F-33.5 metadata-only operator surface (AC-197)', () 
     const adminCtxCalls = src.match(/deps\.adminCtx\(/g) ?? [];
     assert.equal(
       adminCtxCalls.length,
-      8,
+      9, // +1 2026-07-18: adminLedger (F-34.6 money-KPI drill-down), swept below
       'a NEW admin-surface handler appeared — register it here and cover it in the metadata-only sweep below',
     );
   });
@@ -1431,6 +1431,7 @@ describe('handleRequest — F-33.5 metadata-only operator surface (AC-197)', () 
       '/v1/admin/accounts?window=all',
       '/v1/admin/envelopes?window=all',
       '/v1/admin/signals?window=all',
+      '/v1/admin/ledger?window=all&group=paid_in',
       '/v1/admin/archive-confirmations',
       '/v1/admin/allowed-senders',
     ];

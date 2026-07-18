@@ -63,6 +63,56 @@ interface EnvRow { sender_email: string; status: string; created_at: string | Da
 interface SessionRow { email: string; last_used_at: string | Date }
 interface UserRow { email: string; balance_usd_micros: number | string; created_at: string | Date }
 
+// ── F-34.6 / AC-201 — money-KPI drill-down ──────────────────────────────────
+
+/** The three Overview money tiles; each group mirrors the tile's classification EXACTLY. */
+export type LedgerGroup = 'paid_in' | 'granted' | 'consumed';
+
+export interface LedgerListRow {
+  id: string;
+  email: string;
+  /** Signed delta in USD micros (debits negative), as a decimal string. */
+  deltaUsdMicros: string;
+  source: string;
+  externalRef: string | null;
+  createdAt: string;
+}
+
+interface LedgerRowFull extends CreditRow {
+  id?: string | number;
+  external_ref?: string | null;
+}
+
+/**
+ * The ledger rows behind one Overview money tile, for the same window and
+ * exclude-internal state — newest first. Sum(deltas) equals the tile (consumed
+ * nets to the tile with the sign flipped, exactly like the Overview arithmetic).
+ */
+export async function listCreditLedger(
+  pool: DbPool,
+  opts: { since: Date | null; group: LedgerGroup; excludeInternal?: boolean; internalIdentities?: readonly string[] },
+): Promise<LedgerListRow[]> {
+  const ex = resolveExclude(opts);
+  const r = await pool.query('SELECT id, email, source, delta_usd_micros, external_ref, created_at FROM credit_ledger');
+  const inGroup = (row: LedgerRowFull): boolean => {
+    const delta = BigInt(row.delta_usd_micros);
+    if (opts.group === 'paid_in') return PAID_SOURCES.has(row.source) && delta > 0n;
+    if (opts.group === 'granted') return row.source === 'signup_grant';
+    return row.source === 'envelope';
+  };
+  return (r.rows as LedgerRowFull[])
+    .filter((row) => !identityDropped(row.email, ex) && inWindow(row.created_at, opts.since) && inGroup(row))
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .map((row) => ({
+      id: String(row.id ?? ''),
+      email: row.email,
+      deltaUsdMicros: BigInt(row.delta_usd_micros).toString(),
+      source: row.source,
+      externalRef: row.external_ref ?? null,
+      createdAt: new Date(row.created_at).toISOString(),
+    }));
+}
+
 export async function getOverview(
   pool: DbPool,
   opts: { since: Date | null; now: Date; excludeInternal?: boolean; internalIdentities?: readonly string[] },
