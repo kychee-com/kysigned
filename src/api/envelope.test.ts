@@ -1158,6 +1158,32 @@ describe('Envelope API — from spec acceptance criteria', () => {
 
   // F-9.8 / AC-50 — undeliverable signing request.
   describe('handleUndeliverableSigningRequest', () => {
+    it('F-36: emits exactly one envelope_undeliverable (ids only, dated key); a re-fired bounce emits nothing', async () => {
+      await handleCreateEnvelope(
+        { pool: db.pool, emailProvider: email, baseUrl: 'https://kysigned.com', senderIdentity: 'creator@acme.com' },
+        { pdf_base64: TEST_FIXTURE_PDF_B64, document_name: 'UndelivEvt', signers: [{ email: 'bounce2@nope.com', name: 'Bo' }] }
+      );
+      const envId = db.envelopes[db.envelopes.length - 1].id;
+      const signerId = db.signers.find((s) => s.email === 'bounce2@nope.com')!.id;
+      const events: Array<{ type: string; ids: readonly string[]; payload: Record<string, unknown> }> = [];
+      const emitAppEvent = (async (type: string, ids: readonly string[], payload: Record<string, unknown>) => {
+        events.push({ type, ids, payload });
+      }) as never;
+      const ctx = { pool: db.pool, emailProvider: email, baseUrl: 'https://kysigned.com', emitAppEvent };
+
+      const r = await handleUndeliverableSigningRequest(ctx, envId, 'bounce2@nope.com');
+      assert.equal(r.body.marked, true);
+      assert.equal(events.length, 1);
+      assert.equal(events[0].type, 'envelope_undeliverable');
+      assert.deepEqual(events[0].payload, { envelope_id: envId, signer_id: signerId });
+      assert.deepEqual(events[0].ids.slice(0, 2), [envId, signerId]);
+      assert.match(String(events[0].ids[2]), /^\d{4}-\d{2}-\d{2}$/, 'dated key component — forever-dedup must not swallow a genuine later recurrence');
+
+      const r2 = await handleUndeliverableSigningRequest(ctx, envId, 'bounce2@nope.com');
+      assert.equal(r2.body.marked, false);
+      assert.equal(events.length, 1, 'unmarked re-fire emits nothing');
+    });
+
     it('marks the signer undeliverable and notifies the creator; idempotent (AC-50)', async () => {
       await handleCreateEnvelope(
         { pool: db.pool, emailProvider: email, baseUrl: 'https://kysigned.com', senderIdentity: 'creator@acme.com' },

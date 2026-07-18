@@ -149,6 +149,8 @@ function signerEditCtx(deps: RequestDeps): SignerEditCtx {
   return {
     pool: deps.pool,
     createRun: deps.createRun,
+    emitAppEvent: deps.emitAppEvent, // F-36
+
     deliveryBackstop: deps.deliveryBackstop,
     emailProvider: deps.emailProvider,
     baseUrl: deps.baseUrl,

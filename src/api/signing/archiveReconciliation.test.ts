@@ -93,6 +93,33 @@ describe('runArchiveReconciliation — the F-32.7 daily backstop', () => {
     assert.ok(rows[0].archive_confirmation_healed_at, 'healed_at recorded');
   });
 
+  it('F-36: an alerted sweep emits exactly one sweep_anomaly (dated key, counts only); a healed sweep emits nothing', async () => {
+    const { pool, rows } = createSignatureArtifactsMemoryPool();
+    await seed(pool, rows, { signer_email: 'alice@customer.example' });
+    const { provider } = capturingEmail();
+    const { fetchFn } = archiveFetch([]); // still unconfirmed → alert
+    const events: Array<{ type: string; ids: readonly string[]; payload: Record<string, unknown> }> = [];
+    const emitAppEvent = (async (type: string, ids: readonly string[], payload: Record<string, unknown>) => {
+      events.push({ type, ids, payload });
+    }) as never;
+
+    const result = await runArchiveReconciliation(pool, {
+      emailProvider: provider,
+      operatorDomain: 'kysigned.com',
+      archive: { fetchFn },
+      now: NOW,
+      emitAppEvent,
+    });
+    assert.equal(result.alerted, true);
+    assert.deepEqual(events, [
+      {
+        type: 'sweep_anomaly',
+        ids: ['archive-reconciliation', NOW.toISOString().slice(0, 10)],
+        payload: { monitor: 'archive_reconciliation', still_failing: 1, healed: 0 },
+      },
+    ]);
+  });
+
   it('still-failing artifacts produce EXACTLY ONE aggregated operator email to info@ — never to customers (AC-165/AC-166)', async () => {
     const { pool, rows } = createSignatureArtifactsMemoryPool();
     await seed(pool, rows, { signer_email: 'alice@customer.example' });

@@ -22,6 +22,7 @@ import {
   markEnvelopePdfDeleted,
   setEnvelopeAutoClose,
 } from '../db/envelopes.js';
+import type { EmitAppEvent } from '../integrations/appEvents.js';
 import { computePdfHash, decodePdfBase64, fetchPdfFromUrl, PdfUrlError } from '../pdf/hash.js';
 import { isPdfParseable } from '../pdf/validate.js';
 import { validatePublicHttpsUrl } from '../net/urlGuard.js';
@@ -101,6 +102,8 @@ export interface ApiContext {
   pool: DbPool;
   /** F-29 — schedule each new signer's automated reminders as deferred durable runs. */
   createRun?: CreateRun;
+  /** F-36 — the DD-43 app-events seam (never throws). Prod (config.ts) wires it. */
+  emitAppEvent?: EmitAppEvent;
   /**
    * F-9.9 / AC-124 — the bounded delivery-confirmation window for the undeliverable
    * backstop, as a run `delay` string (operator-config `KYSIGNED_DELIVERY_BACKSTOP_HOURS`,
@@ -630,6 +633,7 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
               emailProvider: ctx.emailProvider,
               baseUrl: ctx.baseUrl,
               ...(ctx.operatorDomain ? { operatorDomain: ctx.operatorDomain } : {}),
+              ...(ctx.emitAppEvent ? { emitAppEvent: ctx.emitAppEvent } : {}),
             },
             result.envelope.id,
             signer.email,
@@ -1082,7 +1086,14 @@ export async function handleRemind(
  * webhook, wired in Phase 19). Idempotent: a re-fired bounce is a no-op.
  */
 export async function handleUndeliverableSigningRequest(
-  ctx: { pool: DbPool; emailProvider: EmailProvider; baseUrl: string; operatorDomain?: string },
+  ctx: {
+    pool: DbPool;
+    emailProvider: EmailProvider;
+    baseUrl: string;
+    operatorDomain?: string;
+    /** F-36 — the DD-43 app-events seam (never throws). Prod (config.ts) wires it. */
+    emitAppEvent?: EmitAppEvent;
+  },
   envelopeId: string,
   signerEmail: string,
 ): Promise<{ status: number; body: { marked: boolean } }> {
@@ -1099,6 +1110,21 @@ export async function handleUndeliverableSigningRequest(
       operatorDomain: ctx.operatorDomain ?? 'kysigned.com',
     });
     await ctx.emailProvider.send({ to: envelope.sender_email, ...email });
+  }
+  // F-36 — envelope_undeliverable, gated on the idempotent mark claim (a re-fired
+  // bounce is marked=false → no emit). Key carries a DATE component: after an
+  // edit/re-send the same signer can genuinely bounce again months later, and the
+  // gateway's forever-dedup must not swallow that real recurrence. Ids only.
+  if (ctx.emitAppEvent) {
+    const signer = (await getEnvelopeSigners(ctx.pool, envelopeId)).find(
+      (s) => s.email.toLowerCase() === signerEmail.toLowerCase(),
+    );
+    if (signer) {
+      await ctx.emitAppEvent('envelope_undeliverable', [envelopeId, signer.id, new Date().toISOString().slice(0, 10)], {
+        envelope_id: envelopeId,
+        signer_id: signer.id,
+      });
+    }
   }
   return { status: 200, body: { marked: true } };
 }
@@ -1320,6 +1346,8 @@ export interface SignerEditCtx {
   pool: DbPool;
   /** F-29 — schedule an added signer's automated reminders as deferred durable runs. */
   createRun?: CreateRun;
+  /** F-36 — the DD-43 app-events seam (never throws). Prod (config.ts) wires it. */
+  emitAppEvent?: EmitAppEvent;
   /** F-9.9 / AC-124 — the delivery-backstop window (run `delay`, e.g. `"24h"`); see ApiContext. */
   deliveryBackstop?: string;
   emailProvider: EmailProvider;
@@ -1458,6 +1486,7 @@ async function addSignerCore(
             emailProvider: ctx.emailProvider,
             baseUrl: ctx.baseUrl,
             ...(ctx.operatorDomain ? { operatorDomain: ctx.operatorDomain } : {}),
+            ...(ctx.emitAppEvent ? { emitAppEvent: ctx.emitAppEvent } : {}),
           },
           envelope.id,
           row.email,

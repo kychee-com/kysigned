@@ -36,6 +36,7 @@ import type { EmailMessage, EmailProvider } from '../email/types.js';
 import type { CreateRun } from '../functions/runs.js';
 import { scheduleCompletionRetention, RETENTION_INITIAL_DELAY } from './retentionSchedule.js';
 import { scheduleCompletionWebhook } from './webhookDeliver.js';
+import type { EmitAppEvent } from '../integrations/appEvents.js';
 
 export interface PreparedBundle {
   bytes: Uint8Array;
@@ -57,6 +58,9 @@ export interface DistributeBundleDeps {
    *  or at the 30-day cap). Optional — a fork without run402 leaves it unwired and
    *  relies on the daily retention_sweep backstop. */
   createRun?: CreateRun;
+  /** F-36 — emit envelope_completed into the project event feed (DD-43 seam,
+   *  never throws). Optional in this narrow deps; prod (config.ts) wires it. */
+  emitAppEvent?: EmitAppEvent;
 }
 
 export type DistributeAction =
@@ -196,6 +200,12 @@ export async function distributeEnvelopeBundle(
     // durable run (platform retries; never blocks the email distribution).
     // Best-effort like retention; no-op when the envelope has no webhook row.
     if (deps.createRun) await scheduleCompletionWebhook(pool, deps.createRun, envelopeId);
+    // F-36 — envelope_completed, keyed by envelope alone: an envelope completes
+    // once ever, and the gateway's forever-dedup absorbs re-run duplicates.
+    await deps.emitAppEvent?.('envelope_completed', [envelopeId], {
+      envelope_id: envelopeId,
+      recipients: recipients.length,
+    });
     return { envelopeId, action: 'distributed', recipients: recipients.length, sent };
   }
   return { envelopeId, action: 'partial', recipients: recipients.length, sent };

@@ -29,6 +29,7 @@ import { handleReplyReceived, handleBounce, type InboundEmailCtx } from '../api/
 import { remindSigner, notifyEnvelopeExpired, handleUndeliverableSigningRequest, type ReminderSendCtx, type ExpirationStorage } from '../api/envelope.js';
 import { runSignupGrantMonitor } from '../api/signupGrantMonitor.js';
 import { runArchiveReconciliation } from '../api/signing/archiveReconciliation.js';
+import type { EmitAppEvent } from '../integrations/appEvents.js';
 import { getSignatureArtifactById } from '../db/signatureArtifacts.js';
 import { upgradeOneArtifact, scheduleTimestampUpgrade, TIMESTAMP_UPGRADE_MAX_ATTEMPTS } from '../api/signing/timestampSchedule.js';
 import type { TimestampProvider } from '../timestamp/contract.js';
@@ -50,6 +51,8 @@ export interface RunHandlerDeps {
   operatorDomain: string;
   /** F-32.7/F-16.6 — operator alert recipient (default info@<operatorDomain>; #149 interim). */
   operatorAlertEmail?: string;
+  /** F-36 — the DD-43 app-events seam for the monitors' sweep_anomaly emits. */
+  emitAppEvent?: EmitAppEvent;
   expirationStorage: () => ExpirationStorage;
   timestampProvider: () => TimestampProvider;
   createRun: CreateRun;
@@ -279,6 +282,7 @@ export function buildRunHandlers(
         operatorDomain: deps.operatorDomain,
         ...(deps.operatorAlertEmail ? { alertEmail: deps.operatorAlertEmail } : {}),
         alertThreshold: deps.signupGrantAlertThreshold,
+        emitAppEvent: deps.emitAppEvent, // F-36 sweep_anomaly
       })),
     }),
 
@@ -294,6 +298,7 @@ export function buildRunHandlers(
         emailProvider: deps.emailProvider,
         operatorDomain: deps.operatorDomain,
         ...(deps.operatorAlertEmail ? { alertEmail: deps.operatorAlertEmail } : {}),
+        emitAppEvent: deps.emitAppEvent, // F-36 sweep_anomaly
       })),
     }),
 

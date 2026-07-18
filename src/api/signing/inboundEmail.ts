@@ -38,6 +38,7 @@ import { handleUndeliverableSigningRequest } from '../envelope.js';
 import type { ReceiptVerdicts } from './senderAuthGate.js';
 import type { DkimResolver } from './dkimVerify.js';
 import { RetryableRunError, PermanentRunError, type CreateRun } from '../../functions/runs.js';
+import type { EmitAppEvent } from '../../integrations/appEvents.js';
 
 export interface InboundEmailCtx {
   pool: DbPool;
@@ -58,6 +59,9 @@ export interface InboundEmailCtx {
   createRun?: CreateRun;
   /** Our signing mailbox id — belt-and-suspenders event scoping. Optional. */
   signingMailboxId?: string;
+  /** F-36 — emit a business fact into the project event feed (the DD-43 seam:
+   *  never throws). Optional in this narrow ctx; prod (config.ts) always wires it. */
+  emitAppEvent?: EmitAppEvent;
   /** Test seam: the validation core, defaulting to the real `processForward`. Prod
    *  never sets it; a unit test injects a fake outcome to drive the orchestration
    *  without the DKIM fixture rig (`processForward` is covered by its own tests). */
@@ -164,6 +168,13 @@ export async function handleReplyReceived(
         }
       }
       await sendAcceptanceAck(ctx, outcome.envelopeId, outcome.signerEmail);
+      // F-36 — signature_completed, keyed (envelope, message): a run retry for the
+      // same message re-enters as 'already_signed' (no emit), and a genuine re-sign
+      // arrives under a NEW message id → its own event. Ids only, never addresses.
+      await ctx.emitAppEvent?.('signature_completed', [outcome.envelopeId, messageId], {
+        envelope_id: outcome.envelopeId,
+        message_id: messageId,
+      });
       await enqueueCompletionIfAllSigned(ctx, outcome.envelopeId); // may throw retryable → run retries
       return { messageId, action: 'signed', envelopeId: outcome.envelopeId };
     }
@@ -178,6 +189,14 @@ export async function handleReplyReceived(
 
     case 'rejected':
       await sendCorrectiveBounce(ctx, outcome);
+      // F-36 — signer_declined with the rejection-code enum. Keyed (envelope,
+      // message) so a redelivered event dedupes; a fresh rejected forward is a
+      // new message id → its own event.
+      await ctx.emitAppEvent?.('signer_declined', [outcome.envelopeId, messageId], {
+        envelope_id: outcome.envelopeId,
+        message_id: messageId,
+        code: outcome.code,
+      });
       return { messageId, action: 'rejected', code: outcome.code };
 
     case 'dropped':
@@ -202,7 +221,13 @@ export async function handleBounce(
   let marked = 0;
   for (const envelopeId of envelopeIds) {
     const res = await handleUndeliverableSigningRequest(
-      { pool: ctx.pool, emailProvider: ctx.emailProvider, baseUrl: ctx.baseUrl, operatorDomain: ctx.operatorDomain },
+      {
+        pool: ctx.pool,
+        emailProvider: ctx.emailProvider,
+        baseUrl: ctx.baseUrl,
+        operatorDomain: ctx.operatorDomain,
+        ...(ctx.emitAppEvent ? { emitAppEvent: ctx.emitAppEvent } : {}), // F-36
+      },
       envelopeId,
       toAddress,
     );

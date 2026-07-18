@@ -102,6 +102,7 @@ function deps(over: Partial<DistributeBundleDeps> = {}): DistributeBundleDeps {
     prepareBundle:
       over.prepareBundle ?? (async (): Promise<PreparedBundle> => ({ bytes: BUNDLE, fingerprint: FINGERPRINT })),
     ...(over.createRun ? { createRun: over.createRun } : {}),
+    ...(over.emitAppEvent ? { emitAppEvent: over.emitAppEvent } : {}),
   };
 }
 
@@ -272,5 +273,41 @@ describe('distributeEnvelopeBundle — F-9.1 / AC-4 / AC-24', () => {
     assert.ok(!ok.sent.some((m) => m.to === 'alice@x.com'), 'no double-send to the already-emailed signer');
     assert.ok(ok.sent.some((m) => m.to === 'bob@y.com'), 'failed signer re-sent');
     assert.ok(envelopes[0].completion_distributed_at);
+  });
+});
+
+describe('distributeBundle — F-36 app events (60.3)', () => {
+  it('deferred run emits nothing; full distribution emits envelope_completed; a re-run carries the SAME event identity', async () => {
+    const events: Array<{ type: string; ids: readonly string[]; payload: Record<string, unknown> }> = [];
+    const emitAppEvent = (async (type: string, ids: readonly string[], payload: Record<string, unknown>) => {
+      events.push({ type, ids, payload });
+    }) as never;
+
+    const { pool } = makePool({
+      senderEmail: 'carol@acme.com',
+      signers: [
+        { id: 's1', email: 'alice@x.com', name: 'Alice' },
+        { id: 's2', email: 'bob@y.com', name: 'Bob' },
+      ],
+    });
+
+    // Bundle not ready → deferred: no event.
+    const r0 = await distributeEnvelopeBundle(pool, ENV, deps({ emitAppEvent, prepareBundle: async () => null }));
+    assert.notEqual(r0.action, 'distributed');
+    assert.equal(events.length, 0, 'no emit before distribution succeeds');
+
+    // Full distribution → exactly one envelope_completed, ids-only payload + count.
+    const r1 = await distributeEnvelopeBundle(pool, ENV, deps({ emitAppEvent }));
+    assert.equal(r1.action, 'distributed');
+    assert.deepEqual(events, [
+      { type: 'envelope_completed', ids: [ENV], payload: { envelope_id: ENV, recipients: 3 } },
+    ]);
+
+    // Idempotent re-run: any duplicate call carries the IDENTICAL (type, ids)
+    // → the same idempotency key → the gateway's forever-dedup stores one event.
+    await distributeEnvelopeBundle(pool, ENV, deps({ emitAppEvent }));
+    for (const e of events.slice(1)) {
+      assert.deepEqual({ type: e.type, ids: e.ids }, { type: events[0].type, ids: events[0].ids });
+    }
   });
 });

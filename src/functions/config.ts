@@ -489,10 +489,26 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     },
   });
 
+  // F-36 — the app-events seam over the runtime emitter (DD-43): never throws,
+  // logs failures with type + subject ids, derives the durable idempotency key.
+  // An absent runtime surface (lagging platform module) is a logged no-op.
+  const emitAppEventDep: EmitAppEvent = (type, subjectIds, payload) =>
+    emitAppEvent(
+      {
+        ...(runtime.emitEvent ? { emitRuntimeEvent: runtime.emitEvent } : {}),
+        log: (message) => console.error(message),
+      },
+      type,
+      subjectIds,
+      payload,
+    );
+
   // ── per-request ctx factories ──────────────────────────────────────────────
   const apiContext = (creatorEmail: string): ApiContext => ({
     pool,
     createRun: runtime.createRun,
+    emitAppEvent: emitAppEventDep, // F-36
+
     deliveryBackstop,
     emailProvider,
     baseUrl,
@@ -541,6 +557,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     // real verdicts before turning it on. Set KYSIGNED_ENFORCE_SENDER_AUTH=true to enforce.
     enforceSenderAuth: env.KYSIGNED_ENFORCE_SENDER_AUTH === 'true',
     ...(signingMailboxId ? { signingMailboxId } : {}),
+    emitAppEvent: emitAppEventDep, // F-36
   });
 
   const reminderSendCtx = (): ReminderSendCtx => ({
@@ -632,21 +649,8 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     prepareBundle,
     // F-9.3 / F-013 — schedule the ephemeral-retention run when the bundle is distributed.
     createRun: runtime.createRun,
+    emitAppEvent: emitAppEventDep, // F-36 envelope_completed
   });
-
-  // F-36 — the app-events seam over the runtime emitter (DD-43): never throws,
-  // logs failures with type + subject ids, derives the durable idempotency key.
-  // An absent runtime surface (lagging platform module) is a logged no-op.
-  const emitAppEventDep: EmitAppEvent = (type, subjectIds, payload) =>
-    emitAppEvent(
-      {
-        ...(runtime.emitEvent ? { emitRuntimeEvent: runtime.emitEvent } : {}),
-        log: (message) => console.error(message),
-      },
-      type,
-      subjectIds,
-      payload,
-    );
 
   return {
     pool,

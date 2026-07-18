@@ -196,3 +196,71 @@ describe('inboundEmail — readReceiptVerdicts (AC-62 / run402-private #542)', (
     assert.deepEqual(readReceiptVerdicts({}), {});
   });
 });
+
+describe('inboundEmail — F-36 app events (60.3)', () => {
+  function eventsRecorder() {
+    const events: Array<{ type: string; ids: readonly string[]; payload: Record<string, unknown> }> = [];
+    return {
+      events,
+      emitAppEvent: async (type: string, ids: readonly string[], payload: Record<string, unknown>) => {
+        events.push({ type, ids, payload });
+      },
+    };
+  }
+
+  it('signed: emits exactly one signature_completed keyed (envelope, message) — ids only', async () => {
+    const r = recorder();
+    const e = eventsRecorder();
+    const pool = fakePool([
+      { match: 'UPDATE envelope_signers SET acceptance_notified_at', rows: [{ id: 's-1' }] },
+      { match: 'FROM envelopes WHERE id', rows: ENV_ROWS },
+      { match: 'ORDER BY name', rows: SIGNER_ROWS },
+      { match: 'COUNT(*)', rows: [{ total: '2', signed: '1' }] },
+    ]);
+    const ctx: InboundEmailCtx = { ...ctxWith(pool, r, signedOutcome), emitAppEvent: e.emitAppEvent as never };
+    await handleReplyReceived(ctx, { event: { message_id: 'msg-1' } });
+    assert.deepEqual(e.events, [
+      {
+        type: 'signature_completed',
+        ids: ['env-1', 'msg-1'],
+        payload: { envelope_id: 'env-1', message_id: 'msg-1' },
+      },
+    ]);
+  });
+
+  it('a run retry landing on already_signed emits nothing (AC-194 — no double-emit)', async () => {
+    const r = recorder();
+    const e = eventsRecorder();
+    const pool = fakePool([
+      { match: 'UPDATE envelope_signers SET acceptance_notified_at', rows: [] },
+      { match: 'COUNT(*)', rows: [{ total: '2', signed: '1' }] },
+    ]);
+    const ctx: InboundEmailCtx = {
+      ...ctxWith(pool, r, { outcome: 'already_signed', envelopeId: 'env-1', signerEmail: 'alice@x.com' }),
+      emitAppEvent: e.emitAppEvent as never,
+    };
+    await handleReplyReceived(ctx, { event: { message_id: 'msg-1' } });
+    assert.equal(e.events.length, 0);
+  });
+
+  it('rejected: emits exactly one signer_declined carrying the rejection-code enum — no addresses', async () => {
+    const r = recorder();
+    const e = eventsRecorder();
+    const rejected: ForwardOutcome = {
+      outcome: 'rejected',
+      code: 'wrong_phrase',
+      reason: 'intent line mismatch',
+      envelopeId: 'env-1',
+      signerEmail: 'alice@x.com',
+    };
+    const ctx: InboundEmailCtx = { ...ctxWith(fakePool(), r, rejected), emitAppEvent: e.emitAppEvent as never };
+    await handleReplyReceived(ctx, { event: { message_id: 'msg-2' } });
+    assert.deepEqual(e.events, [
+      {
+        type: 'signer_declined',
+        ids: ['env-1', 'msg-2'],
+        payload: { envelope_id: 'env-1', message_id: 'msg-2', code: 'wrong_phrase' },
+      },
+    ]);
+  });
+});

@@ -16,6 +16,7 @@
  * F-19.1), not customer-facing.
  */
 import type { DbPool } from '../db/pool.js';
+import type { EmitAppEvent } from '../integrations/appEvents.js';
 import type { EmailProvider } from '../email/types.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -48,6 +49,8 @@ export interface SignupGrantMonitorDeps {
   windowMs?: number;
   /** Injected for tests; defaults to the call time. */
   now?: Date;
+  /** F-36 — the DD-43 app-events seam (never throws). Prod (runHandlers) wires it. */
+  emitAppEvent?: EmitAppEvent;
 }
 
 export interface SignupGrantMonitorResult {
@@ -109,6 +112,14 @@ export async function runSignupGrantMonitor(
       subject: `kysigned: trial-credit issuance spike (${stats.issuanceCount} in ${windowHours}h)`,
       text,
       html: `<p>${text}</p>`,
+    });
+    // F-36 — sweep_anomaly with a DATED key (each day's breach is its own fact;
+    // forever-dedup must not swallow a later real spike). Counts + enum only.
+    await deps.emitAppEvent?.('sweep_anomaly', ['signup-grant-monitor', now.toISOString().slice(0, 10)], {
+      monitor: 'signup_grant',
+      issuance_count: stats.issuanceCount,
+      grant_funded_envelopes: stats.grantFundedEnvelopeCount,
+      threshold: deps.alertThreshold,
     });
   }
 

@@ -91,6 +91,42 @@ describe('runSignupGrantMonitor', () => {
     assert.match(sent[0]!.text, /KYSIGNED_SIGNUP_GRANT_CREDITS=0/);
   });
 
+  it('F-36: a breach emits exactly one sweep_anomaly (dated key, counts only); under threshold emits nothing', async () => {
+    const events: Array<{ type: string; ids: readonly string[]; payload: Record<string, unknown> }> = [];
+    const emitAppEvent = (async (type: string, ids: readonly string[], payload: Record<string, unknown>) => {
+      events.push({ type, ids, payload });
+    }) as never;
+
+    const ledger = Array.from({ length: 5 }, (_, i) => ({ email: `u${i}@x.com`, source: 'signup_grant', created_at: within }));
+    const { provider } = captureEmail();
+    const r = await runSignupGrantMonitor(statsPool(ledger), {
+      emailProvider: provider,
+      operatorDomain: 'kysigned.com',
+      alertThreshold: 3,
+      now: NOW,
+      emitAppEvent,
+    });
+    assert.equal(r.alerted, true);
+    assert.deepEqual(events, [
+      {
+        type: 'sweep_anomaly',
+        ids: ['signup-grant-monitor', NOW.toISOString().slice(0, 10)],
+        payload: { monitor: 'signup_grant', issuance_count: 5, grant_funded_envelopes: 0, threshold: 3 },
+      },
+    ]);
+
+    events.length = 0;
+    const quiet = await runSignupGrantMonitor(statsPool([]), {
+      emailProvider: provider,
+      operatorDomain: 'kysigned.com',
+      alertThreshold: 3,
+      now: NOW,
+      emitAppEvent,
+    });
+    assert.equal(quiet.alerted, false);
+    assert.equal(events.length, 0, 'no anomaly, no event');
+  });
+
   it('routes the alert to the configured operator alert address when set (interim external routing, #149)', async () => {
     const ledger = Array.from({ length: 5 }, (_, i) => ({ email: `u${i}@x.com`, source: 'signup_grant', created_at: within }));
     const { provider, sent } = captureEmail();

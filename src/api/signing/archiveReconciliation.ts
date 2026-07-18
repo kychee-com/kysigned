@@ -34,6 +34,7 @@ import {
   updateArtifactArchiveConfirmation,
 } from '../../db/signatureArtifacts.js';
 import { confirmKeyAtSigning, type DkimArchiveDeps, type SigningConfirmOutcome } from './dkimArchive.js';
+import type { EmitAppEvent } from '../../integrations/appEvents.js';
 
 export interface ArchiveReconciliationDeps {
   emailProvider: EmailProvider;
@@ -49,6 +50,8 @@ export interface ArchiveReconciliationDeps {
   archive?: DkimArchiveDeps;
   /** Injected for tests; defaults to the call time. */
   now?: Date;
+  /** F-36 — the DD-43 app-events seam (never throws). Prod (runHandlers) wires it. */
+  emitAppEvent?: EmitAppEvent;
   /** Sweep window override (defaults 24-48h — see the DAO). */
   window?: { minAgeHours?: number; maxAgeHours?: number };
 }
@@ -120,6 +123,14 @@ export async function runArchiveReconciliation(
       subject: `kysigned: ${failing.length} archive confirmation(s) still failing after 24h`,
       text,
       html: `<pre>${text}</pre>`,
+    });
+    // F-36 — sweep_anomaly with a DATED key: each day's still-failing outcome is
+    // its own fact (the gateway's forever-dedup would swallow tomorrow's real
+    // anomaly under an undated key). Counts + enum only — never signer emails.
+    await deps.emitAppEvent?.('sweep_anomaly', ['archive-reconciliation', now.toISOString().slice(0, 10)], {
+      monitor: 'archive_reconciliation',
+      still_failing: failing.length,
+      healed,
     });
   }
 
