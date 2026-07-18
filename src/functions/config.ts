@@ -534,6 +534,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     appBaseUrl: baseUrl,
     // F-13.4 — fire the trial-credit grant on a confirmed magic-link sign-in.
     ...(signupGrantUsdMicros > 0n ? { signupGrantUsdMicros } : {}),
+    emitAppEvent: emitAppEventDep, // F-36.4 creator_signed_up
   });
   const adminCtx = (operator: string): AdminContext => ({ pool, operator, internalIdentities });
   const signerCtx = (): SignerApiCtx => ({ pool, getPdf, signingEmail });

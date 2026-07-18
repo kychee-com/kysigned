@@ -32,6 +32,7 @@ import type { RoutedHttpPaymentContextV1 } from '@run402/functions';
 import type { DbPool } from '../db/pool.js';
 import { creditUser } from '../db/userCredits.js';
 import { withCreateIdempotency, type CreateResult } from './idempotentCreate.js';
+import type { EmitAppEvent } from '../integrations/appEvents.js';
 import { handleCreateEnvelope } from './envelope.js';
 
 /** Operator x402 config — presence enables the route (fork-inert without it). */
@@ -65,16 +66,27 @@ export function defaultX402Seams(
     ctx: Parameters<typeof handleCreateEnvelope>[0],
     body: never,
   ) => Promise<CreateResult> = handleCreateEnvelope as never,
+  emitAppEvent?: EmitAppEvent,
 ): X402CreateSeams {
   return {
     creditPayment: async (creatorEmail, payment) => {
-      await creditUser(pool, {
+      const credited = await creditUser(pool, {
         email: creatorEmail,
         amountUsdMicros: BigInt(config.priceUsdMicros),
         source: 'x402',
         externalRef: payment.paymentId,
         description: `x402 payment ${payment.paymentId}${payment.transaction ? ` (${payment.transaction})` : ''}`,
       });
+      // F-36.5 — credit_purchase on the FRESH credit only, keyed by the settled
+      // payment id (the same exactly-once anchor as the ledger row). Amount +
+      // rail enum + ledger id — never customer identity.
+      if (!credited.deduplicated) {
+        await emitAppEvent?.('credit_purchase', [payment.paymentId], {
+          amount_usd_micros: config.priceUsdMicros,
+          source: 'x402',
+          ...(credited.ledgerId ? { ledger_id: credited.ledgerId } : {}),
+        });
+      }
     },
     runCreate: (creatorEmail, idempotencyKey, body) =>
       withCreateIdempotency({ pool }, creatorEmail, idempotencyKey, JSON.stringify(body), () =>

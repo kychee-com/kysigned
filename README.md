@@ -186,7 +186,7 @@ All run402 I/O **defaults to the [`@run402/sdk`](https://www.npmjs.com/package/@
 
 ### Business events, dashboard, and paging built in
 
-Every deployment emits its business facts as run402 app events: `signature_completed`, `signer_declined`, `envelope_completed`, `envelope_undeliverable`, and `sweep_anomaly` from the two daily monitors. There is nothing to configure. Events land in your own project's feed, so you get an activity dashboard on your project page at console.run402.com, agent-readable catch-up via `run402 events --source app`, and optional Telegram paging through `run402 notifications` rules on your operator account.
+Every deployment emits its business facts as run402 app events: `signature_completed`, `signer_declined`, `envelope_completed`, `envelope_undeliverable`, `sweep_anomaly` from the two daily monitors, `creator_signed_up` when a new account claims its trial credit, and `credit_purchase` when a payment lands. There is nothing to configure. Events land in your own project's feed, so you get an activity dashboard on your project page at console.run402.com, agent-readable catch-up via `run402 events --source app`, and optional Telegram paging through `run402 notifications` rules on your operator account.
 
 Payloads carry opaque ids and counts only. No signer emails or names, no document names or content ever leave your deployment. Event emission is best-effort by design: if the events surface is unavailable, the signing flow is never affected.
 

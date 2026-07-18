@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import type { RoutedHttpPaymentContextV1 } from '@run402/functions';
 import { handleX402CreateEnvelope, defaultX402Seams, type X402CreateSeams } from './x402Create.js';
 import type { DbPool } from '../db/pool.js';
+import { emitAppEvent as seamEmitAppEvent } from '../integrations/appEvents.js';
 
 const PAYMENT: RoutedHttpPaymentContextV1 = {
   scheme: 'x402',
@@ -240,7 +241,7 @@ function makeSeamPool() {
         const dup = ledger.some((l) => l.source === v[2] && l.external_ref === v[3]);
         if (dup) return { rows: [], rowCount: 0 } as never;
         ledger.push({ email: v[0]!, delta: v[1]!, source: v[2]!, external_ref: v[3]! });
-        return { rows: [{ balance_usd_micros: v[1] }], rowCount: 1 } as never;
+        return { rows: [{ balance_usd_micros: v[1], ledger_id: `cl-x402-${ledger.length}` }], rowCount: 1 } as never;
       }
       if (text.includes('SELECT balance_usd_micros FROM user_credits')) {
         const total = ledger
@@ -287,6 +288,47 @@ describe('defaultX402Seams — real creditUser + withCreateIdempotency compositi
     assert.equal(ledger[0]!.source, 'x402');
     assert.equal(ledger[0]!.external_ref, 'pay_abc123');
     assert.equal(ledger[0]!.delta, '250000');
+  });
+
+  it('F-36.5: a fresh x402 credit emits exactly one credit_purchase keyed by the payment id; a same-payment replay emits nothing', async () => {
+    const { pool, ledger } = makeSeamPool();
+    const events: Array<{ type: string; ids: readonly string[]; payload: Record<string, unknown> }> = [];
+    const emitAppEvent = (async (type: string, ids: readonly string[], payload: Record<string, unknown>) => {
+      events.push({ type, ids, payload });
+    }) as never;
+    const seams = defaultX402Seams(pool, CONFIG, () => ({}) as never, async () => ({ status: 201, body: { id: 'e' } }), emitAppEvent);
+    await seams.creditPayment('agent@example.com', PAYMENT);
+    await seams.creditPayment('agent@example.com', PAYMENT); // dedup — no second event
+    assert.equal(ledger.length, 1);
+    assert.deepEqual(events, [
+      {
+        type: 'credit_purchase',
+        ids: ['pay_abc123'],
+        payload: { amount_usd_micros: 250000, source: 'x402', ledger_id: 'cl-x402-1' },
+      },
+    ]);
+  });
+
+  it('F-36.5/AC-196 discipline: a failing events surface never breaks crediting (real seam)', async () => {
+    const { pool, ledger } = makeSeamPool();
+    const logs: string[] = [];
+    const failingSeam = (async (type: never, ids: readonly string[], payload: never) =>
+      seamEmitAppEvent(
+        {
+          emitRuntimeEvent: async () => {
+            throw Object.assign(new Error('gateway 500'), { status: 500 });
+          },
+          log: (m: string) => void logs.push(m),
+        },
+        type,
+        ids,
+        payload,
+      )) as never;
+    const seams = defaultX402Seams(pool, CONFIG, () => ({}) as never, async () => ({ status: 201, body: { id: 'e' } }), failingSeam);
+    await seams.creditPayment('agent@example.com', PAYMENT);
+    assert.equal(ledger.length, 1, 'crediting is never gated by an emit failure');
+    assert.equal(logs.length, 1);
+    assert.match(logs[0], /credit_purchase/);
   });
 
   it('runCreate replays the stored 201 for the same key + payload (create runs ONCE) and 409s a different payload', async () => {

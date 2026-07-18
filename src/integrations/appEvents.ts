@@ -33,13 +33,16 @@ export type RuntimeEventEmitter = (
   opts?: { idempotencyKey?: string },
 ) => Promise<unknown>;
 
-/** The five F-36.1 business facts. Flat snake_case per the gateway grammar. */
+/** The F-36.1 signing-lifecycle facts + the F-36.4/F-36.5 growth/revenue facts.
+ *  Flat snake_case per the gateway grammar. */
 export type AppEventType =
   | 'signature_completed'
   | 'signer_declined'
   | 'envelope_completed'
   | 'envelope_undeliverable'
-  | 'sweep_anomaly';
+  | 'sweep_anomaly'
+  | 'creator_signed_up'
+  | 'credit_purchase';
 
 /** Flat fact values: opaque ids, counts, ISO timestamps, fixed enums. */
 export type AppEventPayloadValue = string | number | boolean;

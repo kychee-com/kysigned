@@ -43,6 +43,8 @@ const REGISTERED_EMIT_SITES: Record<string, number> = {
   'api/distributeBundle.ts': 1, // envelope_completed
   'api/signing/archiveReconciliation.ts': 1, // sweep_anomaly (archive)
   'api/signupGrantMonitor.ts': 1, // sweep_anomaly (grant)
+  'api/auth/authHandlers.ts': 1, // creator_signed_up (F-36.4)
+  'api/x402Create.ts': 1, // credit_purchase, x402 rail (F-36.5)
   'integrations/appEvents.ts': 1, // the seam's own definition/entry
   'functions/config.ts': 1, // buildAppDeps constructs the seam binding
 };
@@ -60,6 +62,10 @@ const PAYLOAD_KEY_ALLOWLIST = new Set([
   'issuance_count',
   'grant_funded_envelopes',
   'threshold',
+  'grant_usd_micros', // creator_signed_up (F-36.4)
+  'amount_usd_micros', // credit_purchase (F-36.5)
+  'source', // fixed rail/path enum on the growth/revenue events
+  'ledger_id', // credit_purchase ledger row reference
 ]);
 
 test('every emitAppEvent call site is registered (new sites must register + add a payload test)', () => {

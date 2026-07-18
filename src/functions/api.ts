@@ -411,10 +411,16 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
       // The paid create ALWAYS runs credit-backed at the route's price (DD-29):
       // the settled payment credits the ledger, the create debits it — even on
       // a fork whose global billing mode is unset.
-      const seams = defaultX402Seams(deps.pool, cfg, (creatorEmail) => ({
-        ...deps.apiContext(creatorEmail),
-        senderGate: buildHostedSenderGate(deps.pool, cfg.priceUsdMicros),
-      }));
+      const seams = defaultX402Seams(
+        deps.pool,
+        cfg,
+        (creatorEmail) => ({
+          ...deps.apiContext(creatorEmail),
+          senderGate: buildHostedSenderGate(deps.pool, cfg.priceUsdMicros),
+        }),
+        undefined, // default createFn
+        deps.emitAppEvent, // F-36.5 credit_purchase (x402 rail)
+      );
       // #128 — run402 paid-function idempotency: honor a caller-supplied key.
       // Prefer the platform-forwarded, gateway-trusted `x-run402-idempotency-key`
       // (set by run402 when it starts propagating it on billed routes); fall back

@@ -45,6 +45,8 @@ export interface SignupGrantOutcome {
   reason: SignupGrantReason;
   /** The resulting balance when a credit op ran (granted or already_granted). */
   balanceUsdMicros?: bigint;
+  /** The fresh grant's credit_ledger row id — the F-36.4 event key (no address). */
+  ledgerId?: string;
 }
 
 /**
@@ -83,5 +85,6 @@ export async function grantSignupCreditIfEligible(
     granted: !result.deduplicated,
     reason: result.deduplicated ? 'already_granted' : 'granted',
     balanceUsdMicros: result.balanceUsdMicros,
+    ...(result.ledgerId !== undefined ? { ledgerId: result.ledgerId } : {}),
   };
 }

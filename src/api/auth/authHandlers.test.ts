@@ -12,6 +12,7 @@ import {
   type AuthHandlerCtx,
 } from './authHandlers.js';
 import { SESSION_COOKIE } from './session.js';
+import { emitAppEvent as seamEmitAppEvent } from '../../integrations/appEvents.js';
 
 function fakePool(creatorName: string | null = null) {
   const sessions = new Map<string, true>();
@@ -119,6 +120,125 @@ describe('handleAuthTokenExchange — new-account trial credit (F-13.4 / F-18.4)
     const r = await handleAuthTokenExchange(c, { token: 'magic' });
     assert.equal(r.status, 200, 'sign-in still succeeds despite a grant failure');
     assert.deepEqual(r.body, { ok: true, email: 'new.user@x.com' });
+  });
+
+  // ── F-36.4 / AC-198 — creator_signed_up (61.1) ──────────────────────────────
+  function eventsRecorder() {
+    const events: Array<{ type: string; ids: readonly string[]; payload: Record<string, unknown> }> = [];
+    return {
+      events,
+      emitAppEvent: (async (type: string, ids: readonly string[], payload: Record<string, unknown>) => {
+        events.push({ type, ids, payload });
+      }) as never,
+    };
+  }
+
+  // Fresh-claim pool: the CTE returns the new ledger row (id + balance).
+  function freshGrantPool() {
+    const pool: DbPool = {
+      async query(text: string) {
+        if (text.includes('INSERT INTO auth_sessions')) return { rows: [], rowCount: 0 } as never;
+        if (/WITH new_ledger AS[\s\S]*INSERT INTO credit_ledger/.test(text)) {
+          return { rows: [{ balance_usd_micros: '1000000', ledger_id: 'cl-42' }], rowCount: 1 } as never;
+        }
+        return { rows: [], rowCount: 0 } as never;
+      },
+      async end() {},
+    };
+    return pool;
+  }
+
+  it('F-36.4: a fresh grant claim emits exactly one creator_signed_up keyed by the ledger row id — no address anywhere', async () => {
+    const e = eventsRecorder();
+    const c: AuthHandlerCtx = {
+      pool: freshGrantPool(),
+      appBaseUrl: 'https://kysigned.com',
+      session: { projectAnonKey: 'anon', secure: true, fetchImpl: okExchange },
+      signupGrantUsdMicros: 1_000_000n,
+      emitAppEvent: e.emitAppEvent,
+    };
+    const r = await handleAuthTokenExchange(c, { token: 'magic' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(e.events, [
+      {
+        type: 'creator_signed_up',
+        ids: ['cl-42'],
+        payload: { grant_usd_micros: 1_000_000, source: 'magic_link' },
+      },
+    ]);
+  });
+
+  it('F-36.4: already-granted, disabled, and disposable-domain sign-ins emit nothing', async () => {
+    // already_granted: the CTE conflicts → 0 rows.
+    const e1 = eventsRecorder();
+    const dedupPool: DbPool = {
+      async query(text: string) {
+        if (text.includes('INSERT INTO auth_sessions')) return { rows: [], rowCount: 0 } as never;
+        if (/WITH new_ledger AS[\s\S]*INSERT INTO credit_ledger/.test(text)) return { rows: [], rowCount: 0 } as never;
+        return { rows: [], rowCount: 0 } as never;
+      },
+      async end() {},
+    };
+    const dedupCtx: AuthHandlerCtx = {
+      pool: dedupPool,
+      appBaseUrl: 'https://kysigned.com',
+      session: { projectAnonKey: 'anon', secure: true, fetchImpl: okExchange },
+      signupGrantUsdMicros: 1_000_000n,
+      emitAppEvent: e1.emitAppEvent,
+    };
+    assert.equal((await handleAuthTokenExchange(dedupCtx, { token: 'magic' })).status, 200);
+    assert.equal(e1.events.length, 0, 'already_granted emits nothing');
+
+    // disabled: no grant config.
+    const e2 = eventsRecorder();
+    const disabledCtx: AuthHandlerCtx = {
+      pool: freshGrantPool(),
+      appBaseUrl: 'https://kysigned.com',
+      session: { projectAnonKey: 'anon', secure: true, fetchImpl: okExchange },
+      emitAppEvent: e2.emitAppEvent,
+    };
+    assert.equal((await handleAuthTokenExchange(disabledCtx, { token: 'magic' })).status, 200);
+    assert.equal(e2.events.length, 0, 'disabled grant emits nothing');
+
+    // disposable domain: grant refused before any DB write.
+    const e3 = eventsRecorder();
+    const dispExchange = fetchImpl({ status: 200, body: { access_token: 'at', refresh_token: 'rt', user: { email: 'burner@mailinator.com' } } });
+    const dispCtx: AuthHandlerCtx = {
+      pool: freshGrantPool(),
+      appBaseUrl: 'https://kysigned.com',
+      session: { projectAnonKey: 'anon', secure: true, fetchImpl: dispExchange },
+      signupGrantUsdMicros: 1_000_000n,
+      emitAppEvent: e3.emitAppEvent,
+    };
+    assert.equal((await handleAuthTokenExchange(dispCtx, { token: 'magic' })).status, 200);
+    assert.equal(e3.events.length, 0, 'disposable-domain refusal emits nothing');
+  });
+
+  it('F-36.4/AC-196 discipline: a failing events surface never breaks the sign-in (real seam)', async () => {
+    const logs: string[] = [];
+    const failingSeam = (async (type: never, ids: readonly string[], payload: never) =>
+      seamEmitAppEvent(
+        {
+          emitRuntimeEvent: async () => {
+            throw Object.assign(new Error('quota'), { code: 'QUOTA_EXCEEDED', status: 403 });
+          },
+          log: (m: string) => void logs.push(m),
+        },
+        type,
+        ids,
+        payload,
+      )) as never;
+    const c: AuthHandlerCtx = {
+      pool: freshGrantPool(),
+      appBaseUrl: 'https://kysigned.com',
+      session: { projectAnonKey: 'anon', secure: true, fetchImpl: okExchange },
+      signupGrantUsdMicros: 1_000_000n,
+      emitAppEvent: failingSeam,
+    };
+    const r = await handleAuthTokenExchange(c, { token: 'magic' });
+    assert.equal(r.status, 200, 'sign-in is never gated by an emit failure');
+    assert.equal(logs.length, 1);
+    assert.match(logs[0], /creator_signed_up/);
   });
 });
 

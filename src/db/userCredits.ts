@@ -44,6 +44,9 @@ export interface CreditResult {
   ok: boolean;
   balanceUsdMicros: bigint;
   deduplicated: boolean;
+  /** The new credit_ledger row id — present only on a FRESH credit (F-36.4/F-36.5
+   *  event keys are built from it; a deduplicated delivery has no new row). */
+  ledgerId?: string;
 }
 
 export interface DebitResult {
@@ -114,7 +117,7 @@ export async function creditUser(pool: DbPool, opts: CreditUserOpts): Promise<Cr
        INSERT INTO credit_ledger (email, delta_usd_micros, source, external_ref, description)
        VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (source, external_ref) DO NOTHING
-       RETURNING delta_usd_micros
+       RETURNING id, delta_usd_micros
      ),
      upserted AS (
        INSERT INTO user_credits (email, balance_usd_micros, updated_at)
@@ -124,7 +127,8 @@ export async function creditUser(pool: DbPool, opts: CreditUserOpts): Promise<Cr
                      updated_at = now()
        RETURNING balance_usd_micros
      )
-     SELECT balance_usd_micros FROM upserted`,
+     SELECT upserted.balance_usd_micros, new_ledger.id AS ledger_id
+       FROM upserted CROSS JOIN new_ledger`,
     [email, opts.amountUsdMicros.toString(), opts.source, opts.externalRef, opts.description],
   );
 
@@ -135,10 +139,12 @@ export async function creditUser(pool: DbPool, opts: CreditUserOpts): Promise<Cr
     return { ok: true, balanceUsdMicros: balance, deduplicated: true };
   }
 
+  const fresh = result.rows[0] as { balance_usd_micros: string | number | bigint; ledger_id?: string | number };
   return {
     ok: true,
-    balanceUsdMicros: toBigInt((result.rows[0] as { balance_usd_micros: string | number | bigint }).balance_usd_micros),
+    balanceUsdMicros: toBigInt(fresh.balance_usd_micros),
     deduplicated: false,
+    ...(fresh.ledger_id !== undefined && fresh.ledger_id !== null ? { ledgerId: String(fresh.ledger_id) } : {}),
   };
 }
 

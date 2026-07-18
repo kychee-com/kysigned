@@ -17,6 +17,7 @@ import { requestMagicLink, exchangeMagicLinkToken } from './dashboardAuth.js';
 import { startSession, endSession, type SessionConfig, type SessionActor } from './session.js';
 import { getCreatorName } from '../../db/creatorProfiles.js';
 import { grantSignupCreditIfEligible } from '../signupGrant.js';
+import type { EmitAppEvent } from '../../integrations/appEvents.js';
 
 export interface AuthHandlerCtx {
   pool: DbPool;
@@ -29,6 +30,8 @@ export interface AuthHandlerCtx {
    * it (the forker default); kysigned.com sets it via `signupGrantCredits`.
    */
   signupGrantUsdMicros?: bigint;
+  /** F-36.4 — the DD-43 app-events seam (never throws). Prod (config.ts) wires it. */
+  emitAppEvent?: EmitAppEvent;
 }
 
 export interface AuthResult {
@@ -81,9 +84,18 @@ export async function handleAuthTokenExchange(ctx: AuthHandlerCtx, body: { token
   // sign-in lands it exactly once. Best-effort: a grant failure must NEVER break
   // sign-in (the session is already started), so it is wrapped and swallowed.
   try {
-    await grantSignupCreditIfEligible(ctx.pool, email, {
+    const grant = await grantSignupCreditIfEligible(ctx.pool, email, {
       grantUsdMicros: ctx.signupGrantUsdMicros ?? 0n,
     });
+    // F-36.4 — creator_signed_up on the FRESH claim only (the grant's
+    // normalized-inbox UNIQUE is the exactly-once anchor). Keyed by the grant
+    // ledger row id — no address in the key or payload, ever.
+    if (grant.granted && grant.ledgerId) {
+      await ctx.emitAppEvent?.('creator_signed_up', [grant.ledgerId], {
+        grant_usd_micros: Number(ctx.signupGrantUsdMicros ?? 0n),
+        source: 'magic_link',
+      });
+    }
   } catch (err) {
     console.error('signup-grant failed (sign-in unaffected):', err);
   }
