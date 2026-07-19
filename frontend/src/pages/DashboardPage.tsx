@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiGet, apiPost, formatUsd, type CreditBalance } from '../lib/api'
-import { useAuth } from '../auth/AuthContext'
+import { useAuth } from '../auth/auth-core'
 import { trackEvent, GA_EVENTS } from '../lib/analytics'
 import { PasskeyNudge } from '../components/PasskeyNudge'
 import { getOperatorConfig } from '../config/operator'
@@ -76,7 +76,7 @@ export function DashboardPage() {
     return new URLSearchParams(window.location.search).get('credits')
   })
 
-  const loadDocuments = async (email: string) => {
+  const loadDocuments = useCallback(async (email: string) => {
     const docs = await apiGet<DocumentSummary[]>(`/v1/documents?email=${encodeURIComponent(email)}`)
     setDocuments(docs)
     // Billing/balance is private (GH#108): a fork skips the /v1/credits read, so
@@ -84,7 +84,7 @@ export function DashboardPage() {
     if (showBilling) {
       setBalance(await apiGet<CreditBalance>('/v1/credits/balance').catch(() => null))
     }
-  }
+  }, [showBilling])
 
   useEffect(() => {
     // Strip payment-redirect params from the URL bar so a refresh doesn't
@@ -117,7 +117,7 @@ export function DashboardPage() {
     loadDocuments(user.email)
       .catch((e) => setError((e as Error).message ?? 'Failed to load documents'))
       .finally(() => setLoading(false))
-  }, [user])
+  }, [user, loadDocuments])
 
   if (!user) {
     // Should never render — RequireAuth gates us. Defensive blank.

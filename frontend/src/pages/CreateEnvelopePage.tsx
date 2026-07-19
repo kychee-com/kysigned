@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { apiGet, apiPost, formatUsd, type CreditBalance } from '../lib/api'
+import { ApiError, apiGet, apiPost, formatUsd, type CreditBalance } from '../lib/api'
 import { friendlyCreateError } from '../lib/friendlyError'
 import { isPdfTooLarge, pdfTooLargeMessage } from '../lib/pdfSize'
-import { useAuth } from '../auth/AuthContext'
+import { useAuth } from '../auth/auth-core'
 import { trackEvent, GA_EVENTS } from '../lib/analytics'
 import { getOperatorConfig } from '../config/operator'
 
@@ -66,8 +66,8 @@ export function CreateEnvelopePage() {
     try {
       const { url } = await apiPost<{ url: string }>('/v1/credits/checkout', { email: user?.email })
       window.location.href = url
-    } catch (e: any) {
-      setError(e.message)
+    } catch (e) {
+      setError((e as Error).message)
       setRedirecting(false)
     }
   }
@@ -179,11 +179,11 @@ export function CreateEnvelopePage() {
       navigate(`/dashboard/envelope/${result.envelope_id}`, {
         state: { justSent: true, ...(deliveryProblems.length ? { deliveryProblems } : {}) },
       })
-    } catch (e: any) {
+    } catch (e) {
       // Don't leak an opaque server fault (run402's "Internal function error") —
       // show a calm fallback for 5xx/opaque, keep helpful 4xx validation messages
       // (2026-06-21). scroll-to-top so the banner is seen.
-      setError(friendlyCreateError(e?.status, e?.message))
+      setError(friendlyCreateError(e instanceof ApiError ? e.status : undefined, e instanceof Error ? e.message : undefined))
       setFirstError(null)
       scrollToTop()
     } finally {

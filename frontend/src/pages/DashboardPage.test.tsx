@@ -15,7 +15,7 @@ vi.mock('../lib/api', () => ({
   apiPost: apiPostMock,
   formatUsd: (n: number) => `$${(n / 1e6).toFixed(2)}`,
 }));
-vi.mock('../auth/AuthContext', () => ({
+vi.mock('../auth/auth-core', () => ({
   useAuth: () => ({ user: { email: 'creator@acme.com', display_name: 'Creator' }, loading: false }),
 }));
 

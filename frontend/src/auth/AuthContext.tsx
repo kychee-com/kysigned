@@ -16,85 +16,25 @@
  * BroadcastChannel is used (not localStorage `storage` event) because the
  * session moved to HttpOnly cookies in 2F.AUTH4 — cookies don't emit storage
  * events. BroadcastChannel is supported in all evergreen browsers.
+ *
+ * This file exports ONLY the <AuthProvider> component (react-refresh
+ * fast-refresh needs component-only files). The context object, `useAuth`,
+ * and `broadcastAuthEvent` live in ./auth-core; the shared types are
+ * re-exported below for convenience (type-only re-exports are HMR-safe).
  */
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import {
+  AUTH_BROADCAST_CHANNEL,
+  AUTH_STORAGE_SIGNAL_KEY,
+  AuthContext,
+  broadcastAuthEvent,
+} from './auth-core';
+import type { AuthBroadcastMessage, AuthContextValue, AuthUser } from './auth-core';
 
-const AUTH_BROADCAST_CHANNEL = 'kysigned-auth';
-// localStorage signal key — written by `broadcastAuthEvent` to trigger the
-// `storage` event on OTHER tabs (reliable cross-tab notification, more
-// dependable across browsers than BroadcastChannel for short-lived senders).
-// The VALUE carries the type + timestamp; it has zero authority — the
-// receiving tab still re-fetches /v1/auth/user to confirm.
-const AUTH_STORAGE_SIGNAL_KEY = 'kysigned_auth_signal';
+export type { AuthBroadcastMessage, AuthContextValue, AuthUser } from './auth-core';
+
 const API_BASE = (import.meta as { env?: { VITE_API_BASE?: string } }).env?.VITE_API_BASE || '';
-
-export interface AuthUser {
-  email: string;
-  /** SS.3 / F1.11: the creator's own saved name, surfaced so the create form can prefill the sender-as-signer row. Absent until the creator has saved one. */
-  display_name?: string;
-}
-
-export interface AuthContextValue {
-  user: AuthUser | null;
-  loading: boolean;
-  refresh: () => Promise<void>;
-  signOut: () => Promise<void>;
-}
-
-const AuthContext = createContext<AuthContextValue | null>(null);
-
-export function useAuth(): AuthContextValue {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within <AuthProvider>');
-  return ctx;
-}
-
-export type AuthBroadcastMessage =
-  | { type: 'signed-in'; email: string }
-  | { type: 'signed-out' };
-
-/**
- * Broadcast a sign-in / sign-out event to other tabs. Fires through TWO
- * channels for reliability:
- *
- *   1. BroadcastChannel('kysigned-auth') — instant, but flaky for senders
- *      that close immediately after posting. Some browsers may drop the
- *      message if the channel is GC'd before delivery.
- *   2. localStorage write — emits a `storage` event on OTHER tabs of the
- *      same origin. Rock-solid cross-tab signal; lower-latency than
- *      visibilitychange because it fires while tabs are still in the
- *      background. The value is timestamped so a duplicate write still
- *      triggers a fresh storage event.
- *
- * Either path triggers AuthContext.refresh() on the receiving tab, which
- * re-fetches /v1/auth/user and updates the user state.
- */
-export function broadcastAuthEvent(msg: AuthBroadcastMessage): void {
-  if (typeof BroadcastChannel !== 'undefined') {
-    const channel = new BroadcastChannel(AUTH_BROADCAST_CHANNEL);
-    try {
-      channel.postMessage(msg);
-    } finally {
-      // Defer close to a microtask so the message has a chance to dispatch.
-      // close()-before-dispatch is a known cross-browser flakiness mode.
-      setTimeout(() => channel.close(), 0);
-    }
-  }
-  if (typeof localStorage !== 'undefined') {
-    try {
-      // Timestamp the value so back-to-back broadcasts (e.g. signed-out
-      // followed by signed-in) each produce a distinct storage event.
-      localStorage.setItem(
-        AUTH_STORAGE_SIGNAL_KEY,
-        JSON.stringify({ ...msg, t: Date.now() }),
-      );
-    } catch {
-      // localStorage may be disabled (privacy mode quirks); BroadcastChannel
-      // is still in flight as a fallback.
-    }
-  }
-}
 
 async function fetchAuthUser(): Promise<AuthUser | null> {
   try {

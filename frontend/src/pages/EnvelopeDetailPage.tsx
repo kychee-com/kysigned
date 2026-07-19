@@ -63,8 +63,8 @@ export function EnvelopeDetailPage() {
     try {
       await apiPost(`/v1/envelope/${id}/remind`, {})
       alert('Reminders sent to pending signers.')
-    } catch (e: any) {
-      alert(e.message)
+    } catch (e) {
+      alert((e as Error).message)
     } finally {
       setReminding(false)
     }
@@ -79,8 +79,8 @@ export function EnvelopeDetailPage() {
     try {
       await apiPost(`/v1/envelope/${id}/void`, {})
       await refetch()
-    } catch (e: any) {
-      alert(e.message)
+    } catch (e) {
+      alert((e as Error).message)
     }
   }
 
@@ -91,8 +91,8 @@ export function EnvelopeDetailPage() {
     try {
       await apiPost(`/v1/envelope/${id}/seal`, {})
       await refetch()
-    } catch (e: any) {
-      alert(e.message)
+    } catch (e) {
+      alert((e as Error).message)
     } finally {
       setBusy(false)
     }
@@ -111,8 +111,8 @@ export function EnvelopeDetailPage() {
       setAdding(false)
       setAddForm({ email: '', name: '', onBehalf: false, onBehalfOf: '' })
       await refetch()
-    } catch (e: any) {
-      alert(e.message)
+    } catch (e) {
+      alert((e as Error).message)
     } finally {
       setBusy(false)
     }
@@ -137,8 +137,8 @@ export function EnvelopeDetailPage() {
       })
       setEditEmail(null)
       await refetch()
-    } catch (e: any) {
-      alert(e.message)
+    } catch (e) {
+      alert((e as Error).message)
     } finally {
       setBusy(false)
     }
@@ -151,8 +151,8 @@ export function EnvelopeDetailPage() {
     try {
       await apiDelete(`/v1/envelope/${id}/signers?email=${encodeURIComponent(signerEmail)}`)
       await refetch()
-    } catch (e: any) {
-      alert(e.message)
+    } catch (e) {
+      alert((e as Error).message)
     } finally {
       setBusy(false)
     }

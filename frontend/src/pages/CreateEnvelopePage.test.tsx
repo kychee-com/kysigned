@@ -25,7 +25,7 @@ vi.mock('react-router-dom', async (importActual) => {
 });
 
 // Logged-in creator with a saved name.
-vi.mock('../auth/AuthContext', () => ({
+vi.mock('../auth/auth-core', () => ({
   useAuth: () => ({
     user: { email: 'creator@example.com', display_name: 'Jordan R' },
     loading: false,

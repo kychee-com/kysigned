@@ -8,6 +8,14 @@
 #
 # Minor/patch bumps are grouped into one low-noise PR per directory. Majors come as
 # their own PRs so a breaking change is reviewed on its own.
+#
+# cooldown.default-days: 7 — never offer a release younger than a week. This is
+# the supply-chain guard: hijacked-maintainer / worm-published versions (the 2025
+# npm ecosystem attacks) are typically yanked within days of publish; a 7-day
+# floor means Dependabot only proposes versions the ecosystem has already had a
+# chance to vet. Deliberately NOT applied to Dependabot SECURITY updates — those
+# ignore cooldown by design, so a patch for a disclosed CVE still arrives
+# immediately.
 version: 2
 updates:
   - package-ecosystem: "npm"
@@ -15,6 +23,8 @@ updates:
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     groups:
       npm-minor-and-patch:
         update-types: ["minor", "patch"]
@@ -24,6 +34,8 @@ updates:
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     groups:
       npm-minor-and-patch:
         update-types: ["minor", "patch"]
@@ -33,6 +45,8 @@ updates:
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     groups:
       npm-minor-and-patch:
         update-types: ["minor", "patch"]

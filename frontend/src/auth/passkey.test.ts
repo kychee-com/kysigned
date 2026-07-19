@@ -4,7 +4,7 @@
  * The browser-side helpers convert run402's JSON challenges to WebAuthn
  * ArrayBuffers and back; signInWithPasskey orchestrates the full ceremony.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   passkeysSupported,
   conditionalMediationAvailable,

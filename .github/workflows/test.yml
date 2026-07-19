@@ -80,5 +80,7 @@ jobs:
         working-directory: frontend
       - run: npm test
         working-directory: frontend
-      # `npm run lint` is deliberately NOT here: main has pre-existing eslint
-      # errors (21 as of 2026-07-19). Add it once the tree is lint-clean.
+      # Enforced since the 2026-07-19 lint cleanup; the script runs with
+      # --max-warnings 0, so warnings fail too.
+      - run: npm run lint
+        working-directory: frontend

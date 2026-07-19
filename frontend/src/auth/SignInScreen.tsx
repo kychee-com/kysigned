@@ -16,7 +16,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { apiPost } from '../lib/api';
 import { readAttributionForSubmit } from '../lib/attribution';
 import { isValidEmail } from '../lib/validateEmail';
-import { broadcastAuthEvent, useAuth } from './AuthContext';
+import { broadcastAuthEvent, useAuth } from './auth-core';
 import {
   passkeysSupported,
   signInWithPasskey,

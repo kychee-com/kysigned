@@ -12,7 +12,7 @@
  * (which would 401 on submit). They see the sign-in screen.
  */
 import type { ReactNode } from 'react';
-import { useAuth } from './AuthContext';
+import { useAuth } from './auth-core';
 import { SignInScreen } from './SignInScreen';
 
 export function RequireAuth({ children }: { children: ReactNode }) {
