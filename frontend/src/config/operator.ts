@@ -104,6 +104,12 @@ export interface OperatorConfig {
    * it and never hits the proprietary credit endpoints. Generic default: false.
    */
   showBilling: boolean;
+  /**
+   * Whether the F-37 paid-acquisition capture runs (store an arriving Google
+   * Ads click id first-party and ride it on the magic-link request). Generic
+   * default: false — a fresh fork captures nothing anywhere.
+   */
+  captureGclid: boolean;
   home: OperatorHome;
 }
 
@@ -119,6 +125,7 @@ export const GENERIC_OPERATOR_CONFIG: OperatorConfig = {
   contactEmail: '',
   showPricing: false,
   showBilling: false,
+  captureGclid: false,
   home: {
     hero: {
       title: 'E-signatures that live in your inbox',
@@ -169,6 +176,7 @@ export function getOperatorConfig(): OperatorConfig {
     contactEmail: parsed.contactEmail ?? g.contactEmail,
     showPricing: parsed.showPricing ?? g.showPricing,
     showBilling: parsed.showBilling ?? g.showBilling,
+    captureGclid: parsed.captureGclid ?? g.captureGclid,
     home: {
       hero: { ...g.home.hero, ...(home.hero ?? {}) },
       // Operator-specific sections: present only when the operator supplies them.

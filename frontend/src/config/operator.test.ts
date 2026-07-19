@@ -18,6 +18,7 @@ describe('getOperatorConfig — generic defaults (no VITE_OPERATOR_CONFIG)', () 
     expect(cfg.contactEmail).toBe('');
     expect(cfg.showPricing).toBe(false);
     expect(cfg.showBilling).toBe(false);
+    expect(cfg.captureGclid).toBe(false);
     expect(cfg.home.comparison).toBeNull();
     expect(cfg.home.audiences).toBeNull();
     expect(cfg.home.hero.title).toMatch(/inbox/i);
@@ -48,6 +49,11 @@ describe('getOperatorConfig — injected VITE_OPERATOR_CONFIG', () => {
     expect(cfg.home.hero.subtitle).toBe(GENERIC_OPERATOR_CONFIG.home.hero.subtitle);
     // brandName not supplied → still the generic default.
     expect(cfg.brandName).toBe('kysigned');
+  });
+
+  it('parses captureGclid true (F-37 attribution capture is operator-enabled, default off)', () => {
+    vi.stubEnv('VITE_OPERATOR_CONFIG', JSON.stringify({ captureGclid: true }));
+    expect(getOperatorConfig().captureGclid).toBe(true);
   });
 
   it('carries operator marketing sections when supplied', () => {

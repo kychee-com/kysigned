@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Routes, Route, useLocation } from 'react-router-dom'
 import { SigningPage } from './pages/SigningPage'
 import { DashboardPage } from './pages/DashboardPage'
@@ -13,6 +14,7 @@ import { AuthProvider } from './auth/AuthContext'
 import { RequireAuth } from './auth/RequireAuth'
 import { SignInScreen } from './auth/SignInScreen'
 import { AppHeader } from './components/AppHeader'
+import { captureAttribution } from './lib/attribution'
 
 // v0.22.0 / 2F.AUTH7: `/` doubles as marketing landing AND sign-in entry.
 // AppHeader's "Sign in" routes through `/?intent=signin`; magic-link emails
@@ -27,6 +29,17 @@ function HomeRoute() {
 }
 
 export function App() {
+  // F-37 (AC-205): a gclid arriving on any SPA URL is captured first-party on
+  // mount. `useLocation` (not window.location) so router-provided URLs — tests,
+  // memory routers — are seen; operator-config-gated inside the module, so a
+  // fresh fork stores nothing.
+  const location = useLocation()
+  useEffect(() => {
+    captureAttribution({ search: location.search })
+    // Capture only ever acts on the LANDING url's gclid (first-touch); no need
+    // to re-run per navigation, but re-running is harmless and keeps deep-link
+    // arrivals covered when the SPA soft-navigates with a fresh gclid.
+  }, [location.search])
   return (
     // v0.22.0 / 2F.AUTH7 / F2.1.10: AuthProvider wraps the whole SPA.
     // <AppHeader/> renders identity-aware nav above every route.
