@@ -13,7 +13,7 @@ import {
 } from '../db/allowedSenders.js';
 import { listOutstandingArchiveConfirmations } from '../db/signatureArtifacts.js';
 import { parseWindow, parseExcludeInternal } from './adminWindow.js';
-import { getOverview, getAccounts, getEnvelopeFunnel, getSignals, listCreditLedger } from '../db/adminAnalytics.js';
+import { getOverview, getAccounts, getEnvelopeFunnel, getSignals, listCreditLedger, listActiveIdentities } from '../db/adminAnalytics.js';
 
 export interface AdminContext {
   pool: DbPool;
@@ -113,6 +113,27 @@ export async function handleGetOverview(ctx: AdminContext, windowParam: string |
  * state. Identities and amounts are operator metadata (F-33.5) — this is where
  * the F-36 events' ids join back to people, inside kysigned.
  */
+/**
+ * F-34.8 / AC-203 — the Active tile's drill-down: the identities counted by the
+ * Overview's active figure, for the SAME window + exclude-internal state. Shares
+ * `activeEmailsInWindow` with the count, so the list can never disagree with the tile.
+ */
+export async function handleGetActiveIdentities(
+  ctx: AdminContext,
+  windowParam: string | null,
+  excludeInternalParam: string | null,
+) {
+  const w = parseWindow(windowParam);
+  const excludeInternal = parseExcludeInternal(excludeInternalParam);
+  const rows = await listActiveIdentities(ctx.pool, {
+    since: w.since,
+    now: new Date(),
+    excludeInternal,
+    internalIdentities: ctx.internalIdentities ?? [],
+  });
+  return { status: 200, body: { window: w.key, excludeInternal, rows } };
+}
+
 export async function handleGetLedger(
   ctx: AdminContext,
   windowParam: string | null,

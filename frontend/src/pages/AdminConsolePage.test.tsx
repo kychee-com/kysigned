@@ -41,7 +41,7 @@ const overview = {
   window: '30d', accountsOpened: 3,
   envelopes: { created: 5, completed: 2, inProcess: 3 },
   credits: { paidInUsdMicros: '250000', grantedUsdMicros: '1000000', consumedUsdMicros: '250000' },
-  activeUsers: { dau: 1, wau: 2, mau: 4 },
+  activeUsers: 4, // F-34.2: one window-scoped figure, not DAU/WAU/MAU bands
 };
 const accounts = {
   window: '30d',

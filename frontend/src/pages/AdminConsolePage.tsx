@@ -204,7 +204,8 @@ interface Overview {
   accountsOpened: number;
   envelopes: { created: number; completed: number; inProcess: number };
   credits: { paidInUsdMicros: string; grantedUsdMicros: string; consumedUsdMicros: string };
-  activeUsers: { dau: number; wau: number; mau: number };
+  /** F-34.2 — ONE figure, scoped by the selected window (not fixed DAU/WAU/MAU bands). */
+  activeUsers: number;
 }
 
 function OverviewTab({ window, excludeInternal }: { window: WindowKey; excludeInternal: boolean }) {
@@ -223,7 +224,7 @@ function OverviewTab({ window, excludeInternal }: { window: WindowKey; excludeIn
         <Tile id="paidIn" label="Paid in" value={formatUsd(data.credits.paidInUsdMicros)} onClick={() => setDrill('paid_in')} />
         <Tile id="granted" label="Free credit granted" value={formatUsd(data.credits.grantedUsdMicros)} onClick={() => setDrill('granted')} />
         <Tile id="consumed" label="Credit consumed" value={formatUsd(data.credits.consumedUsdMicros)} onClick={() => setDrill('consumed')} />
-        <Tile id="active" label="Active (D/W/M)" value={`${data.activeUsers.dau} / ${data.activeUsers.wau} / ${data.activeUsers.mau}`} />
+        <Tile id="active" label="Active identities" value={data.activeUsers} />
       </div>
       {drill && (
         <LedgerPanel group={drill} window={window} excludeInternal={excludeInternal} onClose={() => setDrill(null)} />

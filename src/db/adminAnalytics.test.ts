@@ -9,7 +9,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getOverview, getAccounts, getEnvelopeFunnel, getSignals, listCreditLedger } from './adminAnalytics.js';
+import { getOverview, getAccounts, getEnvelopeFunnel, getSignals, listCreditLedger, listActiveIdentities } from './adminAnalytics.js';
 import { createAdminAnalyticsMemoryPool } from './adminAnalytics.testpool.js';
 
 const NOW = new Date('2026-07-17T12:00:00.000Z');
@@ -59,9 +59,9 @@ describe('getOverview — F-34.2 / AC-183', () => {
     assert.equal(ov.credits.grantedUsdMicros, '1000000');
     assert.equal(ov.credits.consumedUsdMicros, '250000');
 
-    // active users on the FIXED bands (independent of the page window):
-    // DAU(24h)=a; WAU(7d)=a,c + w(created 2d, no session); MAU(30d)=+d
-    assert.deepEqual(ov.activeUsers, { dau: 1, wau: 3, mau: 4 });
+    // F-34.2 (AC-183): active users is ONE figure scoped by the SELECTED window —
+    // sessions in-window {a,c,d} ∪ envelope creators in-window {a,c,w} = 4.
+    assert.equal(ov.activeUsers, 4);
   });
 
   it('all-time window (since = null) counts everything', async () => {
@@ -203,6 +203,50 @@ describe('getSignals — F-34.5 / AC-187', () => {
   });
 });
 
+describe('F-34.2 / AC-183 — Active is ONE window-scoped figure, and it drills (Phase 64)', () => {
+  const seed = {
+    userCredits: [
+      { email: 'recent@x.com', balance_usd_micros: 0, created_at: ago(5 * D) }, // joined in 30d
+      { email: 'veteran@x.com', balance_usd_micros: 0, created_at: ago(40 * D) }, // joined BEFORE the window
+    ],
+    envelopes: [
+      { sender_email: 'creator@x.com', status: 'active', created_at: ago(2 * D), completed_at: null },
+    ],
+    authSessions: [
+      { email: 'recent@x.com', last_used_at: ago(2 * 3_600_000) }, // 2h → in every window
+      { email: 'veteran@x.com', last_used_at: ago(3 * D) }, // 3d → in 30d/7d, NOT in 24h
+    ],
+  };
+
+  it('the active count follows the SELECTED window (24h and 30d differ on the same data)', async () => {
+    const { pool } = createAdminAnalyticsMemoryPool(seed);
+    const wide = await getOverview(pool, { since: SINCE_30D, now: NOW });
+    // 30d: sessions {recent, veteran} ∪ creators {creator} = 3
+    assert.equal(wide.activeUsers, 3);
+    const narrow = await getOverview(pool, { since: new Date(NOW.getTime() - 24 * 3_600_000), now: NOW });
+    // 24h: only recent@ (2h session); veteran's 3d session and creator's 2d envelope fall outside
+    assert.equal(narrow.activeUsers, 1);
+  });
+
+  it('listActiveIdentities returns exactly the identities behind the count (the tile drill source)', async () => {
+    const { pool } = createAdminAnalyticsMemoryPool(seed);
+    const rows = await listActiveIdentities(pool, { since: SINCE_30D, now: NOW });
+    assert.deepEqual(rows.map((r) => r.email).sort(), ['creator@x.com', 'recent@x.com', 'veteran@x.com']);
+    const ov = await getOverview(pool, { since: SINCE_30D, now: NOW });
+    assert.equal(rows.length, ov.activeUsers, 'the drill list must reconcile with the tile figure');
+  });
+
+  it('accounts carry openedInWindow so "Accounts opened" can drill', async () => {
+    const { pool } = createAdminAnalyticsMemoryPool(seed);
+    const rows = await getAccounts(pool, { since: SINCE_30D, now: NOW });
+    const by = Object.fromEntries(rows.map((r) => [r.email, r]));
+    assert.equal(by['recent@x.com'].openedInWindow, true); // joined 5d ago
+    assert.equal(by['veteran@x.com'].openedInWindow, false); // active in-window but joined 40d ago
+    const ov = await getOverview(pool, { since: SINCE_30D, now: NOW });
+    assert.equal(rows.filter((r) => r.openedInWindow).length, ov.accountsOpened, 'drill reconciles with the tile');
+  });
+});
+
 describe('F-35 exclude-internal — the operator-view toggle (AC-188/189)', () => {
   // An internal_test envelope, an internal-IDENTITY set (staff@kychee.com — matched
   // by the @kychee.com rule) with its own account/ledger/session/key, and an
@@ -236,7 +280,7 @@ describe('F-35 exclude-internal — the operator-view toggle (AC-188/189)', () =
     assert.deepEqual(ov.envelopes, { created: 1, completed: 1, inProcess: 0 }); // ext completed only
     assert.equal(ov.credits.paidInUsdMicros, '250000'); // ext x402
     assert.equal(ov.credits.grantedUsdMicros, '0'); // staff's grant excluded
-    assert.deepEqual(ov.activeUsers, { dau: 1, wau: 1, mau: 1 }); // ext session only
+    assert.equal(ov.activeUsers, 1); // ext session only
   });
 
   it('toggle OFF → Overview additionally includes the internal records', async () => {
@@ -245,7 +289,7 @@ describe('F-35 exclude-internal — the operator-view toggle (AC-188/189)', () =
     assert.equal(ov.accountsOpened, 2); // ext + staff
     assert.deepEqual(ov.envelopes, { created: 3, completed: 1, inProcess: 2 }); // all three
     assert.equal(ov.credits.grantedUsdMicros, '1000000'); // staff's grant now counted
-    assert.deepEqual(ov.activeUsers, { dau: 2, wau: 2, mau: 2 });
+    assert.equal(ov.activeUsers, 2); // ext + staff
   });
 
   it('Accounts / Envelopes / Signals honor the toggle; the external identity survives both', async () => {

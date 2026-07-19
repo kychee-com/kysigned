@@ -55,13 +55,35 @@ export interface OverviewResult {
   accountsOpened: number;
   envelopes: { created: number; completed: number; inProcess: number };
   credits: { paidInUsdMicros: string; grantedUsdMicros: string; consumedUsdMicros: string };
-  activeUsers: { dau: number; wau: number; mau: number };
+  /**
+   * F-34.2 / AC-183 — distinct identities active in the SELECTED window (one figure,
+   * scoped by the same window as every other KPI). It is deliberately NOT a fixed
+   * DAU/WAU/MAU triple: the console has a global window selector, and a tile carrying
+   * its own independent bands contradicts it.
+   */
+  activeUsers: number;
 }
 
 interface CreditRow { email: string; source: string; delta_usd_micros: number | string; created_at: string | Date }
 interface EnvRow { sender_email: string; status: string; created_at: string | Date; completed_at?: string | Date | null; internal_test?: boolean }
 interface SessionRow { email: string; last_used_at: string | Date }
 interface UserRow { email: string; balance_usd_micros: number | string; created_at: string | Date }
+
+/**
+ * F-34.2 — the identities active in a window: one with a session used in-window OR
+ * one that created an envelope in-window. Shared by the Overview count and its
+ * drill-down list so the two can never disagree (AC-203).
+ */
+function activeEmailsInWindow(
+  sessionRows: SessionRow[],
+  envRows: EnvRow[],
+  since: Date | null,
+): Set<string> {
+  const emails = new Set<string>();
+  for (const s of sessionRows) if (inWindow(s.last_used_at, since)) emails.add(s.email);
+  for (const e of envRows) if (inWindow(e.created_at, since)) emails.add(e.sender_email);
+  return emails;
+}
 
 // ── F-34.6 / AC-201 — money-KPI drill-down ──────────────────────────────────
 
@@ -117,7 +139,7 @@ export async function getOverview(
   pool: DbPool,
   opts: { since: Date | null; now: Date; excludeInternal?: boolean; internalIdentities?: readonly string[] },
 ): Promise<OverviewResult> {
-  const { since, now } = opts;
+  const { since } = opts;
   const ex = resolveExclude(opts);
   const [users, envelopes, ledger, sessions] = await Promise.all([
     pool.query('SELECT email, balance_usd_micros, created_at FROM user_credits'),
@@ -150,14 +172,6 @@ export async function getOverview(
     else if (row.source === 'envelope') consumed += -delta; // debits are negative → positive consumed
   }
 
-  const activeInBand = (bandMs: number): number => {
-    const floor = now.getTime() - bandMs;
-    const emails = new Set<string>();
-    for (const s of sessionRows) if (new Date(s.last_used_at).getTime() >= floor) emails.add(s.email);
-    for (const e of envRows) if (new Date(e.created_at).getTime() >= floor) emails.add(e.sender_email);
-    return emails.size;
-  };
-
   return {
     accountsOpened,
     envelopes: envelopeCounts,
@@ -166,8 +180,53 @@ export async function getOverview(
       grantedUsdMicros: granted.toString(),
       consumedUsdMicros: consumed.toString(),
     },
-    activeUsers: { dau: activeInBand(24 * H), wau: activeInBand(7 * D), mau: activeInBand(30 * D) },
+    // F-34.2 / AC-183 — scoped by the SELECTED window, like every other KPI here.
+    activeUsers: activeEmailsInWindow(sessionRows, envRows, since).size,
   };
+}
+
+export interface ActiveIdentityRow {
+  email: string;
+  /** most recent session activity, if this identity ever signed in */
+  lastSeen: string | null;
+  /** envelopes this identity created inside the window */
+  envelopesCreated: number;
+}
+
+/**
+ * F-34.8 / AC-203 — the drill-down behind the Overview's Active tile: the identities
+ * counted by `getOverview().activeUsers`, for the same window + exclude-internal
+ * state. Shares `activeEmailsInWindow` with the count, so the list length always
+ * equals the tile's figure.
+ */
+export async function listActiveIdentities(
+  pool: DbPool,
+  opts: { since: Date | null; now: Date; excludeInternal?: boolean; internalIdentities?: readonly string[] },
+): Promise<ActiveIdentityRow[]> {
+  const { since } = opts;
+  const ex = resolveExclude(opts);
+  const [envelopes, sessions] = await Promise.all([
+    pool.query('SELECT sender_email, status, created_at, completed_at, internal_test FROM envelopes'),
+    pool.query('SELECT email, last_used_at FROM auth_sessions'),
+  ]);
+  const envRows = (envelopes.rows as EnvRow[]).filter((e) => !envDropped(e, ex));
+  const sessionRows = (sessions.rows as SessionRow[]).filter((s) => !identityDropped(s.email, ex));
+
+  const active = activeEmailsInWindow(sessionRows, envRows, since);
+  const lastSeenByEmail = new Map<string, string>();
+  for (const s of sessionRows) {
+    const iso = new Date(s.last_used_at).toISOString();
+    const prev = lastSeenByEmail.get(s.email);
+    if (!prev || iso > prev) lastSeenByEmail.set(s.email, iso);
+  }
+
+  const rows: ActiveIdentityRow[] = [...active].map((email) => ({
+    email,
+    lastSeen: lastSeenByEmail.get(email) ?? null,
+    envelopesCreated: envRows.filter((e) => e.sender_email === email && inWindow(e.created_at, since)).length,
+  }));
+  rows.sort((a, b) => (b.lastSeen ?? '').localeCompare(a.lastSeen ?? '') || a.email.localeCompare(b.email));
+  return rows;
 }
 
 interface ApiKeyRow { creator_email: string; revoked_at?: string | Date | null }
@@ -184,6 +243,8 @@ export interface AccountRow {
   balanceUsdMicros: string;
   lastSeen: string | null;
   joined: string | null;
+  /** F-34.8 / AC-203 — joined INSIDE the window, i.e. counted by the Overview's "Accounts opened" tile. */
+  openedInWindow: boolean;
 }
 
 /**
@@ -262,6 +323,8 @@ export async function getAccounts(
       balanceUsdMicros: String(userByEmail.get(email)?.balance_usd_micros ?? '0'),
       lastSeen: sessionMaxByEmail.get(email) ?? null,
       joined: userByEmail.get(email) ? new Date(userByEmail.get(email)!.created_at).toISOString() : null,
+      // F-34.8 — the "Accounts opened" tile's drill set: joined INSIDE the window.
+      openedInWindow: !!userByEmail.get(email) && inWindow(userByEmail.get(email)!.created_at, since),
     });
   }
   // Most-recently-active first (a session beats no session); tiebreak by joined.
