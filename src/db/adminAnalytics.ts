@@ -185,6 +185,89 @@ export async function getOverview(
   };
 }
 
+// ── F-34.8 / AC-203 — Signals-tab drill rows ────────────────────────────────
+// Six groups, one uniform row shape so the generic drill panel renders them all.
+// Every predicate MIRRORS `getSignals` exactly, so a drill's length always equals
+// the tile it opened (the reconciliation AC-203 demands).
+
+export type SignalGroup =
+  | 'invited' | 'signed' | 'undeliverable'
+  | 'wallet_creates' | 'human_creates' | 'api_key_holders';
+
+export interface SignalDrillRow {
+  /** the identity the row is about (signer / creator / key holder) */
+  primary: string;
+  /** envelope id or document name, where the row has one */
+  secondary: string | null;
+  /** status or a short qualifier */
+  detail: string | null;
+  /** the row's relevant timestamp, ISO, where it has one */
+  at: string | null;
+}
+
+export async function listSignalRows(
+  pool: DbPool,
+  opts: {
+    since: Date | null; now: Date; group: SignalGroup;
+    excludeInternal?: boolean; internalIdentities?: readonly string[];
+  },
+): Promise<SignalDrillRow[]> {
+  const { since, group } = opts;
+  const ex = resolveExclude(opts);
+  const [envs, signers, ledger, keys] = await Promise.all([
+    pool.query('SELECT id, sender_email, document_name, status, created_at, internal_test FROM envelopes'),
+    pool.query('SELECT envelope_id, status, undeliverable_at FROM envelope_signers'),
+    pool.query('SELECT email, source FROM credit_ledger'),
+    pool.query('SELECT creator_email, revoked_at FROM api_keys'),
+  ]);
+
+  if (group === 'api_key_holders') {
+    const holders = new Set(
+      (keys.rows as ApiKeyRow[])
+        .filter((k) => k.revoked_at == null && !identityDropped(k.creator_email, ex))
+        .map((k) => k.creator_email),
+    );
+    return [...holders].sort().map((email) => ({ primary: email, secondary: null, detail: 'active API key', at: null }));
+  }
+
+  const inWindowEnvs = (envs.rows as Array<EnvListRow & { internal_test?: boolean }>)
+    .filter((e) => !envDropped(e, ex) && inWindow(e.created_at, since));
+
+  if (group === 'wallet_creates' || group === 'human_creates') {
+    const x402Emails = new Set(
+      (ledger.rows as Array<{ email: string; source: string }>).filter((l) => l.source === 'x402').map((l) => l.email),
+    );
+    const wantWallet = group === 'wallet_creates';
+    return inWindowEnvs
+      .filter((e) => x402Emails.has(e.sender_email) === wantWallet)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .map((e) => ({
+        primary: e.sender_email,
+        secondary: e.document_name ?? String(e.id),
+        detail: e.status,
+        at: new Date(e.created_at).toISOString(),
+      }));
+  }
+
+  // deliverability groups — signers of the in-window envelopes
+  const envById = new Map(inWindowEnvs.map((e) => [String(e.id), e]));
+  const relevant = (signers.rows as SignerRow[]).filter((s) => envById.has(String(s.envelope_id)));
+  const matched = relevant.filter((s) =>
+    group === 'signed' ? s.status === 'signed'
+      : group === 'undeliverable' ? s.undeliverable_at != null
+        : true, // 'invited' = every signer of an in-window envelope
+  );
+  return matched.map((s) => {
+    const env = envById.get(String(s.envelope_id));
+    return {
+      primary: env?.sender_email ?? String(s.envelope_id),
+      secondary: env?.document_name ?? String(s.envelope_id),
+      detail: s.undeliverable_at != null ? `${s.status} · undeliverable` : s.status,
+      at: s.undeliverable_at != null ? new Date(s.undeliverable_at).toISOString() : null,
+    };
+  });
+}
+
 export interface ActiveIdentityRow {
   email: string;
   /** most recent session activity, if this identity ever signed in */

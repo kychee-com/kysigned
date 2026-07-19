@@ -13,7 +13,10 @@ import {
 } from '../db/allowedSenders.js';
 import { listOutstandingArchiveConfirmations } from '../db/signatureArtifacts.js';
 import { parseWindow, parseExcludeInternal } from './adminWindow.js';
-import { getOverview, getAccounts, getEnvelopeFunnel, getSignals, listCreditLedger, listActiveIdentities } from '../db/adminAnalytics.js';
+import {
+  getOverview, getAccounts, getEnvelopeFunnel, getSignals, listCreditLedger,
+  listActiveIdentities, listSignalRows, type SignalGroup,
+} from '../db/adminAnalytics.js';
 
 export interface AdminContext {
   pool: DbPool;
@@ -113,6 +116,37 @@ export async function handleGetOverview(ctx: AdminContext, windowParam: string |
  * state. Identities and amounts are operator metadata (F-33.5) — this is where
  * the F-36 events' ids join back to people, inside kysigned.
  */
+const SIGNAL_GROUPS = new Set([
+  'invited', 'signed', 'undeliverable', 'wallet_creates', 'human_creates', 'api_key_holders',
+]);
+
+/**
+ * F-34.8 / AC-203 — the Signals-tab drill-downs. One gated read with a `group`
+ * param (the F-34.6 ledger pattern); every group's predicate mirrors the matching
+ * `getSignals` figure, so a drill's length equals the tile it opened.
+ */
+export async function handleGetSignalRows(
+  ctx: AdminContext,
+  windowParam: string | null,
+  excludeInternalParam: string | null,
+  groupParam: string | null,
+) {
+  const group = groupParam ?? '';
+  if (!SIGNAL_GROUPS.has(group)) {
+    return { status: 400, body: { error: `group must be one of ${[...SIGNAL_GROUPS].join(', ')}`, code: 'validation_group' } };
+  }
+  const w = parseWindow(windowParam);
+  const excludeInternal = parseExcludeInternal(excludeInternalParam);
+  const rows = await listSignalRows(ctx.pool, {
+    since: w.since,
+    now: new Date(),
+    group: group as SignalGroup,
+    excludeInternal,
+    internalIdentities: ctx.internalIdentities ?? [],
+  });
+  return { status: 200, body: { window: w.key, excludeInternal, group, rows } };
+}
+
 /**
  * F-34.8 / AC-203 — the Active tile's drill-down: the identities counted by the
  * Overview's active figure, for the SAME window + exclude-internal state. Shares

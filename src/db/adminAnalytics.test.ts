@@ -9,7 +9,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getOverview, getAccounts, getEnvelopeFunnel, getSignals, listCreditLedger, listActiveIdentities } from './adminAnalytics.js';
+import { getOverview, getAccounts, getEnvelopeFunnel, getSignals, listCreditLedger, listActiveIdentities, listSignalRows } from './adminAnalytics.js';
 import { createAdminAnalyticsMemoryPool } from './adminAnalytics.testpool.js';
 
 const NOW = new Date('2026-07-17T12:00:00.000Z');
@@ -244,6 +244,68 @@ describe('F-34.2 / AC-183 — Active is ONE window-scoped figure, and it drills 
     assert.equal(by['veteran@x.com'].openedInWindow, false); // active in-window but joined 40d ago
     const ov = await getOverview(pool, { since: SINCE_30D, now: NOW });
     assert.equal(rows.filter((r) => r.openedInWindow).length, ov.accountsOpened, 'drill reconciles with the tile');
+  });
+});
+
+describe('F-34.8 / AC-203 — Signals drill rows reconcile with their tiles (Phase 64)', () => {
+  // Mirrors the getSignals seed so each drill's length must equal the tile's figure.
+  const seed = {
+    envelopes: [
+      { id: 'e1', sender_email: 'w@x.com', status: 'active', created_at: ago(5 * D) }, // wallet creator
+      { id: 'e2', sender_email: 'h@x.com', status: 'active', created_at: ago(10 * D) }, // human creator
+      { id: 'e3', sender_email: 'w@x.com', status: 'completed', created_at: ago(40 * D) }, // out of window
+    ],
+    creditLedger: [
+      { email: 'w@x.com', source: 'x402', delta_usd_micros: 250000, created_at: ago(5 * D) },
+      { email: 'h@x.com', source: 'signup_grant', delta_usd_micros: 1000000, created_at: ago(10 * D) },
+    ],
+    signers: [
+      { envelope_id: 'e1', status: 'signed', undeliverable_at: null },
+      { envelope_id: 'e1', status: 'pending', undeliverable_at: ago(4 * D) }, // hard bounce
+      { envelope_id: 'e2', status: 'signed', undeliverable_at: null },
+      { envelope_id: 'e3', status: 'signed', undeliverable_at: null }, // parent out of window
+    ],
+    apiKeys: [
+      { creator_email: 'p@x.com', revoked_at: null },
+      { creator_email: 'q@x.com', revoked_at: ago(1 * D) }, // revoked → not a holder
+    ],
+  };
+  const opts = { since: SINCE_30D, now: NOW };
+
+  it('each deliverability group lists exactly the rows its tile counts', async () => {
+    const { pool } = createAdminAnalyticsMemoryPool(seed);
+    const sig = await getSignals(pool, opts);
+    for (const [group, expected] of [
+      ['invited', sig.deliverability.invited],
+      ['signed', sig.deliverability.signed],
+      ['undeliverable', sig.deliverability.undeliverable],
+    ] as const) {
+      const rows = await listSignalRows(pool, { ...opts, group });
+      assert.equal(rows.length, expected, `${group} drill must match its tile (${expected})`);
+      assert.ok(rows.every((r) => typeof r.primary === 'string' && r.primary.length > 0), `${group} rows carry an identity`);
+    }
+  });
+
+  it('the wallet/human create split and api-key holders match their tiles', async () => {
+    const { pool } = createAdminAnalyticsMemoryPool(seed);
+    const sig = await getSignals(pool, opts);
+    const wallet = await listSignalRows(pool, { ...opts, group: 'wallet_creates' });
+    const human = await listSignalRows(pool, { ...opts, group: 'human_creates' });
+    const holders = await listSignalRows(pool, { ...opts, group: 'api_key_holders' });
+    assert.equal(wallet.length, sig.agentAdoption.walletCreates);
+    assert.equal(human.length, sig.agentAdoption.humanCreates);
+    assert.equal(holders.length, sig.agentAdoption.apiKeyHolders);
+    assert.deepEqual(wallet.map((r) => r.primary), ['w@x.com']);
+    assert.deepEqual(holders.map((r) => r.primary), ['p@x.com']);
+  });
+
+  it('drills honor exclude-internal exactly like their tiles', async () => {
+    const { pool } = createAdminAnalyticsMemoryPool(seed);
+    const rules = ['@x.com'];
+    const on = await listSignalRows(pool, { ...opts, group: 'invited', excludeInternal: true, internalIdentities: rules });
+    const off = await listSignalRows(pool, { ...opts, group: 'invited', excludeInternal: false, internalIdentities: rules });
+    assert.equal(on.length, 0, 'every creator is internal under this rule → nothing survives');
+    assert.ok(off.length > 0, 'toggle off restores them');
   });
 });
 

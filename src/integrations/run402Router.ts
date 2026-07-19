@@ -126,6 +126,7 @@ export const API_ROUTES: RouteDef[] = [
   { method: 'GET', pattern: '/v1/admin/signals', name: 'adminSignals', auth: 'session' },
   { method: 'GET', pattern: '/v1/admin/ledger', name: 'adminLedger', auth: 'session' },
   { method: 'GET', pattern: '/v1/admin/active', name: 'adminActive', auth: 'session' },
+  { method: 'GET', pattern: '/v1/admin/signal-rows', name: 'adminSignalRows', auth: 'session' },
   { method: 'POST', pattern: '/v1/admin/allowed-senders', name: 'addAllowedSender', auth: 'session' },
   { method: 'DELETE', pattern: '/v1/admin/allowed-senders/:id', name: 'removeAllowedSender', auth: 'session' },
 

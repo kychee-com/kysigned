@@ -1420,7 +1420,7 @@ describe('handleRequest — F-33.5 metadata-only operator surface (AC-197)', () 
     const adminCtxCalls = src.match(/deps\.adminCtx\(/g) ?? [];
     assert.equal(
       adminCtxCalls.length,
-      10, // +1 2026-07-19: adminActive (F-34.8 Active-tile drill-down), swept below
+      11, // +2 2026-07-19: adminActive + adminSignalRows (F-34.8 tile drill-downs), swept below
       'a NEW admin-surface handler appeared — register it here and cover it in the metadata-only sweep below',
     );
   });
@@ -1433,6 +1433,7 @@ describe('handleRequest — F-33.5 metadata-only operator surface (AC-197)', () 
       '/v1/admin/signals?window=all',
       '/v1/admin/ledger?window=all&group=paid_in',
       '/v1/admin/active?window=all',
+      '/v1/admin/signal-rows?window=all&group=invited',
       '/v1/admin/archive-confirmations',
       '/v1/admin/allowed-senders',
     ];

@@ -89,6 +89,7 @@ import {
   handleGetEnvelopes,
   handleGetSignals,
   handleGetActiveIdentities,
+  handleGetSignalRows,
   handleGetLedger,
   type AddAllowedSenderRequest,
 } from '../api/admin.js';
@@ -206,6 +207,7 @@ const OPERATOR_ROUTES: ReadonlySet<string> = new Set([
   'adminSignals',
   'adminLedger',
   'adminActive',
+  'adminSignalRows',
 ]);
 
 export async function handleRequest(req: Request, deps: RequestDeps): Promise<Response> {
@@ -598,6 +600,16 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
         deps.adminCtx(actorEmail!),
         url.searchParams.get('window'),
         url.searchParams.get('exclude_internal'),
+      );
+      return json(r.body, r.status);
+    }
+    case 'adminSignalRows': {
+      // F-34.8 / AC-203 — the Signals-tab drill-downs (gated above).
+      const r = await handleGetSignalRows(
+        deps.adminCtx(actorEmail!),
+        url.searchParams.get('window'),
+        url.searchParams.get('exclude_internal'),
+        url.searchParams.get('group'),
       );
       return json(r.body, r.status);
     }
