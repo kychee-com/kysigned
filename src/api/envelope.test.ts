@@ -1714,6 +1714,34 @@ describe('handleCreateEnvelope — send-failure resilience (crash + ordering)', 
     }
   });
 
+  it('F-37/AC-208: a FAILING ads-conversion enqueue never touches the create — 201, and every other scheduled run still lands', async () => {
+    const db = createMockDb();
+    const attributedPool: typeof db.pool = {
+      query: async (text: string, values?: unknown[]) =>
+        text.includes('FROM creator_attribution')
+          ? ({ rows: [{ gclid: 'Cj0Kfault', captured_at: '2026-07-18T09:30:00.000Z', consent_state: null }], rowCount: 1 } as never)
+          : db.pool.query(text, values),
+      end: async () => {},
+    };
+    const runs: Array<Record<string, unknown>> = [];
+    const result = await handleCreateEnvelope(
+      {
+        pool: attributedPool, emailProvider: createMockEmailProvider(), baseUrl: 'https://kysigned.com',
+        senderIdentity: 'creator@kychee.com',
+        createRun: async (o) => {
+          if (o.eventType === 'ads_conversion_upload') throw new Error('ads runs surface down');
+          runs.push(o as unknown as Record<string, unknown>);
+          return { runId: 'r', deduplicated: false };
+        },
+        adsUploadFunction: 'kysigned-billing',
+      },
+      { document_name: 'NDA', pdf_base64: TEST_FIXTURE_PDF_B64, signers: [{ email: 'signer@example.com', name: 'Signer' }] },
+    );
+    assert.equal(result.status, 201, 'the create is untouchable by an Ads-side failure');
+    assert.ok(runs.length > 0, 'the non-ads scheduled runs (reminders/expiry) still landed');
+    assert.ok(runs.every((r) => r.eventType !== 'ads_conversion_upload'), 'only the ads enqueue failed');
+  });
+
   it('a failing CREATOR-confirmation send never fails the create (best-effort)', async () => {
     const db = createMockDb();
     const email = throwingEmail({ 'creator@kychee.com': 'Internal server error (HTTP 500)' });
