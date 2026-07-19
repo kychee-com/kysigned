@@ -27,3 +27,58 @@ jobs:
       # an undocumented endpoint or a docs lie fails CI.
       - name: Documentation coverage
         run: npm run test:docs
+
+  # mcp/ and frontend/ are separate npm roots that the `test` job above never
+  # touches — before these jobs existed, a dependabot PR against either
+  # directory came up green having compiled and tested NOTHING it changed
+  # (dependabot.yml's "CI gates them" assumption only held for the repo root).
+  # These jobs make that assumption true. Every job runs on every PR (no path
+  # filters): each is ~1 min, and path-filtered jobs would recreate the same
+  # vacuous-green problem for cross-directory changes like the root↔frontend
+  # verifyWeb contract below.
+  test-mcp:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: mcp/package-lock.json
+      - run: npm ci
+      # Real type-check (tests run via tsx, which skips it) — same rationale
+      # as the root job.
+      - run: npm run build
+      # Same invocation publish-mcp.yml uses, so a PR that would fail the next
+      # publish fails here first.
+      - run: node --test --import tsx src/*.test.ts
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      # The /verify and /hash-check pages import `kysigned-verify` — a vite/
+      # tsconfig alias for the ROOT package's dist/bundle/verifyWeb.js (the
+      # client-side bundle verifier). Build the root first or `tsc -b` fails
+      # with TS2307 in VerifyPage/HashCheckPage.
+      - name: Build root (produces dist/bundle/verifyWeb.js)
+        run: npm ci && npm run build
+      - run: npm ci
+        working-directory: frontend
+      # tsc -b type-check + vite production build.
+      - run: npm run build
+        working-directory: frontend
+      - run: npm test
+        working-directory: frontend
+      # `npm run lint` is deliberately NOT here: main has pre-existing eslint
+      # errors (21 as of 2026-07-19). Add it once the tree is lint-clean.
