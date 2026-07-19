@@ -113,4 +113,19 @@ export { scheduleSignerReminders, REMINDER_INTERVALS_DAYS } from './reminderSche
 export { remindSigner } from './envelope.js';
 export type { ReminderSendCtx } from './envelope.js';
 
+// F-37 — paid-acquisition attribution: the capture/bind DAO and the conversion
+// enqueue seam. The PRIVATE billing fn consumes `enqueueAdsConversion` for the
+// Stripe credit_purchase anchor (the public repo carries no Google Ads code —
+// the seam only targets an operator-configured upload function by name).
+export {
+  parseAttributionSubmission,
+  recordAttributionCapture,
+  bindAttributionIfPending,
+  getCreatorAttribution,
+  ATTRIBUTION_WINDOW_MS,
+} from './attributionCapture.js';
+export type { AttributionSubmission, BoundAttribution, BindOutcome, AttributionConsent } from './attributionCapture.js';
+export { enqueueAdsConversion, attributionAccountKey, ADS_CONVERSION_EVENT_TYPE } from './adsConversions.js';
+export type { AdsConversionDeps, AdsConversionAction, AdsConversionOpts } from './adsConversions.js';
+
 export * from './auth/index.js';

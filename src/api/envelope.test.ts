@@ -1676,6 +1676,44 @@ describe('handleCreateEnvelope — send-failure resilience (crash + ordering)', 
     assert.match(backstops[0].idempotencyKey as string, /:delivery-backstop$/);
   });
 
+  it('F-37/AC-207: a create by a click-attributed creator enqueues ONE envelope_created conversion; an organic creator enqueues none', async () => {
+    const mkPools = (attributed: boolean) => {
+      const db = createMockDb();
+      const pool: typeof db.pool = {
+        query: async (text: string, values?: unknown[]) =>
+          text.includes('FROM creator_attribution')
+            ? ((attributed
+                ? { rows: [{ gclid: 'Cj0Kenv', captured_at: '2026-07-18T09:30:00.000Z', consent_state: null }], rowCount: 1 }
+                : { rows: [], rowCount: 0 }) as never)
+            : db.pool.query(text, values),
+        end: async () => {},
+      };
+      return pool;
+    };
+    for (const attributed of [true, false]) {
+      const runs: Array<Record<string, unknown>> = [];
+      const result = await handleCreateEnvelope(
+        {
+          pool: mkPools(attributed), emailProvider: createMockEmailProvider(), baseUrl: 'https://kysigned.com',
+          senderIdentity: 'creator@kychee.com',
+          createRun: async (o) => { runs.push(o as unknown as Record<string, unknown>); return { runId: 'r', deduplicated: false }; },
+          adsUploadFunction: 'kysigned-billing',
+        },
+        { document_name: 'NDA', pdf_base64: TEST_FIXTURE_PDF_B64, signers: [{ email: 'signer@example.com', name: 'Signer' }] },
+      );
+      assert.equal(result.status, 201);
+      const ads = runs.filter((r) => r.eventType === 'ads_conversion_upload');
+      if (attributed) {
+        assert.equal(ads.length, 1, 'one conversion enqueue for the attributed creator');
+        assert.equal(ads[0]!.targetFunction, 'kysigned-billing');
+        assert.match(ads[0]!.idempotencyKey as string, /^ads:envelope_created:[0-9a-f]{32}$/);
+        assert.equal((ads[0]!.payload as { gclid: string }).gclid, 'Cj0Kenv');
+      } else {
+        assert.equal(ads.length, 0, 'organic creator enqueues nothing');
+      }
+    }
+  });
+
   it('a failing CREATOR-confirmation send never fails the create (best-effort)', async () => {
     const db = createMockDb();
     const email = throwingEmail({ 'creator@kychee.com': 'Internal server error (HTTP 500)' });

@@ -42,6 +42,7 @@ import { scheduleDeliveryBackstop } from './deliveryBackstop.js';
 import { validateCallbackUrl } from './webhookDeliver.js';
 import { mintWebhookSecret } from './webhookSignature.js';
 import { mintTrackingToken, storeTrackingToken } from './trackingToken.js';
+import { enqueueAdsConversion } from './adsConversions.js';
 import { setEnvelopeWebhook } from '../db/envelopeWebhooks.js';
 import type { CreateRun } from '../functions/runs.js';
 import { randomUUID, randomBytes } from 'node:crypto';
@@ -110,6 +111,8 @@ export interface ApiContext {
    * e.g. `"24h"`). Unset → `deliveryBackstop.ts` default (24h).
    */
   deliveryBackstop?: string;
+  /** F-37 — the `[service]` Ads-upload handler fn (fork default: unset → no conversion enqueues). */
+  adsUploadFunction?: string;
   emailProvider: EmailProvider;
   baseUrl: string;
   /**
@@ -678,6 +681,17 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
   // F-29 / DD-16 — schedule the deferred expiry run at the envelope's deadline
   // (idempotency = envelope id). No deadline → no run. Best-effort (see helper).
   await scheduleEnvelopeExpiry(ctx.createRun, result.envelope.id, result.envelope.expiry_at);
+
+  // F-37 / AC-207 — the envelope-created conversion. EVERY create enqueues;
+  // the per-account once-key admits only the account's FIRST (freezing its
+  // occurrence time), organic creators no-op inside the seam, and the seam
+  // never throws (AC-208 isolation — the create's 201 is untouchable).
+  await enqueueAdsConversion(
+    { pool: ctx.pool, createRun: ctx.createRun, adsUploadFunction: ctx.adsUploadFunction },
+    'envelope_created',
+    ctx.senderIdentity,
+    { occurredAt: new Date() },
+  );
 
   // F7.8 / Issue 10 / DD-96: send the CREATOR a creation-confirmation email with the
   // canonical PDF attached (their own copy from the start — kysigned doesn't retain it

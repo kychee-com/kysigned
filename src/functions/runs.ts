@@ -30,6 +30,14 @@ export interface CreateRunOptions {
   delay?: string | number;
   /** Retry policy, e.g. `{ preset: 'standard', maxAttempts: 8 }`. */
   retry?: Record<string, unknown>;
+  /**
+   * F-37 — the function that HANDLES the run. Default: the app's own routed
+   * function (`kysigned-api`). Cross-function targeting is native to run402
+   * (`POST /functions/v1/<target>/runs`, project-scoped) and lets the public
+   * app enqueue work for a private `[service]` sibling (the Ads upload
+   * handler) without carrying any of its code.
+   */
+  targetFunction?: string;
 }
 
 export interface CreateRunResult {

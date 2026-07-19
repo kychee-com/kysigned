@@ -207,6 +207,13 @@ export interface AppEnv {
    */
   KYSIGNED_CAPTURE_GCLID?: string;
   /**
+   * F-37 — the `[service]` function that handles `ads_conversion_upload`
+   * durable runs (kysigned.com: `kysigned-billing`). Unset (the forker
+   * default): no conversion is ever enqueued. The public repo carries no
+   * Google Ads code — only this enqueue target name, as operator config.
+   */
+  KYSIGNED_ADS_UPLOAD_FUNCTION?: string;
+  /**
    * Creator session lifetime in DAYS (F-18.1). kysigned.com sets 30 (matched to
    * the upstream run402 refresh-token TTL — the hard ceiling, beyond which the
    * server-side refresh fails and the session ends regardless). Unset → the
@@ -512,10 +519,15 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     );
 
   // ── per-request ctx factories ──────────────────────────────────────────────
+  // F-37 — the `[service]` Ads-upload handler function; unset (fork default)
+  // disables every conversion enqueue.
+  const adsUploadFunction = env.KYSIGNED_ADS_UPLOAD_FUNCTION?.trim() || undefined;
+
   const apiContext = (creatorEmail: string): ApiContext => ({
     pool,
     createRun: runtime.createRun,
     emitAppEvent: emitAppEventDep, // F-36
+    ...(adsUploadFunction ? { adsUploadFunction } : {}), // F-37 gclid rail
 
     deliveryBackstop,
     emailProvider,
@@ -548,6 +560,8 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     ...(signupGrantUsdMicros > 0n ? { signupGrantUsdMicros } : {}),
     emitAppEvent: emitAppEventDep, // F-36.4 creator_signed_up
     ...(attributionEnabled ? { attributionEnabled } : {}), // F-37 gclid rail
+    createRun: runtime.createRun, // F-37 sign-up conversion enqueue
+    ...(adsUploadFunction ? { adsUploadFunction } : {}),
   });
   const adminCtx = (operator: string): AdminContext => ({ pool, operator, internalIdentities });
   const signerCtx = (): SignerApiCtx => ({ pool, getPdf, signingEmail });

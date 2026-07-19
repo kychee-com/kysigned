@@ -50,7 +50,7 @@ export async function getRuntimeDeps(): Promise<AppDeps> {
   // runs. Target is our single routed function, `kysigned-api` (the run402 run
   // engine invokes it with the run envelope; `default` dispatches — see below).
   const createRun: CreateRun = async (opts) => {
-    const handle = await functions.runs.create('kysigned-api', {
+    const handle = await functions.runs.create(opts.targetFunction ?? 'kysigned-api', {
       eventType: opts.eventType,
       idempotencyKey: opts.idempotencyKey,
       ...(opts.payload !== undefined ? { payload: opts.payload } : {}),

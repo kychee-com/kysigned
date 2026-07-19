@@ -358,6 +358,69 @@ describe('attribution — token exchange binds at establishment', () => {
     assert.equal(r.status, 200);
     assert.deepEqual(r.body, { ok: true, email: 'bind.me@x.com' });
   });
+
+  // ── F-37 / AC-207 — the sign-up conversion enqueue on a FRESH bind (65.4) ──
+  function bindAndReadPool(opts: { pending?: boolean; alreadyStamped?: boolean } = {}) {
+    const pending = opts.pending ?? true;
+    const pool: DbPool = {
+      async query(text: string) {
+        if (text.includes('INSERT INTO auth_sessions')) return { rows: [], rowCount: 0 } as never;
+        if (text.includes('SELECT') && text.includes('FROM attribution_captures')) {
+          return (pending
+            ? { rows: [{ gclid: 'Cj0Kconvert', captured_at: '2026-07-18T09:30:00.000Z', consent_state: null }], rowCount: 1 }
+            : { rows: [], rowCount: 0 }) as never;
+        }
+        if (text.includes('INSERT INTO creator_attribution')) {
+          return { rows: [], rowCount: opts.alreadyStamped ? 0 : 1 } as never;
+        }
+        if (text.includes('FROM creator_attribution')) {
+          return (pending && !opts.alreadyStamped
+            ? { rows: [{ gclid: 'Cj0Kconvert', captured_at: '2026-07-18T09:30:00.000Z', consent_state: null }], rowCount: 1 }
+            : { rows: [], rowCount: 0 }) as never;
+        }
+        return { rows: [], rowCount: 0 } as never;
+      },
+      async end() {},
+    };
+    return pool;
+  }
+
+  it('a FRESH attributed establishment enqueues the sign_up conversion at the private target', async () => {
+    const runs: Array<Record<string, unknown>> = [];
+    const c: AuthHandlerCtx = {
+      ...ctx(bindAndReadPool(), okExchange2),
+      attributionEnabled: true,
+      adsUploadFunction: 'kysigned-billing',
+      createRun: async (o) => {
+        runs.push(o as unknown as Record<string, unknown>);
+        return { runId: 'r', deduplicated: false };
+      },
+    };
+    const r = await handleAuthTokenExchange(c, { token: 'magic' });
+    assert.equal(r.status, 200);
+    assert.equal(runs.length, 1, 'one sign_up conversion enqueue');
+    assert.equal(runs[0]!.eventType, 'ads_conversion_upload');
+    assert.equal(runs[0]!.targetFunction, 'kysigned-billing');
+    assert.match(runs[0]!.idempotencyKey as string, /^ads:sign_up:[0-9a-f]{32}$/);
+    assert.equal((runs[0]!.payload as { gclid: string }).gclid, 'Cj0Kconvert');
+  });
+
+  it('an ORGANIC establishment and a repeat sign-in both enqueue nothing', async () => {
+    for (const pool of [bindAndReadPool({ pending: false }), bindAndReadPool({ alreadyStamped: true })]) {
+      const runs: Array<Record<string, unknown>> = [];
+      const c: AuthHandlerCtx = {
+        ...ctx(pool, okExchange2),
+        attributionEnabled: true,
+        adsUploadFunction: 'kysigned-billing',
+        createRun: async (o) => {
+          runs.push(o as unknown as Record<string, unknown>);
+          return { runId: 'r', deduplicated: false };
+        },
+      };
+      assert.equal((await handleAuthTokenExchange(c, { token: 'magic' })).status, 200);
+      assert.equal(runs.length, 0);
+    }
+  });
 });
 
 describe('handleAuthUser', () => {

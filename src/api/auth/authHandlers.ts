@@ -23,6 +23,8 @@ import {
   bindAttributionIfPending,
   type BindOutcome,
 } from '../attributionCapture.js';
+import { enqueueAdsConversion } from '../adsConversions.js';
+import type { CreateRun } from '../../functions/runs.js';
 import type { EmitAppEvent } from '../../integrations/appEvents.js';
 
 export interface AuthHandlerCtx {
@@ -44,6 +46,10 @@ export interface AuthHandlerCtx {
    * attribution row is ever written, so a fresh fork captures nothing anywhere.
    */
   attributionEnabled?: boolean;
+  /** F-37 — durable-run creator for the sign-up conversion enqueue (65.4). */
+  createRun?: CreateRun;
+  /** F-37 — the `[service]` upload-handler function name (fork default: unset → no enqueue). */
+  adsUploadFunction?: string;
 }
 
 export interface AuthResult {
@@ -143,7 +149,18 @@ export async function handleAuthTokenExchange(ctx: AuthHandlerCtx, body: { token
       console.error('attribution bind failed (sign-in unaffected):', err);
     }
   }
-  void bind; // consumed by the conversion enqueue (65.4)
+
+  // F-37 / AC-207 — a FRESH attributed establishment IS the sign-up conversion.
+  // The per-account once-key (`ads:sign_up:<handle>`) makes retries safe, and
+  // the seam never throws — sign-in completes regardless (AC-208 isolation).
+  if (bind.bound) {
+    await enqueueAdsConversion(
+      { pool: ctx.pool, createRun: ctx.createRun, adsUploadFunction: ctx.adsUploadFunction },
+      'sign_up',
+      email,
+      { occurredAt: new Date() },
+    );
+  }
 
   return { status: 200, body: { ok: true, email }, setCookies: [cookie] };
 }
