@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { apiPost } from '../lib/api';
+import { readAttributionForSubmit } from '../lib/attribution';
 import { isValidEmail } from '../lib/validateEmail';
 import { broadcastAuthEvent, useAuth } from './AuthContext';
 import {
@@ -180,7 +181,15 @@ export function SignInScreen({ title = 'Sign in' }: SignInScreenProps) {
     if (!isValidEmail(emailInput)) return;
     setError('');
     try {
-      await apiPost('/v1/auth/magic-link', { email: emailInput.trim() });
+      // F-37 — the attribution rider: the email submit runs in the browser
+      // that holds the gclid capture (the link may be opened on another
+      // device), so the capture travels with THIS request. Null (organic, or
+      // attribution disabled — the fork default) sends no field at all.
+      const attribution = readAttributionForSubmit();
+      await apiPost('/v1/auth/magic-link', {
+        email: emailInput.trim(),
+        ...(attribution ? { attribution } : {}),
+      });
       setMagicLinkSent(true);
     } catch (e) {
       setError((e as Error).message ?? 'Failed to send sign-in link');

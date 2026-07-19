@@ -17,6 +17,12 @@ import { requestMagicLink, exchangeMagicLinkToken } from './dashboardAuth.js';
 import { startSession, endSession, type SessionConfig, type SessionActor } from './session.js';
 import { getCreatorName } from '../../db/creatorProfiles.js';
 import { grantSignupCreditIfEligible } from '../signupGrant.js';
+import {
+  parseAttributionSubmission,
+  recordAttributionCapture,
+  bindAttributionIfPending,
+  type BindOutcome,
+} from '../attributionCapture.js';
 import type { EmitAppEvent } from '../../integrations/appEvents.js';
 
 export interface AuthHandlerCtx {
@@ -32,6 +38,12 @@ export interface AuthHandlerCtx {
   signupGrantUsdMicros?: bigint;
   /** F-36.4 — the DD-43 app-events seam (never throws). Prod (config.ts) wires it. */
   emitAppEvent?: EmitAppEvent;
+  /**
+   * F-37 — server gate for the attribution rail (`KYSIGNED_CAPTURE_GCLID`).
+   * Unset/false (the forker default): the magic-link rider is ignored and no
+   * attribution row is ever written, so a fresh fork captures nothing anywhere.
+   */
+  attributionEnabled?: boolean;
 }
 
 export interface AuthResult {
@@ -43,7 +55,10 @@ export interface AuthResult {
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-export async function handleAuthMagicLink(ctx: AuthHandlerCtx, body: { email?: unknown }): Promise<AuthResult> {
+export async function handleAuthMagicLink(
+  ctx: AuthHandlerCtx,
+  body: { email?: unknown; attribution?: unknown },
+): Promise<AuthResult> {
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
   if (!email || !EMAIL_RE.test(email)) {
     return { status: 400, body: { error: 'A valid email address is required', code: 'validation_email' } };
@@ -55,6 +70,22 @@ export async function handleAuthMagicLink(ctx: AuthHandlerCtx, body: { email?: u
     run402BaseUrl: ctx.session.run402BaseUrl,
     fetchImpl: ctx.session.fetchImpl,
   });
+
+  // F-37 — the attribution rider: the email submit happens in the browser that
+  // holds the gclid capture (the link may be opened elsewhere), so the capture
+  // is persisted NOW, keyed to the email, and bound at establishment. Strictly
+  // best-effort and gated: a malformed rider or a write failure must never
+  // disturb the anti-enumeration 200 contract, and a fork (flag off) ignores
+  // the field entirely.
+  if (ctx.attributionEnabled) {
+    try {
+      const submission = parseAttributionSubmission(body.attribution, new Date());
+      if (submission) await recordAttributionCapture(ctx.pool, email, submission);
+    } catch (err) {
+      console.error('attribution capture failed (magic-link unaffected):', err);
+    }
+  }
+
   // Always 200 — never reveal whether an account exists (anti-enumeration).
   return { status: 200, body: { ok: true } };
 }
@@ -99,6 +130,20 @@ export async function handleAuthTokenExchange(ctx: AuthHandlerCtx, body: { token
   } catch (err) {
     console.error('signup-grant failed (sign-in unaffected):', err);
   }
+
+  // F-37 / AC-206 — bind-at-establishment: stamp the account once (the earliest
+  // unexpired pending capture wins; none → permanently organic). Best-effort —
+  // an attribution failure never breaks sign-in. The fresh-bind outcome is the
+  // sign-up conversion signal (65.4).
+  let bind: BindOutcome = { bound: false };
+  if (ctx.attributionEnabled) {
+    try {
+      bind = await bindAttributionIfPending(ctx.pool, email);
+    } catch (err) {
+      console.error('attribution bind failed (sign-in unaffected):', err);
+    }
+  }
+  void bind; // consumed by the conversion enqueue (65.4)
 
   return { status: 200, body: { ok: true, email }, setCookies: [cookie] };
 }

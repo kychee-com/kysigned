@@ -242,6 +242,124 @@ describe('handleAuthTokenExchange — new-account trial credit (F-13.4 / F-18.4)
   });
 });
 
+// ── F-37 / AC-206 — attribution rider + bind-at-establishment (65.3) ─────────
+describe('attribution — magic-link rider persists a pending capture', () => {
+  const okSend = fetchImpl({ status: 200, body: {} });
+  const FRESH_AT = '2026-07-18T09:30:00.000Z';
+
+  function attributionPool() {
+    const inserts: unknown[][] = [];
+    const pool: DbPool = {
+      async query(text: string, values?: unknown[]) {
+        if (text.includes('INSERT INTO attribution_captures')) {
+          inserts.push((values ?? []) as unknown[]);
+          return { rows: [], rowCount: 1 } as never;
+        }
+        return { rows: [], rowCount: 0 } as never;
+      },
+      async end() {},
+    };
+    return { pool, inserts };
+  }
+
+  it('with the server flag ON, a valid rider is persisted keyed by the normalized inbox (still 200)', async () => {
+    const { pool, inserts } = attributionPool();
+    const c: AuthHandlerCtx = { ...ctx(pool, okSend), attributionEnabled: true };
+    const r = await handleAuthMagicLink(c, {
+      email: 'Alice.Smith+promo@GoogleMail.com',
+      attribution: { gclid: 'Cj0Kride', captured_at: FRESH_AT, consent: 'granted' },
+    });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { ok: true });
+    assert.equal(inserts.length, 1, 'one pending-capture write');
+    assert.equal(inserts[0]![0], 'alicesmith@gmail.com');
+    assert.equal(inserts[0]![1], 'Cj0Kride');
+  });
+
+  it('with the flag OFF (fresh-fork default), the same rider writes NOTHING', async () => {
+    const { pool, inserts } = attributionPool();
+    const r = await handleAuthMagicLink(ctx(pool, okSend), {
+      email: 'a@x.com',
+      attribution: { gclid: 'Cj0Kride', captured_at: FRESH_AT, consent: null },
+    });
+    assert.equal(r.status, 200);
+    assert.equal(inserts.length, 0);
+  });
+
+  it('a malformed rider is silently dropped — the anti-enumeration 200 contract holds', async () => {
+    const { pool, inserts } = attributionPool();
+    const c: AuthHandlerCtx = { ...ctx(pool, okSend), attributionEnabled: true };
+    const r = await handleAuthMagicLink(c, { email: 'a@x.com', attribution: { gclid: 'bad space' } });
+    assert.equal(r.status, 200);
+    assert.equal(inserts.length, 0);
+  });
+
+  it('a capture-write failure never breaks the magic-link send (best-effort)', async () => {
+    const pool: DbPool = {
+      async query(text: string) {
+        if (text.includes('INSERT INTO attribution_captures')) throw new Error('db down');
+        return { rows: [], rowCount: 0 } as never;
+      },
+      async end() {},
+    };
+    const c: AuthHandlerCtx = { ...ctx(pool, okSend), attributionEnabled: true };
+    const r = await handleAuthMagicLink(c, {
+      email: 'a@x.com',
+      attribution: { gclid: 'Cj0Kride', captured_at: FRESH_AT, consent: null },
+    });
+    assert.equal(r.status, 200);
+  });
+});
+
+describe('attribution — token exchange binds at establishment', () => {
+  const okExchange2 = fetchImpl({ status: 200, body: { access_token: 'at', refresh_token: 'rt', user: { email: 'Bind.Me@x.com' } } });
+
+  function bindObserverPool(opts: { throwOnBind?: boolean } = {}) {
+    const stamps: unknown[][] = [];
+    const pool: DbPool = {
+      async query(text: string, values?: unknown[]) {
+        if (text.includes('INSERT INTO auth_sessions')) return { rows: [], rowCount: 0 } as never;
+        if (text.includes('SELECT') && text.includes('FROM attribution_captures')) {
+          if (opts.throwOnBind) throw new Error('db down');
+          return { rows: [{ gclid: 'Cj0Kbind', captured_at: '2026-07-18T09:30:00.000Z', consent_state: null }], rowCount: 1 } as never;
+        }
+        if (text.includes('INSERT INTO creator_attribution')) {
+          stamps.push((values ?? []) as unknown[]);
+          return { rows: [], rowCount: 1 } as never;
+        }
+        return { rows: [], rowCount: 0 } as never;
+      },
+      async end() {},
+    };
+    return { pool, stamps };
+  }
+
+  it('with the flag ON, a confirmed sign-in stamps the establishment with the pending gclid', async () => {
+    const { pool, stamps } = bindObserverPool();
+    const c: AuthHandlerCtx = { ...ctx(pool, okExchange2), attributionEnabled: true };
+    const r = await handleAuthTokenExchange(c, { token: 'magic' });
+    assert.equal(r.status, 200);
+    assert.equal(stamps.length, 1, 'establishment stamped');
+    assert.equal(stamps[0]![0], 'bind.me@x.com');
+    assert.equal(stamps[0]![1], 'Cj0Kbind');
+  });
+
+  it('with the flag OFF, no attribution query runs at all', async () => {
+    const { pool, stamps } = bindObserverPool();
+    const r = await handleAuthTokenExchange(ctx(pool, okExchange2), { token: 'magic' });
+    assert.equal(r.status, 200);
+    assert.equal(stamps.length, 0);
+  });
+
+  it('a bind failure never breaks sign-in (best-effort)', async () => {
+    const { pool } = bindObserverPool({ throwOnBind: true });
+    const c: AuthHandlerCtx = { ...ctx(pool, okExchange2), attributionEnabled: true };
+    const r = await handleAuthTokenExchange(c, { token: 'magic' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { ok: true, email: 'bind.me@x.com' });
+  });
+});
+
 describe('handleAuthUser', () => {
   it('returns the actor email + saved display name', async () => {
     const r = await handleAuthUser(ctx(fakePool('Alice Smith').pool), { email: 'alice@x.com', sessionId: 's' });

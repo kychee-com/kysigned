@@ -230,4 +230,70 @@ describe('SignInScreen — passkey-first behavior', () => {
       expect(screen.getByTestId('signin-check-email')).toBeInTheDocument();
     });
   });
+
+  // ── F-37 / AC-206 — the magic-link request rides the attribution capture ────
+  async function submitMagicLink(fetchSpy: ReturnType<typeof vi.fn>) {
+    vi.stubGlobal('fetch', fetchSpy);
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <SignInScreen />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId('signin-email')).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByTestId('signin-email'), { target: { value: 'alice@example.com' } });
+    fireEvent.click(screen.getByTestId('signin-send-link'));
+    await waitFor(() => {
+      expect(fetchSpy.mock.calls.some(([url]) => String(url).endsWith('/v1/auth/magic-link'))).toBe(true);
+    });
+    const call = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/v1/auth/magic-link'));
+    return JSON.parse((call![1] as RequestInit).body as string) as Record<string, unknown>;
+  }
+
+  function okFetchSpy() {
+    return vi.fn((url: string) => {
+      if (url.endsWith('/v1/auth/user')) {
+        return Promise.resolve(new Response(JSON.stringify({ error: 'no' }), { status: 401 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    });
+  }
+
+  it('rides the stored capture on the magic-link body when attribution is enabled (F-37)', async () => {
+    (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential = function () {};
+    vi.stubEnv('VITE_OPERATOR_CONFIG', JSON.stringify({ captureGclid: true }));
+    window.localStorage.setItem(
+      'kysigned.attribution',
+      JSON.stringify({ gclid: 'Cj0Krider', capturedAt: new Date().toISOString() }),
+    );
+    try {
+      const body = await submitMagicLink(okFetchSpy());
+      expect(body.email).toBe('alice@example.com');
+      const attribution = body.attribution as Record<string, unknown>;
+      expect(attribution.gclid).toBe('Cj0Krider');
+      expect(typeof attribution.captured_at).toBe('string');
+      expect(attribution.consent).toBeNull();
+    } finally {
+      window.localStorage.clear();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('sends NO attribution field by default (fresh fork) even with a stale record present', async () => {
+    (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential = function () {};
+    window.localStorage.setItem(
+      'kysigned.attribution',
+      JSON.stringify({ gclid: 'Cj0Kstale', capturedAt: new Date().toISOString() }),
+    );
+    try {
+      const body = await submitMagicLink(okFetchSpy());
+      expect(body.email).toBe('alice@example.com');
+      expect('attribution' in body).toBe(false);
+    } finally {
+      window.localStorage.clear();
+    }
+  });
 });

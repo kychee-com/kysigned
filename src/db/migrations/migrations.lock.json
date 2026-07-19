@@ -12,6 +12,7 @@
     "009_credit_ledger_source_agnostic.sql": "sha256:bdb2530d80ac7efe5d5e9158b401ac9d46999616240b925ff9417e3ba4733232",
     "010_archive_confirmation.sql": "sha256:06a319308f0dff86a846ad7db95db2f64d9d44b29b5879c7449058ad7493546b",
     "011_key_obs_ots_proof.sql": "sha256:e3134e80ec0a817dcd010b1478b925869fbfaf4713ae3ba83265e66a8f5eeb59",
-    "012_envelope_tracking_tokens.sql": "sha256:2a01b043c234104f4d38d96b91a5b85154bb6396e2c0afa6c134a27712de796a"
+    "012_envelope_tracking_tokens.sql": "sha256:2a01b043c234104f4d38d96b91a5b85154bb6396e2c0afa6c134a27712de796a",
+    "013_attribution.sql": "sha256:cf0dc737aa7098e0fc1fdcbe17a6842055e202c115a3a6ca7b571e860fa4d965"
   }
 }

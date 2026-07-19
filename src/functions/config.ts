@@ -199,6 +199,14 @@ export interface AppEnv {
    */
   KYSIGNED_SIGNUP_GRANT_ALERT_PER_DAY?: string;
   /**
+   * F-37 — enables the paid-acquisition attribution rail server-side (`1`/`true`):
+   * the magic-link rider is persisted as a pending capture and bound once at
+   * account establishment. Unset (the forker default) ignores the rider
+   * entirely — a fresh fork captures nothing anywhere. Pairs with the SPA's
+   * `captureGclid` operator-config flag.
+   */
+  KYSIGNED_CAPTURE_GCLID?: string;
+  /**
    * Creator session lifetime in DAYS (F-18.1). kysigned.com sets 30 (matched to
    * the upstream run402 refresh-token TTL — the hard ceiling, beyond which the
    * server-side refresh fails and the session ends regardless). Unset → the
@@ -528,6 +536,10 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     ...(x402 ? { x402Discovery: { priceUsdMicros: x402.priceUsdMicros } } : {}),
   });
 
+  // F-37 — the attribution rail's server gate (fork default: off).
+  const attributionEnabled =
+    env.KYSIGNED_CAPTURE_GCLID === '1' || env.KYSIGNED_CAPTURE_GCLID === 'true';
+
   const authCtx = (): AuthHandlerCtx => ({
     pool,
     session: sessionConfig,
@@ -535,6 +547,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     // F-13.4 — fire the trial-credit grant on a confirmed magic-link sign-in.
     ...(signupGrantUsdMicros > 0n ? { signupGrantUsdMicros } : {}),
     emitAppEvent: emitAppEventDep, // F-36.4 creator_signed_up
+    ...(attributionEnabled ? { attributionEnabled } : {}), // F-37 gclid rail
   });
   const adminCtx = (operator: string): AdminContext => ({ pool, operator, internalIdentities });
   const signerCtx = (): SignerApiCtx => ({ pool, getPdf, signingEmail });
