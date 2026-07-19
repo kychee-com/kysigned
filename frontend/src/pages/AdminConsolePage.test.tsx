@@ -164,6 +164,94 @@ describe('AdminConsolePage — F-35 exclude-internal toggle (#148)', () => {
   });
 });
 
+describe('AdminConsolePage — F-34.8 every tile drills down (AC-203/204)', () => {
+  const hAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+  const funnel = {
+    window: '30d', created: 4, completed: 1, completionRate: 0.25, avgTimeToCompleteMs: 86_400_000,
+    aging: { lt1d: 1, d1to3: 1, d3to7: 0, gt7d: 0 }, voided: 1, expired: 0,
+    list: [
+      { id: 'e1', sender_email: 'a@x.com', document_name: 'Doc A', status: 'completed', created_at: hAgo(48), completed_at: hAgo(24) },
+      { id: 'e2', sender_email: 'b@x.com', document_name: 'Doc B', status: 'active', created_at: hAgo(2), completed_at: null }, // lt1d
+      { id: 'e3', sender_email: 'c@x.com', document_name: 'Doc C', status: 'active', created_at: hAgo(48), completed_at: null }, // 1-3d
+      { id: 'e4', sender_email: 'd@x.com', document_name: 'Doc D', status: 'voided', created_at: hAgo(10), completed_at: null },
+    ],
+  };
+  const signals = {
+    window: '30d',
+    deliverability: { invited: 2, signed: 1, undeliverable: 1 },
+    agentAdoption: { walletCreates: 1, humanCreates: 1, apiKeyHolders: 1 },
+  };
+  const drillRowCount = () => screen.getByTestId('admin-drill-rows').querySelectorAll('tr').length;
+
+  const openEnvelopesTab = async () => {
+    const fetchMock = mockFetchByPath({ '/v1/admin/overview': overview, '/v1/admin/envelopes': funnel, '/v1/admin/signals': signals, '/v1/admin/signal-rows': { rows: [] } });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<MemoryRouter><AdminConsolePage /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId('admin-kpi-accountsOpened')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('admin-tab-envelopes'));
+    await waitFor(() => expect(screen.getByTestId('admin-kpi-funnelCreated')).toBeInTheDocument());
+    return fetchMock;
+  };
+
+  it('every Overview tile is a clickable entry point, not a dead end (AC-203)', async () => {
+    vi.stubGlobal('fetch', mockFetchByPath({ '/v1/admin/overview': overview }));
+    render(<MemoryRouter><AdminConsolePage /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId('admin-kpi-accountsOpened')).toBeInTheDocument());
+    for (const id of ['accountsOpened', 'envelopesCreated', 'envelopesCompleted', 'envelopesInProcess', 'paidIn', 'granted', 'consumed', 'active']) {
+      expect(screen.getByTestId(`admin-kpi-${id}`).tagName, `${id} must be clickable`).toBe('BUTTON');
+    }
+  });
+
+  it('an Envelopes count tile opens exactly the records behind its figure (AC-203)', async () => {
+    await openEnvelopesTab();
+    fireEvent.click(screen.getByTestId('admin-kpi-funnelCreated'));
+    await waitFor(() => expect(screen.getByTestId('admin-drill')).toBeInTheDocument());
+    expect(drillRowCount()).toBe(funnel.created); // drill reconciles with the tile
+    fireEvent.click(screen.getByTestId('admin-drill-close'));
+    await waitFor(() => expect(screen.queryByTestId('admin-drill')).not.toBeInTheDocument());
+    expect(screen.getByTestId('admin-kpi-funnelCreated')).toBeInTheDocument(); // grid intact (AC-204)
+
+    fireEvent.click(screen.getByTestId('admin-kpi-funnelCompleted'));
+    await waitFor(() => expect(drillRowCount()).toBe(funnel.completed));
+  });
+
+  it('the ratio and average tiles open the cohort they are computed over (AC-204)', async () => {
+    await openEnvelopesTab();
+    fireEvent.click(screen.getByTestId('admin-kpi-funnelRate'));
+    await waitFor(() => expect(drillRowCount()).toBe(funnel.created)); // rate → the whole created cohort
+    fireEvent.click(screen.getByTestId('admin-drill-close'));
+    fireEvent.click(screen.getByTestId('admin-kpi-funnelAvg'));
+    await waitFor(() => expect(drillRowCount()).toBe(funnel.completed)); // avg → the completed set
+    expect(screen.getByTestId('admin-drill')).toHaveTextContent('Took'); // each row carries its duration
+  });
+
+  it('the multi-value aging tile reaches each bucket independently (AC-204)', async () => {
+    await openEnvelopesTab();
+    for (const b of ['lt1d', 'd1to3', 'd3to7', 'gt7d']) {
+      expect(screen.getByTestId(`admin-kpi-funnelAging-${b}`).tagName).toBe('BUTTON');
+    }
+    fireEvent.click(screen.getByTestId('admin-kpi-funnelAging-lt1d'));
+    await waitFor(() => expect(drillRowCount()).toBe(funnel.aging.lt1d));
+    expect(screen.getByTestId('admin-drill')).toHaveTextContent('Doc B'); // the <1d in-process one
+    fireEvent.click(screen.getByTestId('admin-drill-close'));
+    fireEvent.click(screen.getByTestId('admin-kpi-funnelAging-d1to3'));
+    await waitFor(() => expect(screen.getByTestId('admin-drill')).toHaveTextContent('Doc C'));
+  });
+
+  it('a Signals tile drills through its own gated read with the right group (AC-203)', async () => {
+    const fetchMock = mockFetchByPath({ '/v1/admin/overview': overview, '/v1/admin/signals': signals, '/v1/admin/signal-rows': { rows: [] } });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<MemoryRouter><AdminConsolePage /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId('admin-kpi-accountsOpened')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('admin-tab-signals'));
+    await waitFor(() => expect(screen.getByTestId('admin-kpi-delivUndeliverable')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('admin-kpi-delivUndeliverable'));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/v1/admin/signal-rows') && String(c[0]).includes('group=undeliverable'))).toBe(true),
+    );
+  });
+});
+
 describe('AdminConsolePage — F-34.7 view-state persistence (AC-202)', () => {
   const VIEW_KEY = 'kysigned.admin.view'; // storage is cleared by the file-level afterEach
 

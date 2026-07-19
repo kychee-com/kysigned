@@ -109,15 +109,45 @@ function Spinner() {
   );
 }
 
-function Tile({ id, label, value, onClick }: { id: string; label: string; value: string | number; onClick?: () => void }) {
+/** F-34.8 — a multi-value tile's independently-clickable parts (the aging buckets). */
+interface TileSegment { id: string; label: string; value: number; onClick: () => void }
+
+function Tile({ id, label, value, onClick, segments }: {
+  id: string; label: string; value?: string | number; onClick?: () => void; segments?: TileSegment[];
+}) {
   const inner = (
     <>
       <div className="text-xs text-gray-600">{label}</div>
       <div className="text-2xl font-semibold">{value}</div>
     </>
   );
+  // F-34.8 / AC-204 — a tile carrying several values exposes EACH as its own target,
+  // rather than collapsing into one undifferentiated list.
+  if (segments) {
+    return (
+      <div className="border border-gray-200 rounded-lg bg-white px-4 py-3" data-testid={`admin-kpi-${id}`}>
+        <div className="text-xs text-gray-600">{label}</div>
+        <div className="flex flex-wrap items-baseline gap-1 mt-0.5">
+          {segments.map((s, i) => (
+            <span key={s.id} className="flex items-baseline">
+              {i > 0 && <span className="text-gray-300 mx-1">/</span>}
+              <button
+                type="button"
+                onClick={s.onClick}
+                title={s.label}
+                className="text-2xl font-semibold hover:text-sky-700 hover:underline cursor-pointer"
+                data-testid={`admin-kpi-${id}-${s.id}`}
+              >
+                {s.value}
+              </button>
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
   if (onClick) {
-    // F-34.6 — a money tile is an entry point: click opens the ledger behind it.
+    // F-34.6/F-34.8 — a tile is an entry point: click opens the records behind it.
     return (
       <button
         type="button"
@@ -134,6 +164,69 @@ function Tile({ id, label, value, onClick }: { id: string; label: string; value:
       {inner}
     </div>
   );
+}
+
+// ── F-34.8 / AC-203 — one generic drill panel behind every tile ────────────────
+
+interface DrillCol { key: string; label: string }
+type DrillRowData = Record<string, string | number | null>;
+/** Rows a tab derived from a payload it ALREADY fetched (so they cannot disagree with the tile). */
+function DrillPanel({ title, columns, rows, cap, onClose }: {
+  title: string; columns: DrillCol[]; rows: DrillRowData[]; cap?: number; onClose: () => void;
+}) {
+  const shown = cap ? rows.slice(0, cap) : rows;
+  return (
+    <div className="mt-4 border border-gray-200 rounded-lg bg-white" data-testid="admin-drill">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100">
+        <div className="text-sm font-semibold" data-testid="admin-drill-title">{title}</div>
+        <button type="button" onClick={onClose} className="text-sm text-gray-600 hover:text-gray-900" data-testid="admin-drill-close">
+          Close
+        </button>
+      </div>
+      {shown.length === 0 ? (
+        <p className="text-sm text-gray-600 py-6 text-center" data-testid="admin-empty">Nothing in this window.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr className="text-left text-xs text-gray-600">
+                {columns.map((c) => <th key={c.key} className="px-4 py-2">{c.label}</th>)}
+              </tr>
+            </thead>
+            <tbody data-testid="admin-drill-rows">
+              {shown.map((r, i) => (
+                <tr key={String(r[columns[0]!.key] ?? i) + i} className="border-t border-gray-100">
+                  {columns.map((c) => (
+                    <td key={c.key} className="px-4 py-2 whitespace-nowrap text-gray-700">{r[c.key] ?? '—'}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {cap && rows.length > cap && (
+            <p className="text-xs text-gray-500 px-4 py-2 border-t border-gray-100">
+              Showing the first {cap} of {rows.length}.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A drill whose rows come from its own operator-gated read (active / signals / accounts). */
+function FetchedDrillPanel<T>({ title, columns, path, extra, window, excludeInternal, map, onClose }: {
+  title: string; columns: DrillCol[]; path: string; extra?: string;
+  window: WindowKey; excludeInternal: boolean;
+  map: (data: T) => DrillRowData[]; onClose: () => void;
+}) {
+  const { data, loading, denied, error } = useAdminData<T>(path, window, excludeInternal, extra);
+  if (denied) return <Denied />;
+  if (loading) return <Spinner />;
+  if (error || !data) {
+    return <p className="text-sm text-red-700 py-6 text-center" data-testid="admin-error">{error || 'Failed to load'}</p>;
+  }
+  return <DrillPanel title={title} columns={columns} rows={map(data)} onClose={onClose} />;
 }
 
 type LedgerGroup = 'paid_in' | 'granted' | 'consumed';
@@ -208,26 +301,75 @@ interface Overview {
   activeUsers: number;
 }
 
+/** F-34.8 — what the Overview's non-money tiles open. */
+type OverviewDrill =
+  | { kind: 'ledger'; group: LedgerGroup }
+  | { kind: 'active' }
+  | { kind: 'accountsOpened' }
+  | { kind: 'envelopes'; status: 'all' | 'completed' | 'inProcess'; title: string };
+
+const IN_PROCESS_STATUSES = new Set(['active', 'awaiting_seal']);
+const ENV_COLS: DrillCol[] = [
+  { key: 'document_name', label: 'Envelope' }, { key: 'sender_email', label: 'Creator' },
+  { key: 'status', label: 'Status' }, { key: 'created', label: 'Created' },
+];
+const envRows = (list: Funnel['list'], keep: (s: string) => boolean): DrillRowData[] =>
+  list.filter((e) => keep(e.status)).map((e) => ({
+    document_name: e.document_name, sender_email: e.sender_email, status: e.status,
+    created: new Date(e.created_at).toLocaleDateString(),
+  }));
+
 function OverviewTab({ window, excludeInternal }: { window: WindowKey; excludeInternal: boolean }) {
   const { data, loading, denied, error } = useAdminData<Overview>('/v1/admin/overview', window, excludeInternal);
-  const [drill, setDrill] = useState<LedgerGroup | null>(null);
+  const [drill, setDrill] = useState<OverviewDrill | null>(null);
   if (denied) return <Denied />;
   if (loading) return <Spinner />;
   if (error || !data) return <p className="text-sm text-red-700 py-8 text-center" data-testid="admin-error">{error || 'Failed to load'}</p>;
+  const close = () => setDrill(null);
   return (
     <div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="admin-overview">
-        <Tile id="accountsOpened" label="Accounts opened" value={data.accountsOpened} />
-        <Tile id="envelopesCreated" label="Envelopes created" value={data.envelopes.created} />
-        <Tile id="envelopesCompleted" label="Completed" value={data.envelopes.completed} />
-        <Tile id="envelopesInProcess" label="In process" value={data.envelopes.inProcess} />
-        <Tile id="paidIn" label="Paid in" value={formatUsd(data.credits.paidInUsdMicros)} onClick={() => setDrill('paid_in')} />
-        <Tile id="granted" label="Free credit granted" value={formatUsd(data.credits.grantedUsdMicros)} onClick={() => setDrill('granted')} />
-        <Tile id="consumed" label="Credit consumed" value={formatUsd(data.credits.consumedUsdMicros)} onClick={() => setDrill('consumed')} />
-        <Tile id="active" label="Active identities" value={data.activeUsers} />
+        <Tile id="accountsOpened" label="Accounts opened" value={data.accountsOpened} onClick={() => setDrill({ kind: 'accountsOpened' })} />
+        <Tile id="envelopesCreated" label="Envelopes created" value={data.envelopes.created} onClick={() => setDrill({ kind: 'envelopes', status: 'all', title: 'Envelopes created' })} />
+        <Tile id="envelopesCompleted" label="Completed" value={data.envelopes.completed} onClick={() => setDrill({ kind: 'envelopes', status: 'completed', title: 'Completed envelopes' })} />
+        <Tile id="envelopesInProcess" label="In process" value={data.envelopes.inProcess} onClick={() => setDrill({ kind: 'envelopes', status: 'inProcess', title: 'In-process envelopes' })} />
+        <Tile id="paidIn" label="Paid in" value={formatUsd(data.credits.paidInUsdMicros)} onClick={() => setDrill({ kind: 'ledger', group: 'paid_in' })} />
+        <Tile id="granted" label="Free credit granted" value={formatUsd(data.credits.grantedUsdMicros)} onClick={() => setDrill({ kind: 'ledger', group: 'granted' })} />
+        <Tile id="consumed" label="Credit consumed" value={formatUsd(data.credits.consumedUsdMicros)} onClick={() => setDrill({ kind: 'ledger', group: 'consumed' })} />
+        <Tile id="active" label="Active identities" value={data.activeUsers} onClick={() => setDrill({ kind: 'active' })} />
       </div>
-      {drill && (
-        <LedgerPanel group={drill} window={window} excludeInternal={excludeInternal} onClose={() => setDrill(null)} />
+
+      {drill?.kind === 'ledger' && (
+        <LedgerPanel group={drill.group} window={window} excludeInternal={excludeInternal} onClose={close} />
+      )}
+      {drill?.kind === 'active' && (
+        <FetchedDrillPanel<{ rows: Array<{ email: string; lastSeen: string | null; envelopesCreated: number }> }>
+          title="Active identities" path="/v1/admin/active" window={window} excludeInternal={excludeInternal} onClose={close}
+          columns={[{ key: 'email', label: 'Identity' }, { key: 'lastSeen', label: 'Last seen' }, { key: 'created', label: 'Envelopes created' }]}
+          map={(d) => d.rows.map((r) => ({
+            email: r.email,
+            lastSeen: r.lastSeen ? new Date(r.lastSeen).toLocaleString() : null,
+            created: r.envelopesCreated,
+          }))}
+        />
+      )}
+      {drill?.kind === 'accountsOpened' && (
+        <FetchedDrillPanel<{ accounts: AccountRow[] }>
+          title="Accounts opened" path="/v1/admin/accounts" window={window} excludeInternal={excludeInternal} onClose={close}
+          columns={[{ key: 'email', label: 'Identity' }, { key: 'type', label: 'Type' }, { key: 'joined', label: 'Joined' }]}
+          map={(d) => d.accounts.filter((a) => a.openedInWindow).map((a) => ({
+            email: a.email, type: badgeText(a), joined: a.joined ? new Date(a.joined).toLocaleDateString() : null,
+          }))}
+        />
+      )}
+      {drill?.kind === 'envelopes' && (
+        <FetchedDrillPanel<Funnel>
+          title={drill.title} path="/v1/admin/envelopes" window={window} excludeInternal={excludeInternal} onClose={close}
+          columns={ENV_COLS}
+          map={(d) => envRows(d.list, (s) =>
+            drill.status === 'all' ? true : drill.status === 'completed' ? s === 'completed' : IN_PROCESS_STATUSES.has(s),
+          )}
+        />
       )}
     </div>
   );
@@ -237,6 +379,8 @@ interface AccountRow {
   email: string; kind: 'human' | 'agent'; walletFunded: boolean; programmatic: boolean;
   envelopes: { created: number; completed: number; inProcess: number };
   balanceUsdMicros: string; lastSeen: string | null; joined: string | null;
+  /** F-34.8 — joined inside the window, i.e. counted by the "Accounts opened" tile. */
+  openedInWindow?: boolean;
 }
 
 function badgeText(r: AccountRow): string {
@@ -299,23 +443,66 @@ interface Funnel {
   list: Array<{ id: string; sender_email: string; document_name: string; status: string; created_at: string; completed_at: string | null }>;
 }
 
+/** F-34.8 — the Envelopes tab derives every drill from the list it ALREADY fetched. */
+type EnvDrill = { title: string; keep: (e: Funnel['list'][number]) => boolean; withDuration?: boolean };
+const AGE_BUCKETS: Array<{ id: 'lt1d' | 'd1to3' | 'd3to7' | 'gt7d'; label: string; min: number; max: number }> = [
+  { id: 'lt1d', label: 'under 1 day', min: 0, max: 1 },
+  { id: 'd1to3', label: '1-3 days', min: 1, max: 3 },
+  { id: 'd3to7', label: '3-7 days', min: 3, max: 7 },
+  { id: 'gt7d', label: 'over 7 days', min: 7, max: Infinity },
+];
+const ageDays = (iso: string) => (Date.now() - new Date(iso).getTime()) / 86_400_000;
+
 function EnvelopesTab({ window, excludeInternal }: { window: WindowKey; excludeInternal: boolean }) {
   const { data, loading, denied, error } = useAdminData<Funnel>('/v1/admin/envelopes', window, excludeInternal);
+  const [drill, setDrill] = useState<EnvDrill | null>(null);
   if (denied) return <Denied />;
   if (loading) return <Spinner />;
   if (error || !data) return <p className="text-sm text-red-700 py-8 text-center" data-testid="admin-error">{error || 'Failed to load'}</p>;
   const days = data.avgTimeToCompleteMs == null ? '—' : `${(data.avgTimeToCompleteMs / 86_400_000).toFixed(1)}d`;
+  const list = data.list;
+  const open = (d: EnvDrill) => () => setDrill(d);
   return (
     <div data-testid="admin-envelopes">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-        <Tile id="funnelCreated" label="Created" value={data.created} />
-        <Tile id="funnelCompleted" label="Completed" value={data.completed} />
-        <Tile id="funnelRate" label="Completion rate" value={`${Math.round(data.completionRate * 100)}%`} />
-        <Tile id="funnelAvg" label="Avg time-to-complete" value={days} />
-        <Tile id="funnelAging" label="Aging (1/3/7/7+ d)" value={`${data.aging.lt1d}/${data.aging.d1to3}/${data.aging.d3to7}/${data.aging.gt7d}`} />
-        <Tile id="funnelVoided" label="Voided" value={data.voided} />
-        <Tile id="funnelExpired" label="Expired" value={data.expired} />
+        <Tile id="funnelCreated" label="Created" value={data.created} onClick={open({ title: 'Created envelopes', keep: () => true })} />
+        <Tile id="funnelCompleted" label="Completed" value={data.completed} onClick={open({ title: 'Completed envelopes', keep: (e) => e.status === 'completed' })} />
+        {/* AC-204 — a ratio opens the cohort it is computed OVER, so the number is auditable. */}
+        <Tile id="funnelRate" label="Completion rate" value={`${Math.round(data.completionRate * 100)}%`} onClick={open({ title: 'Completion-rate cohort (all created)', keep: () => true })} />
+        {/* AC-204 — an average opens the set it averages, each row carrying its own duration. */}
+        <Tile id="funnelAvg" label="Avg time-to-complete" value={days} onClick={open({ title: 'Completed envelopes — time to complete', keep: (e) => e.status === 'completed' && !!e.completed_at, withDuration: true })} />
+        <Tile
+          id="funnelAging"
+          label="Aging (1/3/7/7+ d)"
+          segments={AGE_BUCKETS.map((b) => ({
+            id: b.id,
+            label: `In process, ${b.label}`,
+            value: data.aging[b.id],
+            onClick: open({
+              title: `In process — ${b.label}`,
+              keep: (e) => IN_PROCESS_STATUSES.has(e.status) && ageDays(e.created_at) >= b.min && ageDays(e.created_at) < b.max,
+            }),
+          }))}
+        />
+        <Tile id="funnelVoided" label="Voided" value={data.voided} onClick={open({ title: 'Voided envelopes', keep: (e) => e.status === 'voided' })} />
+        <Tile id="funnelExpired" label="Expired" value={data.expired} onClick={open({ title: 'Expired envelopes', keep: (e) => e.status === 'expired' })} />
       </div>
+      {drill && (
+        <div className="mb-4">
+          <DrillPanel
+            title={drill.title}
+            columns={drill.withDuration ? [...ENV_COLS, { key: 'took', label: 'Took' }] : ENV_COLS}
+            rows={list.filter(drill.keep).map((e) => ({
+              document_name: e.document_name, sender_email: e.sender_email, status: e.status,
+              created: new Date(e.created_at).toLocaleDateString(),
+              ...(drill.withDuration && e.completed_at
+                ? { took: `${((new Date(e.completed_at).getTime() - new Date(e.created_at).getTime()) / 86_400_000).toFixed(1)}d` }
+                : {}),
+            }))}
+            onClose={() => setDrill(null)}
+          />
+        </div>
+      )}
       <div className="border border-gray-200 rounded-lg overflow-x-auto bg-white">
         <table className="w-full text-sm">
           <thead className="bg-gray-50">
@@ -347,19 +534,47 @@ interface Signals {
   agentAdoption: { walletCreates: number; humanCreates: number; apiKeyHolders: number };
 }
 
+/** F-34.8 — the six Signals tiles map 1:1 onto `/v1/admin/signal-rows?group=`. */
+type SignalGroup = 'invited' | 'signed' | 'undeliverable' | 'wallet_creates' | 'human_creates' | 'api_key_holders';
+const SIGNAL_TITLES: Record<SignalGroup, string> = {
+  invited: 'Signers invited', signed: 'Signers who signed', undeliverable: 'Undeliverable signers',
+  wallet_creates: 'Wallet-agent creates', human_creates: 'Human creates', api_key_holders: 'API-key holders',
+};
+const SIGNAL_COLS: DrillCol[] = [
+  { key: 'primary', label: 'Who' }, { key: 'secondary', label: 'Context' },
+  { key: 'detail', label: 'Detail' }, { key: 'at', label: 'When' },
+];
+
 function SignalsTab({ window, excludeInternal }: { window: WindowKey; excludeInternal: boolean }) {
   const { data, loading, denied, error } = useAdminData<Signals>('/v1/admin/signals', window, excludeInternal);
+  const [drill, setDrill] = useState<SignalGroup | null>(null);
   if (denied) return <Denied />;
   if (loading) return <Spinner />;
   if (error || !data) return <p className="text-sm text-red-700 py-8 text-center" data-testid="admin-error">{error || 'Failed to load'}</p>;
+  const tile = (id: string, label: string, value: number, group: SignalGroup) => (
+    <Tile id={id} label={label} value={value} onClick={() => setDrill(group)} />
+  );
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 gap-3" data-testid="admin-signals">
-      <Tile id="delivInvited" label="Signers invited" value={data.deliverability.invited} />
-      <Tile id="delivSigned" label="Signed" value={data.deliverability.signed} />
-      <Tile id="delivUndeliverable" label="Undeliverable" value={data.deliverability.undeliverable} />
-      <Tile id="walletCreates" label="Wallet-agent creates" value={data.agentAdoption.walletCreates} />
-      <Tile id="humanCreates" label="Human creates" value={data.agentAdoption.humanCreates} />
-      <Tile id="apiKeyHolders" label="API-key holders" value={data.agentAdoption.apiKeyHolders} />
+    <div data-testid="admin-signals">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        {tile('delivInvited', 'Signers invited', data.deliverability.invited, 'invited')}
+        {tile('delivSigned', 'Signed', data.deliverability.signed, 'signed')}
+        {tile('delivUndeliverable', 'Undeliverable', data.deliverability.undeliverable, 'undeliverable')}
+        {tile('walletCreates', 'Wallet-agent creates', data.agentAdoption.walletCreates, 'wallet_creates')}
+        {tile('humanCreates', 'Human creates', data.agentAdoption.humanCreates, 'human_creates')}
+        {tile('apiKeyHolders', 'API-key holders', data.agentAdoption.apiKeyHolders, 'api_key_holders')}
+      </div>
+      {drill && (
+        <FetchedDrillPanel<{ rows: Array<Record<string, string | null>> }>
+          title={SIGNAL_TITLES[drill]} path="/v1/admin/signal-rows" extra={`&group=${drill}`}
+          window={window} excludeInternal={excludeInternal} onClose={() => setDrill(null)}
+          columns={SIGNAL_COLS}
+          map={(d) => d.rows.map((r) => ({
+            primary: r.primary ?? null, secondary: r.secondary ?? null, detail: r.detail ?? null,
+            at: r.at ? new Date(r.at).toLocaleString() : null,
+          }))}
+        />
+      )}
     </div>
   );
 }
