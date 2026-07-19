@@ -9,12 +9,21 @@
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { AdminConsolePage } from './AdminConsolePage';
+
+/** Renders the live location query string so a test can assert the URL was updated. */
+function LocationSpy() {
+  return <span data-testid="loc-search">{useLocation().search}</span>;
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  // F-34.7: the console now PERSISTS its view (tab/window/toggle) to localStorage,
+  // so each test must start from a clean slate — otherwise one test's last view
+  // seeds the next one and it no longer opens on the defaults.
+  try { localStorage.clear(); } catch { /* jsdom always provides it; be defensive */ }
 });
 
 function mockFetchByPath(handlers: Record<string, unknown>) {
@@ -152,5 +161,59 @@ describe('AdminConsolePage — F-35 exclude-internal toggle (#148)', () => {
         ),
       ).toBe(true),
     );
+  });
+});
+
+describe('AdminConsolePage — F-34.7 view-state persistence (AC-202)', () => {
+  const VIEW_KEY = 'kysigned.admin.view'; // storage is cleared by the file-level afterEach
+
+  const renderAt = (entry: string) => {
+    const fetchMock = mockFetchByPath({ '/v1/admin/overview': overview, '/v1/admin/accounts': accounts });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <MemoryRouter initialEntries={[entry]}>
+        <AdminConsolePage />
+        <LocationSpy />
+      </MemoryRouter>,
+    );
+    return fetchMock;
+  };
+  const calledWith = (m: ReturnType<typeof mockFetchByPath>, ...parts: string[]) =>
+    m.mock.calls.some((c) => parts.every((p) => String(c[0]).includes(p)));
+
+  it('restores tab + window + toggle from the URL, and the tab fetch carries them', async () => {
+    const fetchMock = renderAt('/admin?tab=accounts&window=7d&exclude_internal=0');
+    await waitFor(() => expect(screen.getByText('w@x.com')).toBeInTheDocument()); // Accounts tab, not Overview
+    expect(screen.getByTestId('admin-exclude-internal-input')).not.toBeChecked();
+    expect(calledWith(fetchMock, '/v1/admin/accounts', 'window=7d', 'exclude_internal=0')).toBe(true);
+  });
+
+  it('a bare /admin restores the last view from localStorage', async () => {
+    localStorage.setItem(VIEW_KEY, JSON.stringify({ tab: 'accounts', window: '7d', exclude_internal: '0' }));
+    const fetchMock = renderAt('/admin');
+    await waitFor(() => expect(screen.getByText('w@x.com')).toBeInTheDocument());
+    expect(screen.getByTestId('admin-exclude-internal-input')).not.toBeChecked();
+    expect(calledWith(fetchMock, '/v1/admin/accounts', 'window=7d', 'exclude_internal=0')).toBe(true);
+  });
+
+  it('a first visit (no params, empty storage) opens on the defaults', async () => {
+    const fetchMock = renderAt('/admin');
+    await waitFor(() => expect(screen.getByTestId('admin-kpi-accountsOpened')).toBeInTheDocument()); // Overview
+    expect(screen.getByTestId('admin-exclude-internal-input')).toBeChecked();
+    expect(calledWith(fetchMock, '/v1/admin/overview', 'window=30d', 'exclude_internal=1')).toBe(true);
+  });
+
+  it('a garbage tab/window falls back to the defaults instead of breaking the page', async () => {
+    const fetchMock = renderAt('/admin?tab=not-a-tab&window=99y');
+    await waitFor(() => expect(screen.getByTestId('admin-kpi-accountsOpened')).toBeInTheDocument());
+    expect(calledWith(fetchMock, '/v1/admin/overview', 'window=30d')).toBe(true);
+  });
+
+  it('changing a control writes both the URL and localStorage', async () => {
+    renderAt('/admin');
+    await waitFor(() => expect(screen.getByTestId('admin-kpi-accountsOpened')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('admin-window-7d'));
+    await waitFor(() => expect(screen.getByTestId('loc-search').textContent).toContain('window=7d'));
+    expect(JSON.parse(localStorage.getItem(VIEW_KEY) ?? '{}')).toMatchObject({ window: '7d' });
   });
 });

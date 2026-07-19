@@ -12,6 +12,7 @@
  * sign-in screen. NOT linked from the creator nav.
  */
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { apiGet, ApiError, formatUsd } from '../lib/api';
 import { AdminReconciliationPage } from './AdminReconciliationPage';
 
@@ -24,6 +25,53 @@ const WINDOWS: Array<[WindowKey, string]> = [
 const TABS: Array<[TabKey, string]> = [
   ['overview', 'Overview'], ['accounts', 'Accounts'], ['envelopes', 'Envelopes'], ['signals', 'Signals'], ['reconciliation', 'Reconciliation'],
 ];
+
+// ── F-34.7 view-state persistence ──────────────────────────────────────────────
+// The console's view (tab / window / exclude-internal) survives a reload: the URL
+// query string is the source of truth, mirrored into localStorage so a BARE /admin
+// (nav click, new tab, tomorrow) restores the last view too. Precedence:
+// URL param > stored view > default. Every value is validated against its known
+// set on read, so a stale or hand-edited param falls back to the default instead
+// of rendering a broken page.
+//
+// These helpers live at MODULE scope deliberately: inside the component `window`
+// is shadowed by the time-window state, so `window.localStorage` would not resolve.
+const VIEW_KEY = 'kysigned.admin.view';
+const TAB_KEYS = new Set<string>(TABS.map(([k]) => k));
+const WINDOW_KEYS = new Set<string>(WINDOWS.map(([k]) => k));
+
+interface StoredView { tab?: string; window?: string; exclude_internal?: string }
+
+function readStoredView(): StoredView {
+  try {
+    const raw = localStorage.getItem(VIEW_KEY);
+    return raw ? (JSON.parse(raw) as StoredView) : {};
+  } catch {
+    return {}; // storage disabled / private mode / corrupt JSON → just use defaults
+  }
+}
+
+function writeStoredView(view: StoredView): void {
+  try {
+    localStorage.setItem(VIEW_KEY, JSON.stringify(view));
+  } catch {
+    /* storage unavailable — the URL still carries the view */
+  }
+}
+
+/** URL param > stored view > default, each checked against its known values. */
+function initialView(params: URLSearchParams): { tab: TabKey; window: WindowKey; excludeInternal: boolean } {
+  const stored = readStoredView();
+  const tabRaw = params.get('tab') ?? stored.tab;
+  const winRaw = params.get('window') ?? stored.window;
+  const exRaw = params.get('exclude_internal') ?? stored.exclude_internal;
+  return {
+    tab: (tabRaw && TAB_KEYS.has(tabRaw) ? tabRaw : 'overview') as TabKey,
+    window: (winRaw && WINDOW_KEYS.has(winRaw) ? winRaw : '30d') as WindowKey,
+    // mirrors the server's parseExcludeInternal: default ON, only an explicit off turns it off
+    excludeInternal: !(exRaw === '0' || exRaw === 'false'),
+  };
+}
 
 interface Fetched<T> { data: T | null; loading: boolean; denied: boolean; error: string }
 
@@ -316,11 +364,27 @@ function SignalsTab({ window, excludeInternal }: { window: WindowKey; excludeInt
 }
 
 export function AdminConsolePage() {
-  const [tab, setTab] = useState<TabKey>('overview');
-  const [window, setWindow] = useState<WindowKey>('30d');
+  const [searchParams, setSearchParams] = useSearchParams();
+  // F-34.7 — seed the view ONCE from the URL, then the last stored view, then the
+  // defaults; from here on the state drives the URL (below), not the other way.
+  const [seed] = useState(() => initialView(searchParams));
+  const [tab, setTab] = useState<TabKey>(seed.tab);
+  const [window, setWindow] = useState<WindowKey>(seed.window);
   // F-35 — exclude the operator's own data by default (internal_test + configured identities).
-  const [excludeInternal, setExcludeInternal] = useState(true);
+  const [excludeInternal, setExcludeInternal] = useState(seed.excludeInternal);
   const [access, setAccess] = useState<'checking' | 'operator' | 'denied'>('checking');
+
+  // F-34.7 — mirror the current view into the URL (replace, so the back button does
+  // not fill with console states) and into localStorage, so a refresh, a bookmark,
+  // and a later bare /admin all land back on this exact view (AC-202).
+  useEffect(() => {
+    const view = { tab, window, exclude_internal: excludeInternal ? '1' : '0' };
+    setSearchParams(view, { replace: true });
+    writeStoredView(view);
+    // Keyed on the view values only — `setSearchParams` has no stable identity, and
+    // the values are what actually need to drive the sync.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, window, excludeInternal]);
 
   // Gate the WHOLE console at the shell, not per-tab: a non-operator must see the
   // access-denied message ALONE — no title, window selector, or tabs (AC-179). One
