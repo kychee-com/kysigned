@@ -300,7 +300,7 @@ describe('handleRequest — routing + auth gate', () => {
   });
 
   // ── F-28 / AC-116 — secret-gated, identity-scoped test-account reset ─────────
-  it('POST /v1/test/reset-user with the secret + a matched identity → 200 (five DELETEs)', async () => {
+  it('POST /v1/test/reset-user with the secret + a matched identity → 200 (seven DELETEs)', async () => {
     const { pool, queries } = makePool(() => []);
     const res = await handleRequest(
       req('POST', '/v1/test/reset-user', {
@@ -310,8 +310,9 @@ describe('handleRequest — routing + auth gate', () => {
       makeDeps({ pool, testResetSecret: 'S3CRET', testResetPattern: /^redteam.*@kysigned\.com$/ }),
     );
     assert.equal(res.status, 200);
-    // signature_artifacts (FK-uncascaded) + envelopes + auth_sessions + user_credits + credit_ledger
-    assert.equal(queries.filter((q) => /^DELETE FROM/.test(q.text.trim())).length, 5);
+    // signature_artifacts (FK-uncascaded) + envelopes + auth_sessions + user_credits +
+    // credit_ledger + the two F-37 attribution tables (captures + establishment stamp)
+    assert.equal(queries.filter((q) => /^DELETE FROM/.test(q.text.trim())).length, 7);
   });
 
   it('POST /v1/test/reset-user is DISABLED (handler 404) when no reset secret is configured', async () => {

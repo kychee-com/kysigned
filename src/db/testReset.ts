@@ -13,6 +13,7 @@
  * FK-fail for any identity that has a completed/signed envelope.
  */
 import type { DbPool } from './pool.js';
+import { normalizeInbox } from '../api/signerInboxGuard.js';
 
 export interface ResetReport {
   identity: string;
@@ -21,6 +22,9 @@ export interface ResetReport {
   authSessionsDeleted: number;
   userCreditsDeleted: number;
   creditLedgerDeleted: number;
+  /** F-37 — pending captures + the establishment stamp (keyed by normalizeInbox). */
+  attributionCapturesDeleted: number;
+  creatorAttributionDeleted: number;
 }
 
 function normalizeIdentity(email: string): string {
@@ -40,6 +44,13 @@ export async function resetTestAccount(pool: DbPool, email: string): Promise<Res
   const sess = await pool.query(`DELETE FROM auth_sessions WHERE email = $1`, [identity]);
   const cred = await pool.query(`DELETE FROM user_credits WHERE email = $1`, [identity]);
   const ledg = await pool.query(`DELETE FROM credit_ledger WHERE email = $1`, [identity]);
+  // F-37 — attribution rows key by the NORMALIZED inbox (normalizeInbox — the
+  // same F-3.2a form the capture/bind DAO writes), NOT the trim+lowercase form
+  // above: a dotted/+tagged sign-in variant must still purge its rows so a
+  // reset identity re-establishes fresh (organic or newly-attributed).
+  const inbox = normalizeInbox(identity);
+  const capt = await pool.query(`DELETE FROM attribution_captures WHERE normalized_email = $1`, [inbox]);
+  const attr = await pool.query(`DELETE FROM creator_attribution WHERE normalized_email = $1`, [inbox]);
   return {
     identity,
     signatureArtifactsDeleted: art.rowCount ?? 0,
@@ -47,5 +58,7 @@ export async function resetTestAccount(pool: DbPool, email: string): Promise<Res
     authSessionsDeleted: sess.rowCount ?? 0,
     userCreditsDeleted: cred.rowCount ?? 0,
     creditLedgerDeleted: ledg.rowCount ?? 0,
+    attributionCapturesDeleted: capt.rowCount ?? 0,
+    creatorAttributionDeleted: attr.rowCount ?? 0,
   };
 }

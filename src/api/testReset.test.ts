@@ -28,6 +28,8 @@ function createInMemoryPool(): DbPool & {
   _authSessions: Array<{ email: string }>;
   _userCredits: Array<{ email: string }>;
   _creditLedger: Array<{ email: string; source: string }>;
+  _attributionCaptures: Array<{ normalized_email: string }>;
+  _creatorAttribution: Array<{ normalized_email: string }>;
   _queries: string[];
 } {
   const envelopes: Array<{ id: string; sender_email: string }> = [];
@@ -35,6 +37,8 @@ function createInMemoryPool(): DbPool & {
   const authSessions: Array<{ email: string }> = [];
   const userCredits: Array<{ email: string }> = [];
   const creditLedger: Array<{ email: string; source: string }> = [];
+  const attributionCaptures: Array<{ normalized_email: string }> = [];
+  const creatorAttribution: Array<{ normalized_email: string }> = [];
   const queries: string[] = [];
 
   function del(arr: Array<Record<string, unknown>>, col: string, value: string) {
@@ -51,6 +55,8 @@ function createInMemoryPool(): DbPool & {
     _authSessions: authSessions,
     _userCredits: userCredits,
     _creditLedger: creditLedger,
+    _attributionCaptures: attributionCaptures,
+    _creatorAttribution: creatorAttribution,
     _queries: queries,
     async query(text: string, values?: unknown[]) {
       const t = text.trim();
@@ -71,6 +77,9 @@ function createInMemoryPool(): DbPool & {
       if (/DELETE FROM auth_sessions WHERE email = \$1/.test(t)) return del(authSessions as never, 'email', id);
       if (/DELETE FROM user_credits WHERE email = \$1/.test(t)) return del(userCredits as never, 'email', id);
       if (/DELETE FROM credit_ledger WHERE email = \$1/.test(t)) return del(creditLedger as never, 'email', id);
+      // F-37: attribution rows key by the NORMALIZED inbox (normalizeInbox form).
+      if (/DELETE FROM attribution_captures WHERE normalized_email = \$1/.test(t)) return del(attributionCaptures as never, 'normalized_email', id);
+      if (/DELETE FROM creator_attribution WHERE normalized_email = \$1/.test(t)) return del(creatorAttribution as never, 'normalized_email', id);
       throw new Error(`Unexpected query: ${t}`);
     },
     async end() {},
@@ -106,6 +115,25 @@ describe('resetTestAccount — DAO purge across the four tables (F-28 / AC-116)'
     assert.equal(pool._envelopes.length, 1); // other@x.com envelope survives
     assert.equal(pool._creditLedger.length, 1); // other@x.com ledger survives
     assert.equal(pool._userCredits.length, 0);
+  });
+
+  it('F-37: purges the identity\'s attribution rows keyed by the NORMALIZED inbox (gmail dots/+tags collapse)', async () => {
+    const pool = createInMemoryPool();
+    pool._attributionCaptures.push(
+      { normalized_email: 'redteam@gmail.com' },
+      { normalized_email: 'other@x.com' },
+    );
+    pool._creatorAttribution.push(
+      { normalized_email: 'redteam@gmail.com' },
+      { normalized_email: 'other@x.com' },
+    );
+    // The stored key is the normalizeInbox form — a dotted/+tagged sign-in variant
+    // must still purge it (trim+lowercase alone would MISS these rows).
+    const r = await resetTestAccount(pool, ' Red.Team+probe@GMail.com ');
+    assert.equal(r.attributionCapturesDeleted, 1);
+    assert.equal(r.creatorAttributionDeleted, 1);
+    assert.equal(pool._attributionCaptures.length, 1, "other identity's capture survives");
+    assert.equal(pool._creatorAttribution.length, 1, "other identity's stamp survives");
   });
 
   it('returns zero counts for an identity with no rows (idempotent)', async () => {
