@@ -66,7 +66,9 @@ export function AppHeader() {
       <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
         {/* Logo (left) */}
         <Link to="/" className="flex items-center gap-2 text-base font-semibold text-gray-900 shrink-0 whitespace-nowrap min-h-[44px]">
-          <img src="/favicon.png" alt="" width={32} height={32} className="rounded" />
+          {/* Vector mark: crisp at any zoom/DPR, so the header can never go soft
+              the way a fixed-size raster did. Operators replace /logo.svg. */}
+          <img src="/logo.svg" alt="" width={32} height={32} className="rounded" />
           <span>{brandName}</span>
         </Link>
 
