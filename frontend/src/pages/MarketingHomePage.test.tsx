@@ -154,6 +154,25 @@ describe('MarketingHomePage — operator config injected (kysigned.com restored,
     expect(row!.children[1]).toBe(a);
   });
 
+  it('reports a hero video click to GA4 as a named event', () => {
+    // GA4's enhanced measurement sees this only as a generic outbound `click`,
+    // shared with every other off-site link, so a named event is what makes the
+    // explainer separately answerable.
+    vi.stubEnv('VITE_OPERATOR_CONFIG', KYSIGNED_CONFIG);
+    const gtag = vi.fn();
+    vi.stubGlobal('gtag', gtag);
+    const { container } = render(<MemoryRouter><MarketingHomePage /></MemoryRouter>);
+    container.querySelector<HTMLAnchorElement>('a.btn-video')!.click();
+    expect(gtag).toHaveBeenCalledWith('event', 'explainer_video_open', { location: 'home_hero' });
+  });
+
+  it('a hero video click does not throw when gtag is absent (consent denied / ad-blocked)', () => {
+    vi.stubEnv('VITE_OPERATOR_CONFIG', KYSIGNED_CONFIG);
+    vi.stubGlobal('gtag', undefined);
+    const { container } = render(<MemoryRouter><MarketingHomePage /></MemoryRouter>);
+    expect(() => container.querySelector<HTMLAnchorElement>('a.btn-video')!.click()).not.toThrow();
+  });
+
   it('keeps the YouTube mark as the official unmodified asset (no recolour, no redraw)', () => {
     vi.stubEnv('VITE_OPERATOR_CONFIG', KYSIGNED_CONFIG);
     const { container } = render(<MemoryRouter><MarketingHomePage /></MemoryRouter>);

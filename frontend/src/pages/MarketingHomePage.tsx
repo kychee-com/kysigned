@@ -161,6 +161,17 @@ export function MarketingHomePage() {
                 target="_blank"
                 rel="noreferrer"
                 aria-label={`${videoLabel}: watch the explainer on YouTube`}
+                // GA4 sees this only as a generic outbound click shared with every
+                // other off-site link; the named event makes the explainer separately
+                // answerable. Optional-called so consent-denied / ad-blocked visitors
+                // never throw on click.
+                onClick={() =>
+                  (window as unknown as { gtag?: (...args: unknown[]) => void }).gtag?.(
+                    'event',
+                    'explainer_video_open',
+                    { location: 'home_hero' },
+                  )
+                }
               >
                 <YouTubeMark />
                 <span>{videoLabel}</span>
