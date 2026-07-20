@@ -19,6 +19,19 @@ import type { DkimSignatureDescriptor } from './dkimPolicy.js';
 /** A DNS resolver compatible with `dns.promises.resolve(name, rrtype)`. */
 export type DkimResolver = (name: string, rrtype: string) => Promise<unknown>;
 
+export interface VerifyDkimOptions {
+  /** Optional DNS resolver (tests / frozen-corpus replay); omit for live DNS in prod. */
+  resolver?: DkimResolver;
+  /**
+   * Verification instant for replaying archived messages: signature time constraints
+   * (the `x=` expiry tag) are checked against this moment instead of the wall clock.
+   * Gmail stamps x= at t+7d and iCloud at t+30d, so a frozen forward stops verifying
+   * "live" once x= lapses even though the crypto is intact. Production callers omit
+   * this → live now, so inbound freshness (reject expired replays) stays enforced.
+   */
+  verifyAt?: Date;
+}
+
 export interface DkimVerifyOutcome {
   /** Bare From-header domain (lowercased) — the alignment reference for the policy. */
   fromDomain: string;
@@ -72,12 +85,16 @@ export function hasBodyLengthTag(rawMime: string): boolean {
  *
  * @param rawMime the raw forward.
  * @param opts.resolver optional DNS resolver (tests); omit for live DNS in prod.
+ * @param opts.verifyAt optional pinned verification clock (frozen-corpus replay).
  */
 export async function verifyDkim(
   rawMime: string,
-  opts: { resolver?: DkimResolver } = {},
+  opts: VerifyDkimOptions = {},
 ): Promise<DkimVerifyOutcome> {
-  const result = await dkimVerify(rawMime, opts.resolver ? { resolver: opts.resolver } : undefined);
+  const mailauthOpts: { resolver?: DkimResolver; curTime?: Date } = {};
+  if (opts.resolver) mailauthOpts.resolver = opts.resolver;
+  if (opts.verifyAt) mailauthOpts.curTime = opts.verifyAt;
+  const result = await dkimVerify(rawMime, opts.resolver || opts.verifyAt ? mailauthOpts : undefined);
 
   const signatures: DkimSignatureDescriptor[] = (result.results ?? []).map(entry => ({
     signingDomain: (entry.signingDomain ?? '').toLowerCase(),

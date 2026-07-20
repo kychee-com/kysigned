@@ -46,10 +46,11 @@ function rawMessage(from = 'Alice <alice@example.com>'): string {
   ].join('\r\n');
 }
 
-async function sign(raw: string, signingDomain: string): Promise<string> {
+async function sign(raw: string, signingDomain: string, expires?: Date): Promise<string> {
   const res = await dkimSign(raw, {
     canonicalization: 'relaxed/relaxed',
     signTime: new Date('2026-06-13T10:00:00Z'),
+    ...(expires ? { expires } : {}),
     signatureData: [{ signingDomain, selector: 'test', privateKey, algorithm: 'rsa-sha256' }],
   });
   return res.signatures + raw;
@@ -131,5 +132,25 @@ describe('verifyDkim — classical DKIM verification (F-6.2)', () => {
   it('hasBodyLengthTag is false for a clean signed message', async () => {
     const signed = await sign(rawMessage(), 'example.com');
     assert.equal(hasBodyLengthTag(signed), false);
+  });
+
+  it('an x=-expired signature is neutral live but passes when verifyAt pins the clock in-window', async () => {
+    // Gmail-style short expiry: signed 2026-06-13, x= a week later — long lapsed at test time.
+    const signed = await sign(rawMessage(), 'example.com', new Date('2026-06-20T10:00:00Z'));
+    const resolver = resolverFor(['test._domainkey.example.com']);
+
+    // Wall clock (production mode): the crypto verifies but mailauth downgrades the
+    // lapsed signature to neutral → policy missing_key. Freshness stays enforced live.
+    const live = await verifyDkim(signed, { resolver });
+    assert.equal(live.signatures[0].result, 'neutral');
+    const liveVerdict = evaluateDkimPolicy(live);
+    assert.equal(liveVerdict.ok, false);
+    if (!liveVerdict.ok) assert.equal(liveVerdict.reason, 'missing_key');
+
+    // Replay mode: pin the verification clock inside the t=..x= window (how the frozen
+    // client-email corpus replays archived forwards) → the same bytes verify.
+    const pinned = await verifyDkim(signed, { resolver, verifyAt: new Date('2026-06-14T00:00:00Z') });
+    assert.equal(pinned.signatures[0].result, 'pass');
+    assert.equal(evaluateDkimPolicy(pinned).ok, true);
   });
 });
