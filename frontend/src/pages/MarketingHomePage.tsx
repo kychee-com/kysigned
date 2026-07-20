@@ -43,6 +43,11 @@ const MARKETING_CSS = `
 .marketing-home-page .btn-primary:hover { background: #2a2a40; }
 .marketing-home-page .btn-secondary { display: inline-block; border: 2px solid #1a1a2e; color: #1a1a2e; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 15px; }
 .marketing-home-page .btn-secondary:hover { background: #f5f5f5; }
+.marketing-home-page .btn-video { display: inline-flex; align-items: center; gap: 9px; padding: 14px 16px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 15px; color: #1a1a2e; }
+.marketing-home-page .btn-video:hover { background: #f5f5f5; }
+/* Height-only sizing keeps the YouTube mark's official aspect ratio (160:110);
+   its width follows from the viewBox, so the trademark is never squashed. */
+.marketing-home-page .btn-video svg { display: block; height: 20px; width: auto; flex-shrink: 0; }
 
 .marketing-home-page .comparison { padding: 60px 0; background: #f9f9f9; }
 .marketing-home-page .comparison h2 { text-align: center; font-size: 28px; margin-bottom: 32px; }
@@ -101,9 +106,29 @@ const MARKETING_CSS = `
 }
 `
 
+/**
+ * The official YouTube play-button mark, full colour. Geometry and colours are
+ * Google's own, taken verbatim from its lockup SVG and cropped to the icon —
+ * see kysigned-private/brand/third-party/youtube/PROVENANCE.md, which also
+ * records the usage rules (unmodified, only ever links to YouTube).
+ * KEEP IN SYNC with YOUTUBE_ICON_SVG in kysigned-private/scripts/build-home-page.ts.
+ */
+function YouTubeMark() {
+  return (
+    <svg viewBox="0 0 160 110" aria-hidden="true">
+      <path
+        fill="#FF0000"
+        d="M154.3,17.5c-1.8-6.7-7.1-12-13.8-13.8c-12.1-3.3-60.8-3.3-60.8-3.3S31,0.5,18.9,3.8c-6.7,1.8-12,7.1-13.8,13.8C1.9,29.7,1.9,55,1.9,55s0,25.3,3.3,37.5c1.8,6.7,7.1,12,13.8,13.8c12.1,3.3,60.8,3.3,60.8,3.3s48.7,0,60.8-3.3c6.7-1.8,12-7.1,13.8-13.8c3.3-12.1,3.3-37.5,3.3-37.5S157.6,29.7,154.3,17.5z"
+      />
+      <polygon fill="#FFFFFF" points="64.2,78.4 104.6,55 64.2,31.6" />
+    </svg>
+  )
+}
+
 export function MarketingHomePage() {
   const cfg = getOperatorConfig()
   const { hero, comparison, audiences } = cfg.home
+  const videoLabel = hero.videoLabel ?? 'How it works'
   return (
     <div className="marketing-home-page">
       <style>{MARKETING_CSS}</style>
@@ -126,6 +151,21 @@ export function MarketingHomePage() {
             <Link to="/dashboard/create" className="btn-primary">
               Create an envelope
             </Link>
+            {/* Explainer video, beside the primary CTA. Operator-specific (it's
+                the operator's own video), so a fork renders nothing here. The
+                visible label doesn't say "video", so the accessible name does. */}
+            {hero.videoUrl ? (
+              <a
+                className="btn-video"
+                href={hero.videoUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={`${videoLabel}: watch the explainer on YouTube`}
+              >
+                <YouTubeMark />
+                <span>{videoLabel}</span>
+              </a>
+            ) : null}
           </div>
           {/* Operator note under the CTA — kysigned.com's trial offer
               (F-14.8 / AC-98) or, on a fresh fork, a "replace this" hint. */}

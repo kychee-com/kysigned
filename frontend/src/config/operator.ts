@@ -28,6 +28,15 @@ export interface OperatorHero {
   bodyHtml: string;
   /** Optional small note under the CTA (kysigned: trial offer; fork: "replace this"). */
   note?: string;
+  /**
+   * Optional explainer-video link shown beside the hero CTA, rendered with the
+   * official YouTube mark. Operator-specific (it points at the operator's OWN
+   * video), so a fork that sets nothing renders no video link and ships no
+   * YouTube mark at all.
+   */
+  videoUrl?: string;
+  /** Visible label for `videoUrl`. Default: "How it works". */
+  videoLabel?: string;
 }
 
 /** One row of the "why switch?" comparison table (operator-specific → optional). */

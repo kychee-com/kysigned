@@ -30,6 +30,7 @@ const KYSIGNED_CONFIG = JSON.stringify({
       subtitle: 'Simple, secure signing, powered by your email.',
       bodyHtml: 'Other tools charge <strong>way too much</strong>. By signing with <strong>DKIM</strong> kysigned is cheaper.',
       note: 'Try 4 envelopes free, no credit card.',
+      videoUrl: 'https://youtu.be/Ek1kZM5lhOU',
     },
     comparison: {
       heading: 'Why switch?',
@@ -89,6 +90,13 @@ describe('MarketingHomePage — generic public default (no operator config, AC-1
     expect(t).toMatch(/Your Company/); // generic footer company (default)
   });
 
+  it('ships NO video link — the explainer is the operator’s, not the template’s', () => {
+    const { container } = render(<MemoryRouter><MarketingHomePage /></MemoryRouter>);
+    expect(container.querySelector('a.btn-video')).toBeNull();
+    expect(container.innerHTML).not.toMatch(/youtu\.be|youtube\.com/i);
+    expect(container.innerHTML).not.toMatch(/#FF0000/i); // no YouTube mark for a fork
+  });
+
   it('keeps the generic, product-level trust story (forward, signing record, DKIM)', () => {
     const t = text();
     expect(t).toMatch(/signing record/i);
@@ -124,6 +132,39 @@ describe('MarketingHomePage — operator config injected (kysigned.com restored,
     expect(a!.getAttribute('rel')).toBe('noreferrer');
     expect(a!.querySelector('svg')).toBeTruthy(); // the GitHub mark
     expect((a!.textContent ?? '').trim()).toBe(''); // icon-only — no visible label text
+  });
+
+  it('renders the hero video link beside the Create CTA when hero.videoUrl is set', () => {
+    vi.stubEnv('VITE_OPERATOR_CONFIG', KYSIGNED_CONFIG);
+    const { container } = render(<MemoryRouter><MarketingHomePage /></MemoryRouter>);
+    const a = container.querySelector('a.btn-video');
+    expect(a).toBeTruthy();
+    expect(a!.getAttribute('href')).toBe('https://youtu.be/Ek1kZM5lhOU');
+    expect(a!.getAttribute('target')).toBe('_blank');
+    expect(a!.getAttribute('rel')).toBe('noreferrer');
+    // The visible label alone doesn't say "video", so the accessible name does.
+    expect(a!.getAttribute('aria-label')).toBe('How it works: watch the explainer on YouTube');
+    expect(a!.textContent).toBe('How it works');
+    expect(a!.querySelector('svg')).toBeTruthy(); // the official YouTube mark
+    // It lives in the hero CTA row, immediately after the primary button, so the
+    // two stay together at every width.
+    const row = container.querySelector('.hero-ctas');
+    expect(row).toBeTruthy();
+    expect(row!.children[0].classList.contains('btn-primary')).toBe(true);
+    expect(row!.children[1]).toBe(a);
+  });
+
+  it('keeps the YouTube mark as the official unmodified asset (no recolour, no redraw)', () => {
+    vi.stubEnv('VITE_OPERATOR_CONFIG', KYSIGNED_CONFIG);
+    const { container } = render(<MemoryRouter><MarketingHomePage /></MemoryRouter>);
+    const svg = container.querySelector('a.btn-video svg')!;
+    // Geometry + colours come from Google's own lockup SVG; YouTube's brand
+    // guidelines forbid recolouring or redrawing the mark.
+    expect(svg.getAttribute('viewBox')).toBe('0 0 160 110');
+    expect(svg.querySelector('path')!.getAttribute('fill')).toBe('#FF0000');
+    expect(svg.querySelector('path')!.getAttribute('d')).toMatch(/^M154\.3,17\.5c-1\.8-6\.7-7\.1-12-13\.8-13\.8/);
+    expect(svg.querySelector('polygon')!.getAttribute('fill')).toBe('#FFFFFF');
+    expect(svg.querySelector('polygon')!.getAttribute('points')).toBe('64.2,78.4 104.6,55 64.2,31.6');
   });
 
   it('renders the quiet explainer sub-link under the CTA (ctaSubLabel/ctaSubHref)', () => {
