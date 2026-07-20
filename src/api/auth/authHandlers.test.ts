@@ -52,6 +52,29 @@ describe('handleAuthMagicLink', () => {
     assert.equal(r.status, 200);
     assert.deepEqual(r.body, { ok: true });
   });
+
+  // GH#20 (P0): the emailed link must land on an SPA-served route. The operator
+  // deployment aliases `/` to a static home.html that cannot exchange ?token=,
+  // so a bare-appBaseUrl redirect_url silently kills every email sign-in.
+  // `/dashboard` is SPA-served in BOTH deployments (operator spa_fallback and
+  // fork), where RequireAuth → SignInScreen auto-exchanges the token.
+  it('sends run402 a redirect_url on /dashboard, never the bare base URL (GH#20)', async () => {
+    const seen: string[] = [];
+    const f: FImpl = async (url, init) => {
+      if (url.includes('/auth/v1/magic-link')) {
+        seen.push((JSON.parse(init?.body ?? '{}') as { redirect_url?: string }).redirect_url ?? '');
+        return { status: 200, ok: true, json: async () => ({}) };
+      }
+      return { status: 404, ok: false, json: async () => ({}) };
+    };
+    await handleAuthMagicLink(ctx(fakePool().pool, f), { email: 'a@x.com' });
+    assert.deepEqual(seen, ['https://kysigned.com/dashboard']);
+
+    // A trailing-slash base normalizes to the same landing.
+    const c2: AuthHandlerCtx = { ...ctx(fakePool().pool, f), appBaseUrl: 'https://kysigned.com/' };
+    await handleAuthMagicLink(c2, { email: 'a@x.com' });
+    assert.equal(seen[1], 'https://kysigned.com/dashboard');
+  });
 });
 
 describe('handleAuthTokenExchange', () => {

@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from './AuthContext';
+import { RequireAuth } from './RequireAuth';
 import { SignInScreen } from './SignInScreen';
 
 describe('SignInScreen — passkey-first behavior', () => {
@@ -162,6 +163,47 @@ describe('SignInScreen — passkey-first behavior', () => {
     expect(screen.queryByTestId('confirm-create-passkey')).not.toBeInTheDocument();
     expect(screen.getByTestId('confirm-dashboard')).toBeInTheDocument(); // robust dashboard fallback
     expect(screen.getByTestId('confirm-countdown')).toHaveTextContent(/close in 5s/i);
+
+    window.history.replaceState({}, '', '/');
+  });
+
+  // GH#20 (P0): production magic-link emails land on /dashboard?token=… (the
+  // operator's `/` is a static page that cannot exchange a token). On that
+  // route SignInScreen mounts UNDER RequireAuth, so this exercises the real
+  // wire path: anonymous hydrate → SignInScreen token effect exchanges →
+  // session established → RequireAuth swaps to the protected children.
+  it('GH#20: exchanges ?token= when landing on /dashboard under RequireAuth and reaches the dashboard', async () => {
+    (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential = undefined;
+    window.history.replaceState({}, '', '/dashboard?token=magic-dash');
+    let sessionEstablished = false;
+    const fetchSpy = vi.fn((url: string) => {
+      if (String(url).endsWith('/v1/auth/token')) {
+        sessionEstablished = true;
+        return Promise.resolve(new Response(JSON.stringify({ ok: true, email: 'alice@example.com' }), { status: 200 }));
+      }
+      if (String(url).endsWith('/v1/auth/user')) {
+        return sessionEstablished
+          ? Promise.resolve(new Response(JSON.stringify({ email: 'alice@example.com' }), { status: 200 }))
+          : Promise.resolve(new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401 }));
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    render(
+      <MemoryRouter initialEntries={['/dashboard?token=magic-dash']}>
+        <AuthProvider>
+          <RequireAuth>
+            <div data-testid="dashboard-content">dash</div>
+          </RequireAuth>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('dashboard-content')).toBeInTheDocument());
+    expect(fetchSpy.mock.calls.some((c) => String(c[0]).endsWith('/v1/auth/token'))).toBe(true);
+    // The token is stripped from the URL bar so a refresh/copy-paste can't re-use it.
+    expect(window.location.search).not.toContain('token=');
 
     window.history.replaceState({}, '', '/');
   });

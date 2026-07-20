@@ -18,8 +18,10 @@ import { captureAttribution } from './lib/attribution'
 
 // v0.22.0 / 2F.AUTH7: `/` doubles as marketing landing AND sign-in entry.
 // AppHeader's "Sign in" routes through `/?intent=signin`; magic-link emails
-// land on `/?token=...`. Either query param flips this route to the unified
-// SignInScreen so visitors aren't stuck staring at the splash.
+// land on `/dashboard?token=...` (GH#20 — an SPA-served route in EVERY
+// deployment; an operator may alias `/` to a static page that can't exchange
+// a token). Either query param still flips this route to the unified
+// SignInScreen — the legacy landing for older emails and external links.
 function HomeRoute() {
   const location = useLocation()
   const params = new URLSearchParams(location.search)
@@ -51,7 +53,9 @@ export function App() {
         <Routes>
           {/* v0.22.1 / DD-73 + AUTH7: `/` is the public marketing landing
               under the single-project same-origin model. `?intent=signin`
-              and `?token=...` flip the route to SignInScreen via HomeRoute. */}
+              and `?token=...` flip the route to SignInScreen via HomeRoute
+              (legacy landings; new magic-link emails land on /dashboard —
+              GH#20). */}
           <Route path="/" element={<HomeRoute />} />
           <Route path="/review/:envelopeId/:token" element={<SigningPage />} />
           <Route path="/sign/:envelopeId/:token" element={<SigningPage />} />

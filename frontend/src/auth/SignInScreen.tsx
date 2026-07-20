@@ -391,7 +391,7 @@ export function SignInScreen({ title = 'Sign in' }: SignInScreenProps) {
                 type="text"
                 value={tokenInput}
                 onChange={(e) => setTokenInput(e.target.value)}
-                placeholder={`${typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.example'}/?token=...`}
+                placeholder={`${typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.example'}/dashboard?token=...`}
                 className="w-full min-h-[44px] border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
                 onKeyDown={(e) => e.key === 'Enter' && exchangePastedToken()}
               />

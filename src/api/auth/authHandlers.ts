@@ -30,7 +30,11 @@ import type { EmitAppEvent } from '../../integrations/appEvents.js';
 export interface AuthHandlerCtx {
   pool: DbPool;
   session: SessionConfig;
-  /** Where the magic link returns the user (the SPA reads `?token=` here). */
+  /**
+   * The app's public origin. The magic link returns the user on
+   * `<appBaseUrl>/dashboard` (see `magicLinkLandingUrl`), where the SPA's
+   * SignInScreen reads `?token=` and completes the exchange.
+   */
   appBaseUrl: string;
   /**
    * F-13.4 — the new-account trial-credit grant amount, in USD micros. The
@@ -61,6 +65,19 @@ export interface AuthResult {
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
+/**
+ * GH#20 (P0) — the emailed link must land on an SPA-SERVED route. run402
+ * appends `?token=` to this URL verbatim; the operator deployment aliases `/`
+ * to a static home.html that cannot exchange the token, so pointing at the
+ * bare base URL silently killed every email sign-in. `/dashboard` is served
+ * by the SPA in both deployments (operator spa_fallback and fork), where
+ * RequireAuth renders SignInScreen and its `?token=` effect completes the
+ * exchange. URL resolution (not concat) so a trailing-slash base normalizes.
+ */
+function magicLinkLandingUrl(appBaseUrl: string): string {
+  return new URL('/dashboard', appBaseUrl).toString();
+}
+
 export async function handleAuthMagicLink(
   ctx: AuthHandlerCtx,
   body: { email?: unknown; attribution?: unknown },
@@ -71,7 +88,7 @@ export async function handleAuthMagicLink(
   }
   await requestMagicLink({
     email,
-    redirectUrl: ctx.appBaseUrl,
+    redirectUrl: magicLinkLandingUrl(ctx.appBaseUrl),
     projectAnonKey: ctx.session.projectAnonKey,
     run402BaseUrl: ctx.session.run402BaseUrl,
     fetchImpl: ctx.session.fetchImpl,
