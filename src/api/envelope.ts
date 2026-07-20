@@ -23,6 +23,7 @@ import {
   setEnvelopeAutoClose,
 } from '../db/envelopes.js';
 import type { EmitAppEvent } from '../integrations/appEvents.js';
+import type { InternalSubjectGate } from '../integrations/internalSubject.js';
 import { computePdfHash, decodePdfBase64, fetchPdfFromUrl, PdfUrlError } from '../pdf/hash.js';
 import { isPdfParseable } from '../pdf/validate.js';
 import { validatePublicHttpsUrl } from '../net/urlGuard.js';
@@ -105,6 +106,8 @@ export interface ApiContext {
   createRun?: CreateRun;
   /** F-36 — the DD-43 app-events seam (never throws). Prod (config.ts) wires it. */
   emitAppEvent?: EmitAppEvent;
+  /** F-36.6 — the DD-49 internal-subject gate (suppresses internal emits). */
+  internalGate?: InternalSubjectGate;
   /**
    * F-9.9 / AC-124 — the bounded delivery-confirmation window for the undeliverable
    * backstop, as a run `delay` string (operator-config `KYSIGNED_DELIVERY_BACKSTOP_HOURS`,
@@ -1110,6 +1113,9 @@ export async function handleUndeliverableSigningRequest(
     operatorDomain?: string;
     /** F-36 — the DD-43 app-events seam (never throws). Prod (config.ts) wires it. */
     emitAppEvent?: EmitAppEvent;
+    /** F-36.6 — the DD-49 internal-subject gate: an internal envelope's bounce is
+     *  marked + notified normally but never emits (logged suppression). */
+    internalGate?: InternalSubjectGate;
   },
   envelopeId: string,
   signerEmail: string,
@@ -1137,10 +1143,16 @@ export async function handleUndeliverableSigningRequest(
       (s) => s.email.toLowerCase() === signerEmail.toLowerCase(),
     );
     if (signer) {
-      await ctx.emitAppEvent('envelope_undeliverable', [envelopeId, signer.id, new Date().toISOString().slice(0, 10)], {
-        envelope_id: envelopeId,
-        signer_id: signer.id,
-      });
+      const subjectIds = [envelopeId, signer.id, new Date().toISOString().slice(0, 10)];
+      // F-36.6 — an internal envelope's bounce is handled normally but never emits.
+      if (ctx.internalGate && (await ctx.internalGate.envelope(envelopeId, envelope ?? undefined))) {
+        ctx.internalGate.logSuppressed('envelope_undeliverable', subjectIds);
+      } else {
+        await ctx.emitAppEvent('envelope_undeliverable', subjectIds, {
+          envelope_id: envelopeId,
+          signer_id: signer.id,
+        });
+      }
     }
   }
   return { status: 200, body: { marked: true } };

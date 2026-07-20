@@ -190,6 +190,8 @@ Every deployment emits its business facts as run402 app events: `signature_compl
 
 Payloads carry opaque ids and counts only. No signer emails or names, no document names or content ever leave your deployment. Event emission is best-effort by design: if the events surface is unavailable, the signing flow is never affected.
 
+The feed carries external usage only: transitions whose subject matches your configured internal identities (`KYSIGNED_INTERNAL_IDENTITIES`, the same rules as the console's exclude-internal toggle) or an `internal_test` envelope are processed normally but not emitted, so your own testing never pages you. With no rules configured, only `internal_test` envelopes are suppressed. The two sweep-anomaly events are system health and always emit.
+
 ## License
 
 [Apache-2.0](LICENSE), the whole repository, with no per-file exceptions. Every dependency is permissive (MIT/Apache-2.0); there is no GPL or other copyleft anywhere in the tree, so forking and commercial use are unrestricted. See [LICENSES.md](LICENSES.md) for the dependency inventory and [LEGAL.md](LEGAL.md) for signature-validity disclaimers and jurisdictional limitations.

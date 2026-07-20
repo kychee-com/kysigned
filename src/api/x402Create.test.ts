@@ -17,6 +17,7 @@ import type { RoutedHttpPaymentContextV1 } from '@run402/functions';
 import { handleX402CreateEnvelope, defaultX402Seams, type X402CreateSeams } from './x402Create.js';
 import type { DbPool } from '../db/pool.js';
 import { emitAppEvent as seamEmitAppEvent } from '../integrations/appEvents.js';
+import { createInternalSubjectGate } from '../integrations/internalSubject.js';
 
 const PAYMENT: RoutedHttpPaymentContextV1 = {
   scheme: 'x402',
@@ -329,6 +330,29 @@ describe('defaultX402Seams — real creditUser + withCreateIdempotency compositi
     assert.equal(ledger.length, 1, 'crediting is never gated by an emit failure');
     assert.equal(logs.length, 1);
     assert.match(logs[0], /credit_purchase/);
+  });
+
+  it('F-36.6/AC-211: an internal-identity x402 purchase credits normally but emits NOTHING + one suppression line', async () => {
+    const { pool, ledger } = makeSeamPool();
+    const events: unknown[] = [];
+    const emitAppEvent = (async (type: string) => void events.push(type)) as never;
+    const lines: string[] = [];
+    const gate = createInternalSubjectGate({
+      internalIdentities: ['redteam-*@kysigned.com'],
+      log: (m: string) => void lines.push(m),
+    });
+    const seams = defaultX402Seams(
+      pool,
+      CONFIG,
+      () => ({}) as never,
+      async () => ({ status: 201, body: { id: 'e' } }),
+      emitAppEvent,
+      gate,
+    );
+    await seams.creditPayment('redteam-pilot@kysigned.com', PAYMENT);
+    assert.equal(ledger.length, 1, 'the credit itself still lands (suppression changes emission ONLY)');
+    assert.equal(events.length, 0, 'internal purchaser emits nothing');
+    assert.deepEqual(lines, ['app-event credit_purchase [pay_abc123] suppressed: internal identity']);
   });
 
   it('runCreate replays the stored 201 for the same key + payload (create runs ONCE) and 409s a different payload', async () => {

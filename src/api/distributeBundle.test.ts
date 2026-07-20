@@ -19,6 +19,7 @@ import {
 import type { DbPool } from '../db/pool.js';
 import type { EmailMessage, EmailProvider } from '../email/types.js';
 import { emitAppEvent as seamEmitAppEvent } from '../integrations/appEvents.js';
+import { createInternalSubjectGate } from '../integrations/internalSubject.js';
 
 const ENV = 'e8a1f0c2-0000-4000-8000-000000000001';
 const BUNDLE = new Uint8Array(Buffer.from('%PDF-1.7\nbundle\n%%EOF\n'));
@@ -335,5 +336,40 @@ describe('distributeBundle — F-36 app events (60.3)', () => {
     assert.equal(logs.length, 1);
     assert.match(logs[0], /envelope_completed/);
     assert.match(logs[0], /QUOTA_EXCEEDED/);
+  });
+
+  // ── F-36.6 / AC-211 — internal-envelope suppression (66.3) ─────────────────
+  it('F-36.6/AC-211: a rule-matched-creator envelope distributes normally but emits NOTHING + one suppression line', async () => {
+    const events: unknown[] = [];
+    const emitAppEvent = (async (type: string) => void events.push(type)) as never;
+    const lines: string[] = [];
+    const gate = createInternalSubjectGate({
+      internalIdentities: ['redteam-*@kysigned.com'],
+      log: (m: string) => void lines.push(m),
+    });
+    const { pool } = makePool({
+      senderEmail: 'redteam-pilot@kysigned.com',
+      signers: [{ id: 's1', email: 'alice@x.com', name: 'Alice' }],
+    });
+    const r = await distributeEnvelopeBundle(pool, ENV, { ...deps({ emitAppEvent }), internalGate: gate });
+    assert.equal(r.action, 'distributed', 'suppression changes emission ONLY — distribution is untouched');
+    assert.equal(events.length, 0, 'internal envelope emits nothing');
+    assert.deepEqual(lines, [`app-event envelope_completed [${ENV}] suppressed: internal identity`]);
+  });
+
+  it('F-36.6/AC-212: an internal_test envelope is suppressed even under an EMPTY rules list (fork default)', async () => {
+    const events: unknown[] = [];
+    const emitAppEvent = (async (type: string) => void events.push(type)) as never;
+    const lines: string[] = [];
+    const gate = createInternalSubjectGate({ internalIdentities: [], log: (m: string) => void lines.push(m) });
+    const { pool, envelopes } = makePool({
+      senderEmail: 'carol@acme.com',
+      signers: [{ id: 's1', email: 'alice@x.com', name: 'Alice' }],
+    });
+    envelopes[0].internal_test = true;
+    const r = await distributeEnvelopeBundle(pool, ENV, { ...deps({ emitAppEvent }), internalGate: gate });
+    assert.equal(r.action, 'distributed');
+    assert.equal(events.length, 0, 'internal_test suppression needs no configured rules');
+    assert.equal(lines.length, 1);
   });
 });

@@ -26,6 +26,7 @@ import {
 import { enqueueAdsConversion } from '../adsConversions.js';
 import type { CreateRun } from '../../functions/runs.js';
 import type { EmitAppEvent } from '../../integrations/appEvents.js';
+import type { InternalSubjectGate } from '../../integrations/internalSubject.js';
 
 export interface AuthHandlerCtx {
   pool: DbPool;
@@ -44,6 +45,12 @@ export interface AuthHandlerCtx {
   signupGrantUsdMicros?: bigint;
   /** F-36.4 — the DD-43 app-events seam (never throws). Prod (config.ts) wires it. */
   emitAppEvent?: EmitAppEvent;
+  /**
+   * F-36.6 — the DD-49 internal-subject gate: an internal-identity claim still
+   * grants, but its `creator_signed_up` is suppressed (logged, never emitted).
+   * Absent (fork default before config wiring): nothing is suppressed.
+   */
+  internalGate?: InternalSubjectGate;
   /**
    * F-37 — server gate for the attribution rail (`KYSIGNED_CAPTURE_GCLID`).
    * Unset/false (the forker default): the magic-link rider is ignored and no
@@ -152,10 +159,15 @@ export async function handleAuthTokenExchange(ctx: AuthHandlerCtx, body: { token
     // normalized-inbox UNIQUE is the exactly-once anchor). Keyed by the grant
     // ledger row id — no address in the key or payload, ever.
     if (grant.granted && grant.ledgerId) {
-      await ctx.emitAppEvent?.('creator_signed_up', [grant.ledgerId], {
-        grant_usd_micros: Number(ctx.signupGrantUsdMicros ?? 0n),
-        source: 'magic_link',
-      });
+      // F-36.6 — an internal-identity claim grants normally but never emits.
+      if (ctx.internalGate?.account(email)) {
+        ctx.internalGate.logSuppressed('creator_signed_up', [grant.ledgerId]);
+      } else {
+        await ctx.emitAppEvent?.('creator_signed_up', [grant.ledgerId], {
+          grant_usd_micros: Number(ctx.signupGrantUsdMicros ?? 0n),
+          source: 'magic_link',
+        });
+      }
     }
   } catch (err) {
     console.error('signup-grant failed (sign-in unaffected):', err);

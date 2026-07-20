@@ -13,6 +13,7 @@ import {
 } from './authHandlers.js';
 import { SESSION_COOKIE } from './session.js';
 import { emitAppEvent as seamEmitAppEvent } from '../../integrations/appEvents.js';
+import { createInternalSubjectGate } from '../../integrations/internalSubject.js';
 
 function fakePool(creatorName: string | null = null) {
   const sessions = new Map<string, true>();
@@ -262,6 +263,66 @@ describe('handleAuthTokenExchange — new-account trial credit (F-13.4 / F-18.4)
     assert.equal(r.status, 200, 'sign-in is never gated by an emit failure');
     assert.equal(logs.length, 1);
     assert.match(logs[0], /creator_signed_up/);
+  });
+
+  // ── F-36.6 / AC-211 — internal-identity suppression (66.2) ──────────────────
+  // Grant-claim capture that ALSO returns the fresh ledger row, so we can assert
+  // "the grant still lands" and "nothing emits" on the same sign-in.
+  function grantCaptureWithLedgerRow() {
+    const credited: string[] = [];
+    const pool: DbPool = {
+      async query(text: string, values?: unknown[]) {
+        if (text.includes('INSERT INTO auth_sessions')) return { rows: [], rowCount: 0 } as never;
+        if (/WITH new_ledger AS[\s\S]*INSERT INTO credit_ledger/.test(text)) {
+          credited.push(String((values ?? [])[0]));
+          return { rows: [{ balance_usd_micros: '1000000', ledger_id: 'cl-77' }], rowCount: 1 } as never;
+        }
+        return { rows: [], rowCount: 0 } as never;
+      },
+      async end() {},
+    };
+    return { pool, credited };
+  }
+
+  it('F-36.6/AC-211: an internal-identity sign-in claims its grant but emits NOTHING + one suppression line', async () => {
+    const e = eventsRecorder();
+    const lines: string[] = [];
+    const { pool, credited } = grantCaptureWithLedgerRow();
+    const redteamExchange = fetchImpl({ status: 200, body: { access_token: 'at', refresh_token: 'rt', user: { email: 'redteam-pilot@kysigned.com' } } });
+    const c: AuthHandlerCtx = {
+      pool,
+      appBaseUrl: 'https://kysigned.com',
+      session: { projectAnonKey: 'anon', secure: true, fetchImpl: redteamExchange },
+      signupGrantUsdMicros: 1_000_000n,
+      emitAppEvent: e.emitAppEvent,
+      internalGate: createInternalSubjectGate({
+        internalIdentities: ['@kychee.com', 'redteam-*@kysigned.com'],
+        log: (m: string) => void lines.push(m),
+      }),
+    };
+    const r = await handleAuthTokenExchange(c, { token: 'magic' });
+    assert.equal(r.status, 200);
+    assert.equal(credited.length, 1, 'the grant itself still lands (suppression changes emission ONLY)');
+    assert.equal(e.events.length, 0, 'internal identity emits nothing');
+    assert.deepEqual(lines, ['app-event creator_signed_up [cl-77] suppressed: internal identity']);
+  });
+
+  it('F-36.6/AC-212: the SAME sign-in under an EMPTY rules list emits normally (fork default)', async () => {
+    const e = eventsRecorder();
+    const { pool } = grantCaptureWithLedgerRow();
+    const redteamExchange = fetchImpl({ status: 200, body: { access_token: 'at', refresh_token: 'rt', user: { email: 'redteam-pilot@kysigned.com' } } });
+    const c: AuthHandlerCtx = {
+      pool,
+      appBaseUrl: 'https://kysigned.com',
+      session: { projectAnonKey: 'anon', secure: true, fetchImpl: redteamExchange },
+      signupGrantUsdMicros: 1_000_000n,
+      emitAppEvent: e.emitAppEvent,
+      internalGate: createInternalSubjectGate({ internalIdentities: [], log: () => {} }),
+    };
+    const r = await handleAuthTokenExchange(c, { token: 'magic' });
+    assert.equal(r.status, 200);
+    assert.equal(e.events.length, 1, 'empty rules match nobody — the event emits');
+    assert.equal(e.events[0]!.type, 'creator_signed_up');
   });
 });
 

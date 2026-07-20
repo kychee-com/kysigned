@@ -39,6 +39,7 @@ import type { ReceiptVerdicts } from './senderAuthGate.js';
 import type { DkimResolver } from './dkimVerify.js';
 import { RetryableRunError, PermanentRunError, type CreateRun } from '../../functions/runs.js';
 import type { EmitAppEvent } from '../../integrations/appEvents.js';
+import type { InternalSubjectGate } from '../../integrations/internalSubject.js';
 
 export interface InboundEmailCtx {
   pool: DbPool;
@@ -62,6 +63,9 @@ export interface InboundEmailCtx {
   /** F-36 — emit a business fact into the project event feed (the DD-43 seam:
    *  never throws). Optional in this narrow ctx; prod (config.ts) always wires it. */
   emitAppEvent?: EmitAppEvent;
+  /** F-36.6 — the DD-49 internal-subject gate: signatures/declines on an internal
+   *  envelope are processed normally but never emit (logged suppression). */
+  internalGate?: InternalSubjectGate;
   /** Test seam: the validation core, defaulting to the real `processForward`. Prod
    *  never sets it; a unit test injects a fake outcome to drive the orchestration
    *  without the DKIM fixture rig (`processForward` is covered by its own tests). */
@@ -171,10 +175,15 @@ export async function handleReplyReceived(
       // F-36 — signature_completed, keyed (envelope, message): a run retry for the
       // same message re-enters as 'already_signed' (no emit), and a genuine re-sign
       // arrives under a NEW message id → its own event. Ids only, never addresses.
-      await ctx.emitAppEvent?.('signature_completed', [outcome.envelopeId, messageId], {
-        envelope_id: outcome.envelopeId,
-        message_id: messageId,
-      });
+      // F-36.6 — an internal envelope's signature records normally but never emits.
+      if (ctx.internalGate && (await ctx.internalGate.envelope(outcome.envelopeId))) {
+        ctx.internalGate.logSuppressed('signature_completed', [outcome.envelopeId, messageId]);
+      } else {
+        await ctx.emitAppEvent?.('signature_completed', [outcome.envelopeId, messageId], {
+          envelope_id: outcome.envelopeId,
+          message_id: messageId,
+        });
+      }
       await enqueueCompletionIfAllSigned(ctx, outcome.envelopeId); // may throw retryable → run retries
       return { messageId, action: 'signed', envelopeId: outcome.envelopeId };
     }
@@ -192,11 +201,16 @@ export async function handleReplyReceived(
       // F-36 — signer_declined with the rejection-code enum. Keyed (envelope,
       // message) so a redelivered event dedupes; a fresh rejected forward is a
       // new message id → its own event.
-      await ctx.emitAppEvent?.('signer_declined', [outcome.envelopeId, messageId], {
-        envelope_id: outcome.envelopeId,
-        message_id: messageId,
-        code: outcome.code,
-      });
+      // F-36.6 — an internal envelope's decline processes normally but never emits.
+      if (ctx.internalGate && (await ctx.internalGate.envelope(outcome.envelopeId))) {
+        ctx.internalGate.logSuppressed('signer_declined', [outcome.envelopeId, messageId]);
+      } else {
+        await ctx.emitAppEvent?.('signer_declined', [outcome.envelopeId, messageId], {
+          envelope_id: outcome.envelopeId,
+          message_id: messageId,
+          code: outcome.code,
+        });
+      }
       return { messageId, action: 'rejected', code: outcome.code };
 
     case 'dropped':

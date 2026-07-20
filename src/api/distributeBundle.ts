@@ -37,6 +37,7 @@ import type { CreateRun } from '../functions/runs.js';
 import { scheduleCompletionRetention, RETENTION_INITIAL_DELAY } from './retentionSchedule.js';
 import { scheduleCompletionWebhook } from './webhookDeliver.js';
 import type { EmitAppEvent } from '../integrations/appEvents.js';
+import type { InternalSubjectGate } from '../integrations/internalSubject.js';
 
 export interface PreparedBundle {
   bytes: Uint8Array;
@@ -61,6 +62,9 @@ export interface DistributeBundleDeps {
   /** F-36 — emit envelope_completed into the project event feed (DD-43 seam,
    *  never throws). Optional in this narrow deps; prod (config.ts) wires it. */
   emitAppEvent?: EmitAppEvent;
+  /** F-36.6 — the DD-49 internal-subject gate: an internal envelope distributes
+   *  normally but its `envelope_completed` is suppressed (logged, never emitted). */
+  internalGate?: InternalSubjectGate;
 }
 
 export type DistributeAction =
@@ -202,10 +206,16 @@ export async function distributeEnvelopeBundle(
     if (deps.createRun) await scheduleCompletionWebhook(pool, deps.createRun, envelopeId);
     // F-36 — envelope_completed, keyed by envelope alone: an envelope completes
     // once ever, and the gateway's forever-dedup absorbs re-run duplicates.
-    await deps.emitAppEvent?.('envelope_completed', [envelopeId], {
-      envelope_id: envelopeId,
-      recipients: recipients.length,
-    });
+    // F-36.6 — an internal envelope (the loaded row: internal_test / rule-matched
+    // creator) completes normally but never emits.
+    if (deps.internalGate && (await deps.internalGate.envelope(envelopeId, completed))) {
+      deps.internalGate.logSuppressed('envelope_completed', [envelopeId]);
+    } else {
+      await deps.emitAppEvent?.('envelope_completed', [envelopeId], {
+        envelope_id: envelopeId,
+        recipients: recipients.length,
+      });
+    }
     return { envelopeId, action: 'distributed', recipients: recipients.length, sent };
   }
   return { envelopeId, action: 'partial', recipients: recipients.length, sent };

@@ -100,6 +100,42 @@ test('emit payload keys stay inside the ids/counts/enums allowlist (no PII, noth
   assert.deepEqual(offenders, [], 'non-allowlisted payload key on the wire — ids/counts/enums only (F-36.2)');
 });
 
+// ── F-36.6 (66.5) — GATING INVENTORY: every identity-bearing emit site consults
+// the DD-49 internal-subject gate (one `logSuppressed` per gated emit); the two
+// subject-less sweep sites are deliberately UNGATED (system health always
+// reports). A new emit site must decide its row here explicitly.
+const GATED_SUPPRESSION_SITES: Record<string, number> = {
+  'api/signing/inboundEmail.ts': 2, // signature_completed + signer_declined
+  'api/envelope.ts': 1, // envelope_undeliverable
+  'api/distributeBundle.ts': 1, // envelope_completed
+  'api/auth/authHandlers.ts': 1, // creator_signed_up
+  'api/x402Create.ts': 1, // credit_purchase (x402 rail)
+  'api/signing/archiveReconciliation.ts': 0, // sweep_anomaly — NEVER gated
+  'api/signupGrantMonitor.ts': 0, // sweep_anomaly — NEVER gated
+  'integrations/internalSubject.ts': 1, // the gate's own logSuppressed definition
+};
+
+test('F-36.6: identity-bearing emit sites are gated (logSuppressed per emit); sweep sites are NOT', () => {
+  const found: Record<string, number> = {};
+  for (const f of files) {
+    const r = rel(f);
+    const text = readFileSync(f, 'utf8');
+    const suppressions = text.match(/logSuppressed\(/g)?.length ?? 0;
+    const isEmitSite = r in REGISTERED_EMIT_SITES && r.startsWith('api/');
+    if (isEmitSite || r === 'integrations/internalSubject.ts' || suppressions > 0) found[r] = suppressions;
+  }
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(found).sort()),
+    Object.fromEntries(Object.entries(GATED_SUPPRESSION_SITES).sort()),
+    'internal-suppression coverage drifted — every identity-bearing emit site gates, sweeps never do',
+  );
+  // The sweep sites must not even reference the gate.
+  for (const sweep of ['api/signing/archiveReconciliation.ts', 'api/signupGrantMonitor.ts']) {
+    const text = readFileSync(join(SRC, sweep), 'utf8');
+    assert.ok(!/internalGate/.test(text), `${sweep} must stay ungated (subject-less system health)`);
+  }
+});
+
 test('the runtime events surface is touched only by runtime.ts (DD-43 single choke point)', () => {
   const offenders: string[] = [];
   for (const f of files) {

@@ -122,6 +122,32 @@ describe('F-33.4 / AC-181 — forkable operator surface, fail-closed by default'
   });
 });
 
+describe('buildAppDeps — F-36.6 internal-subject gate (DD-49)', () => {
+  it('wires internalGate over the configured rules; a fresh fork (empty list) matches nobody', () => {
+    const configured = buildAppDeps(
+      { ...baseEnv, KYSIGNED_INTERNAL_IDENTITIES: '@kychee.com, redteam-*@kysigned.com' },
+      fakeRuntime(),
+    );
+    assert.equal(configured.internalGate.account('barry@kychee.com'), true);
+    assert.equal(configured.internalGate.account('redteam-pilot@kysigned.com'), true);
+    assert.equal(configured.internalGate.account('customer@example.com'), false);
+
+    const fork = buildAppDeps(baseEnv, fakeRuntime());
+    assert.equal(fork.internalGate.account('barry@kychee.com'), false, 'empty rules match nobody');
+  });
+
+  it('threads the SAME gate into every identity-bearing ctx (auth, api, inbound, distribute)', () => {
+    const deps = buildAppDeps(
+      { ...baseEnv, KYSIGNED_INTERNAL_IDENTITIES: '@kychee.com' },
+      fakeRuntime(),
+    );
+    assert.equal(deps.authCtx().internalGate, deps.internalGate);
+    assert.equal(deps.apiContext('creator@x.com').internalGate, deps.internalGate);
+    assert.equal(deps.inboundEmailCtx().internalGate, deps.internalGate);
+    assert.equal(deps.distributeDeps().internalGate, deps.internalGate);
+  });
+});
+
 describe('buildAppDeps — F-35 internal-identity list', () => {
   it('KYSIGNED_INTERNAL_IDENTITIES parses to the console internal-identity rules', () => {
     const deps = buildAppDeps(

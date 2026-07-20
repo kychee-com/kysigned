@@ -33,6 +33,7 @@ import type { DbPool } from '../db/pool.js';
 import { creditUser } from '../db/userCredits.js';
 import { withCreateIdempotency, type CreateResult } from './idempotentCreate.js';
 import type { EmitAppEvent } from '../integrations/appEvents.js';
+import type { InternalSubjectGate } from '../integrations/internalSubject.js';
 import { handleCreateEnvelope } from './envelope.js';
 
 /** Operator x402 config — presence enables the route (fork-inert without it). */
@@ -67,6 +68,7 @@ export function defaultX402Seams(
     body: never,
   ) => Promise<CreateResult> = handleCreateEnvelope as never,
   emitAppEvent?: EmitAppEvent,
+  internalGate?: InternalSubjectGate,
 ): X402CreateSeams {
   return {
     creditPayment: async (creatorEmail, payment) => {
@@ -80,12 +82,17 @@ export function defaultX402Seams(
       // F-36.5 — credit_purchase on the FRESH credit only, keyed by the settled
       // payment id (the same exactly-once anchor as the ledger row). Amount +
       // rail enum + ledger id — never customer identity.
+      // F-36.6 — an internal purchaser's credit lands normally but never emits.
       if (!credited.deduplicated) {
-        await emitAppEvent?.('credit_purchase', [payment.paymentId], {
-          amount_usd_micros: config.priceUsdMicros,
-          source: 'x402',
-          ...(credited.ledgerId ? { ledger_id: credited.ledgerId } : {}),
-        });
+        if (internalGate?.account(creatorEmail)) {
+          internalGate.logSuppressed('credit_purchase', [payment.paymentId]);
+        } else {
+          await emitAppEvent?.('credit_purchase', [payment.paymentId], {
+            amount_usd_micros: config.priceUsdMicros,
+            source: 'x402',
+            ...(credited.ledgerId ? { ledger_id: credited.ledgerId } : {}),
+          });
+        }
       }
     },
     runCreate: (creatorEmail, idempotencyKey, body) =>

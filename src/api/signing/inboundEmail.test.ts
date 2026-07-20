@@ -9,6 +9,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { handleReplyReceived, handleBounce, readReceiptVerdicts, type InboundEmailCtx } from './inboundEmail.js';
 import { emitAppEvent } from '../../integrations/appEvents.js';
+import { createInternalSubjectGate } from '../../integrations/internalSubject.js';
 import { RetryableRunError, PermanentRunError, type CreateRunOptions } from '../../functions/runs.js';
 import type { DbPool } from '../../db/pool.js';
 import type { EmailMessage } from '../../email/types.js';
@@ -292,5 +293,104 @@ describe('inboundEmail — F-36 app events (60.3)', () => {
     assert.equal(logs.length, 1);
     assert.match(logs[0], /signature_completed/);
     assert.match(logs[0], /500/);
+  });
+
+  // ── F-36.6 / AC-211 — internal-envelope suppression (66.3). The gate's ONE
+  // SELECT is answered by a specific matcher placed before the generic
+  // envelope read (first match wins in the fake pool).
+  const INTERNAL_ENV_MATCH = {
+    match: 'SELECT internal_test, sender_email FROM envelopes',
+    rows: [{ internal_test: false, sender_email: 'redteam-pilot@kysigned.com' }],
+  };
+
+  function internalGateWith(lines: string[], pool: DbPool) {
+    return createInternalSubjectGate({
+      pool,
+      internalIdentities: ['redteam-*@kysigned.com'],
+      log: (m: string) => void lines.push(m),
+    });
+  }
+
+  it('F-36.6/AC-211: a signature on an INTERNAL envelope acks + completes but emits nothing', async () => {
+    const r = recorder();
+    const e = eventsRecorder();
+    const lines: string[] = [];
+    const pool = fakePool([
+      { match: 'UPDATE envelope_signers SET acceptance_notified_at', rows: [{ id: 's-1' }] },
+      INTERNAL_ENV_MATCH,
+      { match: 'FROM envelopes WHERE id', rows: ENV_ROWS },
+      { match: 'ORDER BY name', rows: SIGNER_ROWS },
+      { match: 'COUNT(*)', rows: [{ total: '2', signed: '1' }] },
+    ]);
+    const ctx: InboundEmailCtx = {
+      ...ctxWith(pool, r, signedOutcome),
+      emitAppEvent: e.emitAppEvent as never,
+      internalGate: internalGateWith(lines, pool),
+    };
+    const out = await handleReplyReceived(ctx, { event: { message_id: 'msg-1' } });
+    assert.equal(out.action, 'signed', 'suppression changes emission ONLY — the ack/record path is untouched');
+    assert.ok(r.sent.some((m) => m.to === 'alice@x.com'), 'acceptance ack still sent');
+    assert.equal(e.events.length, 0, 'internal envelope emits nothing');
+    assert.deepEqual(lines, ['app-event signature_completed [env-1:msg-1] suppressed: internal identity']);
+  });
+
+  it('F-36.6/AC-211: a decline on an INTERNAL envelope still sends the corrective bounce but emits nothing', async () => {
+    const r = recorder();
+    const e = eventsRecorder();
+    const lines: string[] = [];
+    const rejected: ForwardOutcome = {
+      outcome: 'rejected',
+      code: 'wrong_phrase',
+      reason: 'intent line mismatch',
+      envelopeId: 'env-1',
+      signerEmail: 'alice@x.com',
+    };
+    const pool = fakePool([INTERNAL_ENV_MATCH, { match: 'FROM envelopes WHERE id', rows: ENV_ROWS }]);
+    const ctx: InboundEmailCtx = {
+      ...ctxWith(pool, r, rejected),
+      emitAppEvent: e.emitAppEvent as never,
+      internalGate: internalGateWith(lines, pool),
+    };
+    const out = await handleReplyReceived(ctx, { event: { message_id: 'msg-2' } });
+    assert.equal(out.action, 'rejected');
+    assert.equal(r.sent.length, 1, 'corrective bounce still sent');
+    assert.equal(e.events.length, 0, 'internal envelope emits nothing');
+    assert.deepEqual(lines, ['app-event signer_declined [env-1:msg-2] suppressed: internal identity']);
+  });
+
+  it('F-36.6/AC-213: a THROWING classification lookup fails OPEN — the transition completes AND the event emits', async () => {
+    const r = recorder();
+    const e = eventsRecorder();
+    const lines: string[] = [];
+    // The gate shares the handler pool in prod, so fault-inject ONLY the
+    // classification SELECT; every other query answers normally.
+    const base = fakePool([
+      { match: 'UPDATE envelope_signers SET acceptance_notified_at', rows: [{ id: 's-1' }] },
+      { match: 'FROM envelopes WHERE id', rows: ENV_ROWS },
+      { match: 'ORDER BY name', rows: SIGNER_ROWS },
+      { match: 'COUNT(*)', rows: [{ total: '2', signed: '1' }] },
+    ]);
+    const pool: DbPool = {
+      query: (text: string, v?: unknown[]) =>
+        text.includes('SELECT internal_test, sender_email')
+          ? Promise.reject(new Error('db blip'))
+          : base.query(text, v),
+      end: async () => {},
+    };
+    const ctx: InboundEmailCtx = {
+      ...ctxWith(pool, r, signedOutcome),
+      emitAppEvent: e.emitAppEvent as never,
+      internalGate: createInternalSubjectGate({
+        pool,
+        internalIdentities: ['redteam-*@kysigned.com'],
+        log: (m: string) => void lines.push(m),
+      }),
+    };
+    const out = await handleReplyReceived(ctx, { event: { message_id: 'msg-1' } });
+    assert.equal(out.action, 'signed', 'a classification failure never gates the transition');
+    assert.equal(e.events.length, 1, 'fail-open: the event EMITS when classification is unavailable');
+    assert.equal(lines.length, 1);
+    assert.match(lines[0]!, /internal-classification failed/);
+    assert.match(lines[0]!, /db blip/);
   });
 });

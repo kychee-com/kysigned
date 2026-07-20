@@ -26,6 +26,7 @@ import {
 } from './envelope.js';
 import type { DbPool } from '../db/pool.js';
 import { emitAppEvent as seamEmitAppEvent } from '../integrations/appEvents.js';
+import { createInternalSubjectGate } from '../integrations/internalSubject.js';
 import type { EmailProvider, EmailMessage } from '../email/types.js';
 import type { Envelope, EnvelopeSigner } from '../db/types.js';
 
@@ -1183,6 +1184,33 @@ describe('Envelope API — from spec acceptance criteria', () => {
       const r2 = await handleUndeliverableSigningRequest(ctx, envId, 'bounce2@nope.com');
       assert.equal(r2.body.marked, false);
       assert.equal(events.length, 1, 'unmarked re-fire emits nothing');
+    });
+
+    it('F-36.6/AC-211: an INTERNAL envelope bounce marks the signer + notifies the creator but emits nothing', async () => {
+      await handleCreateEnvelope(
+        { pool: db.pool, emailProvider: email, baseUrl: 'https://kysigned.com', senderIdentity: 'creator@acme.com' },
+        { pdf_base64: TEST_FIXTURE_PDF_B64, document_name: 'UndelivInternal', signers: [{ email: 'bounce4@nope.com', name: 'Bo' }] }
+      );
+      const envId = db.envelopes[db.envelopes.length - 1].id;
+      const events: unknown[] = [];
+      const emitAppEvent = (async (type: string) => void events.push(type)) as never;
+      const lines: string[] = [];
+      const gate = createInternalSubjectGate({
+        internalIdentities: ['@acme.com'],
+        log: (m: string) => void lines.push(m),
+      });
+      const sentBefore = email.sent.length;
+      const r = await handleUndeliverableSigningRequest(
+        { pool: db.pool, emailProvider: email, baseUrl: 'https://kysigned.com', emitAppEvent, internalGate: gate },
+        envId,
+        'bounce4@nope.com',
+      );
+      assert.equal(r.body.marked, true, 'suppression changes emission ONLY — the mark still lands');
+      assert.ok(email.sent.length > sentBefore, 'creator undeliverable notice still sent');
+      assert.equal(events.length, 0, 'internal envelope emits nothing');
+      assert.equal(lines.length, 1);
+      assert.match(lines[0]!, /envelope_undeliverable/);
+      assert.match(lines[0]!, /suppressed: internal identity/);
     });
 
     it('F-36/AC-196: the undeliverable mark completes when the events surface fails (real seam)', async () => {

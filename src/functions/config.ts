@@ -67,6 +67,7 @@ import { assembleBundle } from '../bundle/assembleBundle.js';
 import { resolveDocumentKey } from '../pdf/documentKey.js';
 import type { BundleSignerInput } from '../bundle/types.js';
 import { emitAppEvent, type EmitAppEvent, type RuntimeEventEmitter } from '../integrations/appEvents.js';
+import { createInternalSubjectGate, type InternalSubjectGate } from '../integrations/internalSubject.js';
 
 // ── The run402 runtime surface (structural) ────────────────────────────────
 // The deployed-function entry injects the real `@run402/functions` adminDb()
@@ -303,6 +304,8 @@ export interface AppDeps {
   operatorEmails?: string[];
   /** F-35 `[both]` — console internal-identity exclusion rules (exact / `@domain` / `prefix*@domain`). Empty = only internal_test envelopes count as internal; kysigned.com's list is `[service]` config in the private deploy. */
   internalIdentities?: string[];
+  /** F-36.6 — the DD-49 internal-subject gate over the same rules: identity-bearing app events are suppressed for internal subjects (the sweeps deliberately not). */
+  internalGate: InternalSubjectGate;
   /** F-9.9 / AC-124 — delivery-confirmation backstop window as a run `delay` string (e.g. "24h"). */
   deliveryBackstop: string;
   /** F-16.6 / AC-97 — trial-credit abuse-monitor alert threshold (grants per 24h; 0 disables alerting). */
@@ -518,6 +521,14 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
       payload,
     );
 
+  // F-36.6 — ONE internal-subject gate (DD-49) over the F-35 rules, threaded
+  // into every identity-bearing emit site; the sweep sites deliberately not.
+  const internalGate = createInternalSubjectGate({
+    pool,
+    internalIdentities,
+    log: (message) => console.error(message),
+  });
+
   // ── per-request ctx factories ──────────────────────────────────────────────
   // F-37 — the `[service]` Ads-upload handler function; unset (fork default)
   // disables every conversion enqueue.
@@ -527,6 +538,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     pool,
     createRun: runtime.createRun,
     emitAppEvent: emitAppEventDep, // F-36
+    internalGate, // F-36.6
     ...(adsUploadFunction ? { adsUploadFunction } : {}), // F-37 gclid rail
 
     deliveryBackstop,
@@ -559,6 +571,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     // F-13.4 — fire the trial-credit grant on a confirmed magic-link sign-in.
     ...(signupGrantUsdMicros > 0n ? { signupGrantUsdMicros } : {}),
     emitAppEvent: emitAppEventDep, // F-36.4 creator_signed_up
+    internalGate, // F-36.6
     ...(attributionEnabled ? { attributionEnabled } : {}), // F-37 gclid rail
     createRun: runtime.createRun, // F-37 sign-up conversion enqueue
     ...(adsUploadFunction ? { adsUploadFunction } : {}),
@@ -586,6 +599,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     enforceSenderAuth: env.KYSIGNED_ENFORCE_SENDER_AUTH === 'true',
     ...(signingMailboxId ? { signingMailboxId } : {}),
     emitAppEvent: emitAppEventDep, // F-36
+    internalGate, // F-36.6
   });
 
   const reminderSendCtx = (): ReminderSendCtx => ({
@@ -678,6 +692,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     // F-9.3 / F-013 — schedule the ephemeral-retention run when the bundle is distributed.
     createRun: runtime.createRun,
     emitAppEvent: emitAppEventDep, // F-36 envelope_completed
+    internalGate, // F-36.6
   });
 
   return {
@@ -694,6 +709,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     operatorAlertEmail,
     operatorEmails,
     internalIdentities,
+    internalGate,
     projectId,
     getPdf,
     storePdf,

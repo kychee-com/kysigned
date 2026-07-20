@@ -426,6 +426,7 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
         }),
         undefined, // default createFn
         deps.emitAppEvent, // F-36.5 credit_purchase (x402 rail)
+        deps.internalGate, // F-36.6 — internal purchaser never emits
       );
       // #128 — run402 paid-function idempotency: honor a caller-supplied key.
       // Prefer the platform-forwarded, gateway-trusted `x-run402-idempotency-key`
