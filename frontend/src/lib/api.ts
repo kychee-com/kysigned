@@ -26,30 +26,38 @@ function authHeaders(): Record<string, string> {
 // clear + cross-tab broadcast + local state update in one place). The api.ts
 // signOut helper was removed — callers should use `useAuth().signOut()`.
 
-// 2F.X15 TEMP DEBUG: pre-launch testnet rehearsal — surface server-side error
-// details (when KYSIGNED_EXPOSE_INTERNAL_ERRORS=1 on the Lambda) into the
-// thrown Error message so the UI shows them. Removed once the rehearsal is
-// green end-to-end.
-function buildErrorMessage(data: { error?: string; reason?: string; debug_message?: string }): string {
+// GH#20 follow-up (2026-07-20): the server's `reason` field (e.g. "run402
+// returned status 401: …") is diagnostic detail, NOT display copy — rendering
+// it put vendor jargon in front of a stuck sign-in user. It now travels on
+// `ApiError.reason` (and the console) for debugging; the DISPLAYED message is
+// the server's `error` alone. `debug_message` still surfaces — it only exists
+// when the operator explicitly sets KYSIGNED_EXPOSE_INTERNAL_ERRORS=1.
+interface ApiErrorBody { error?: string; code?: string; reason?: string; debug_message?: string }
+
+function toApiError(data: ApiErrorBody, status: number): ApiError {
   const parts: string[] = []
   if (data.error) parts.push(data.error)
-  if (data.reason) parts.push(`(${data.reason})`)
   if (data.debug_message) parts.push(`— debug: ${data.debug_message}`)
-  return parts.join(' ') || 'Request failed'
+  if (data.reason) console.warn(`api error detail (${status}):`, data.reason)
+  return new ApiError(parts.join(' ') || 'Request failed', status, { code: data.code, reason: data.reason })
 }
 
 /**
- * ApiError — an Error carrying the HTTP status, so callers can tell an opaque
- * server fault (5xx) from a helpful client-side validation message (4xx). Used by
- * friendlyCreateError (2026-06-21). Extends Error, so existing `e.message` /
- * `instanceof Error` callers are unaffected.
+ * ApiError — an Error carrying the HTTP status plus the server's stable `code`
+ * and diagnostic `reason`, so callers can map failures to human copy without
+ * string-matching (friendlyCreateError, friendlySignInError). Extends Error,
+ * so existing `e.message` / `instanceof Error` callers are unaffected.
  */
 export class ApiError extends Error {
   status: number
-  constructor(message: string, status: number) {
+  code?: string
+  reason?: string
+  constructor(message: string, status: number, opts: { code?: string; reason?: string } = {}) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.code = opts.code
+    this.reason = opts.reason
   }
 }
 
@@ -61,7 +69,7 @@ export async function apiGet<T>(path: string): Promise<T> {
   const res = await fetchWithCookieAuth(path, { headers: authHeaders() })
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }))
-    throw new ApiError(buildErrorMessage(body), res.status)
+    throw toApiError(body, res.status)
   }
   return res.json()
 }
@@ -84,7 +92,7 @@ export async function apiGetPublic<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { method: 'GET', credentials: 'omit' })
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }))
-    throw new ApiError(buildErrorMessage(body), res.status)
+    throw toApiError(body, res.status)
   }
   return res.json()
 }
@@ -101,7 +109,7 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   })
   if (!res.ok) {
     const data = await res.json().catch(() => ({ error: res.statusText }))
-    throw new ApiError(buildErrorMessage(data), res.status)
+    throw toApiError(data, res.status)
   }
   return res.json()
 }
@@ -119,7 +127,7 @@ export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
   })
   if (!res.ok) {
     const data = await res.json().catch(() => ({ error: res.statusText }))
-    throw new ApiError(buildErrorMessage(data), res.status)
+    throw toApiError(data, res.status)
   }
   return res.json()
 }
@@ -136,7 +144,7 @@ export async function apiDelete<T = null>(path: string): Promise<T | null> {
   })
   if (!res.ok) {
     const data = await res.json().catch(() => ({ error: res.statusText }))
-    throw new ApiError(buildErrorMessage(data), res.status)
+    throw toApiError(data, res.status)
   }
   if (res.status === 204) return null
   return res.json()

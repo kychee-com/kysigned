@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { apiPost } from '../lib/api';
+import { friendlySignInError, GENERIC_ERROR, SIGNIN_SEND_FAILED } from '../lib/friendlyError';
 import { readAttributionForSubmit } from '../lib/attribution';
 import { isValidEmail } from '../lib/validateEmail';
 import { broadcastAuthEvent, useAuth } from './auth-core';
@@ -92,14 +93,16 @@ export function SignInScreen({ title = 'Sign in' }: SignInScreenProps) {
     apiPost<{ ok?: boolean; email?: string; error?: string }>('/v1/auth/token', { token: tokenFromUrl })
       .then((result) => {
         if (!result.ok || !result.email) {
-          setError(result.error || 'Magic link expired or invalid. Please request a new one.');
+          // A 200 without an email is a server-contract violation, not a stale
+          // link — the stale/expired case throws (401) and is mapped below.
+          setError(GENERIC_ERROR);
           return;
         }
         broadcastAuthEvent({ type: 'signed-in', email: result.email });
         void refresh();
         setSignedInConfirmation(true);
       })
-      .catch((e) => setError((e as Error).message ?? 'Sign-in failed'))
+      .catch((e) => setError(friendlySignInError(e)))
       .finally(() => setExchanging(false));
   }, [refresh]);
 
@@ -191,8 +194,8 @@ export function SignInScreen({ title = 'Sign in' }: SignInScreenProps) {
         ...(attribution ? { attribution } : {}),
       });
       setMagicLinkSent(true);
-    } catch (e) {
-      setError((e as Error).message ?? 'Failed to send sign-in link');
+    } catch {
+      setError(SIGNIN_SEND_FAILED);
     }
   };
 
@@ -215,10 +218,10 @@ export function SignInScreen({ title = 'Sign in' }: SignInScreenProps) {
         broadcastAuthEvent({ type: 'signed-in', email: result.email });
         void refresh();
       } else {
-        setError(result.error || 'Invalid or expired token');
+        setError(GENERIC_ERROR);
       }
     } catch (e) {
-      setError((e as Error).message ?? 'Sign-in failed');
+      setError(friendlySignInError(e));
     }
   };
 
@@ -295,8 +298,10 @@ export function SignInScreen({ title = 'Sign in' }: SignInScreenProps) {
 
   return (
     <div data-testid="signin-screen" className="max-w-lg mx-auto px-4 py-20 text-center">
+      {/* The largest on-page use of the brand mark (56px). It was the worst
+          victim of the fixed-size raster; a vector has no resolution ceiling. */}
       <img
-        src="/favicon.png"
+        src="/logo.svg"
         alt="kysigned"
         width={56}
         height={56}
@@ -406,7 +411,7 @@ export function SignInScreen({ title = 'Sign in' }: SignInScreenProps) {
         </div>
       )}
 
-      {error && <p className="text-red-500 text-sm mt-4">{error}</p>}
+      {error && <p className="text-red-500 text-sm mt-4" data-testid="signin-error">{error}</p>}
     </div>
   );
 }

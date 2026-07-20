@@ -167,6 +167,42 @@ describe('SignInScreen — passkey-first behavior', () => {
     window.history.replaceState({}, '', '/');
   });
 
+  // GH#20 follow-up: a stale magic-link click (older thread email; run402
+  // supersedes prior tokens on each new request) must show the actionable
+  // "use the newest email" copy — never the raw vendor reason the API relays
+  // ("run402 returned status 401: …").
+  it('shows the actionable stale-link copy (not vendor jargon) when the token exchange 401s', async () => {
+    (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential = undefined;
+    window.history.replaceState({}, '', '/?token=stale-link');
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (String(url).endsWith('/v1/auth/token')) {
+        return Promise.resolve(new Response(
+          JSON.stringify({
+            error: 'Sign-in failed',
+            code: 'auth_signin_failed',
+            reason: 'run402 returned status 401: Invalid, expired, or already used magic link token',
+          }),
+          { status: 401 },
+        ));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401 }));
+    }));
+
+    render(
+      <MemoryRouter initialEntries={['/?token=stale-link']}>
+        <AuthProvider>
+          <SignInScreen />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    const err = await screen.findByTestId('signin-error');
+    expect(err.textContent).toMatch(/newest email/i);
+    expect(err.textContent).not.toMatch(/run402|status 401/i);
+
+    window.history.replaceState({}, '', '/');
+  });
+
   // GH#20 (P0): production magic-link emails land on /dashboard?token=… (the
   // operator's `/` is a static page that cannot exchange a token). On that
   // route SignInScreen mounts UNDER RequireAuth, so this exercises the real

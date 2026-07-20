@@ -73,9 +73,16 @@ const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
  * by the SPA in both deployments (operator spa_fallback and fork), where
  * RequireAuth renders SignInScreen and its `?token=` effect completes the
  * exchange. URL resolution (not concat) so a trailing-slash base normalizes.
+ *
+ * LOCKSTEP: kysigned-private mirrors this path in
+ * `src/deploy/staticRouteAliases.ts` (MAGIC_LINK_LANDING_PATH), whose contract
+ * test forbids any static route alias from shadowing it. Change one → change
+ * both.
  */
+export const MAGIC_LINK_LANDING_PATH = '/dashboard';
+
 function magicLinkLandingUrl(appBaseUrl: string): string {
-  return new URL('/dashboard', appBaseUrl).toString();
+  return new URL(MAGIC_LINK_LANDING_PATH, appBaseUrl).toString();
 }
 
 export async function handleAuthMagicLink(
