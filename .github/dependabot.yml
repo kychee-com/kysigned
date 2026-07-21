@@ -16,6 +16,17 @@
 # chance to vet. Deliberately NOT applied to Dependabot SECURITY updates — those
 # ignore cooldown by design, so a patch for a disclosed CVE still arrives
 # immediately.
+#
+# Suppressed majors (2026-07-21, from the review of PRs #2/#3/#7/#8/#12/#13/#14):
+# - typescript: taken as ONE deliberate repo-wide migration (root + mcp + frontend
+#   on the same TS line), never per-directory drift. Currently hard-blocked at
+#   root: pkijs's ICryptoEngine lags TS 6/7's WebCrypto lib types (PR #3). Remove
+#   these rules when issue #21 lands the coordinated upgrade.
+# - "@types/node": types track the Node that actually RUNS the code (root: Lambda
+#   nodejs22.x; mcp: engines >=20 npx floor; frontend: Node 24 CI toolchain). The
+#   pin moves manually, together with the runtime, never ahead of it.
+# - zod (mcp only): @x402/* still pin zod ^3, so zod 4 now means a dual-major
+#   tree without retiring v3. Remove when x402 moves to zod 4.
 version: 2
 updates:
   - package-ecosystem: "npm"
@@ -28,6 +39,11 @@ updates:
     groups:
       npm-minor-and-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/frontend"
@@ -39,6 +55,11 @@ updates:
     groups:
       npm-minor-and-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/mcp"
@@ -50,3 +71,10 @@ updates:
     groups:
       npm-minor-and-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "zod"
+        update-types: ["version-update:semver-major"]
