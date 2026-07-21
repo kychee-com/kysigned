@@ -105,10 +105,13 @@ export function SigningPage() {
         if (cancelled) return
         const pdfjs = await loadPdfjs()
         if (cancelled) return
-        const pdf = await pdfjs.getDocument({ data: bytes }).promise
-        if (cancelled) { void pdf.destroy?.(); return }
+        // pdfjs 6 removed PDFDocumentProxy.destroy from the public API — cleanup
+        // goes through the loading task (also correct in v5).
+        const loadingTask = pdfjs.getDocument({ data: bytes })
+        const pdf = await loadingTask.promise
+        if (cancelled) { void loadingTask.destroy?.(); return }
         const host = canvasHostRef.current
-        if (!host) { void pdf.destroy?.(); return }
+        if (!host) { void loadingTask.destroy?.(); return }
         host.replaceChildren() // clear any prior / StrictMode double-invoked render
         const cssWidth = host.clientWidth || 720
         const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1
