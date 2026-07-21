@@ -105,8 +105,9 @@ async function fingerprintWeb(files: Map<string, Uint8Array>): Promise<string> {
   return toHex(await sha256(all));
 }
 
-/** Every 64-hex token rendered on the PDF pages (the printed fingerprint is one). */
-async function renderedHexTokensWeb(pdfBytes: Uint8Array): Promise<Set<string>> {
+/** Every 64-hex token rendered on the PDF pages (the printed fingerprint is one).
+ *  @internal exported only for the CR/LF-tailed-stream regression test. */
+export async function renderedHexTokensWeb(pdfBytes: Uint8Array): Promise<Set<string>> {
   const text = bytesToLatin1(pdfBytes);
   const tokens = new Set<string>();
   let i = 0;
@@ -118,19 +119,31 @@ async function renderedHexTokensWeb(pdfBytes: Uint8Array): Promise<Set<string>> 
     if (text.charCodeAt(start) === 0x0a) start++;
     const e = text.indexOf('endstream', start);
     if (e === -1) break;
-    let end = e;
-    if (text.charCodeAt(end - 1) === 0x0a) end--;
-    if (text.charCodeAt(end - 1) === 0x0d) end--;
-    try {
-      const inflated = await inflate(pdfBytes.subarray(start, end));
+    // The writer's EOL before `endstream` is 0-2 bytes (\n, \r\n, or absent) — but
+    // the COMPRESSED data itself can also end in 0x0a/0x0d (the zlib Adler-32 tail
+    // is arbitrary, ~1/256 per stream), so a blind CR/LF trim chops a real data
+    // byte and the truncated stream stops inflating (the verifyWeb.test.ts:133
+    // flake — a VALID bundle went matchesPrinted=false). Node's inflateSync
+    // tolerates trailing bytes; DecompressionStream rejects them — so probe the
+    // exact candidate boundaries instead (a truncated or over-long stream throws,
+    // so the wrong candidates cannot yield content).
+    let inflated: Uint8Array | null = null;
+    for (const end of [e, e - 1, e - 2]) {
+      if (end <= start) continue;
+      try {
+        inflated = await inflate(pdfBytes.subarray(start, end));
+        break;
+      } catch {
+        /* wrong boundary or non-flate stream — try the next candidate */
+      }
+    }
+    if (inflated !== null) {
       const decoded = bytesToLatin1(inflated).replace(/<([0-9A-Fa-f]+)>/g, (_m, h: string) => {
         let t = '';
         for (let k = 0; k + 1 < h.length; k += 2) t += String.fromCharCode(parseInt(h.slice(k, k + 2), 16));
         return t;
       });
       for (const m of decoded.matchAll(/[0-9a-f]{64}/g)) tokens.add(m[0]);
-    } catch {
-      /* non-flate stream */
     }
     i = e + 9;
   }

@@ -69,8 +69,9 @@ function parseFromEmail(emlStr: string): string | null {
 }
 
 /** Rebuild the F-8.4 evidence order from extracted files (excludes VERIFY-README). */
-/** Every 64-hex token rendered on the PDF pages (the printed fingerprint is one). */
-function renderedHexTokens(pdfBytes: Uint8Array): Set<string> {
+/** Every 64-hex token rendered on the PDF pages (the printed fingerprint is one).
+ *  @internal exported only for the CR/LF-tailed-stream regression test. */
+export function renderedHexTokens(pdfBytes: Uint8Array): Set<string> {
   const raw = Buffer.from(pdfBytes);
   const tokens = new Set<string>();
   let i = 0;
