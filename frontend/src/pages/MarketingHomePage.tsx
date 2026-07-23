@@ -148,7 +148,7 @@ export function MarketingHomePage() {
           </h1>
           <p dangerouslySetInnerHTML={{ __html: hero.bodyHtml }} />
           <div className="hero-ctas">
-            <Link to="/dashboard/create" className="btn-primary">
+            <Link to="/dashboard/create" data-telemetry="cta_create:hero" className="btn-primary">
               Create an envelope
             </Link>
             {/* Explainer video, beside the primary CTA. Operator-specific (it's
@@ -157,6 +157,7 @@ export function MarketingHomePage() {
             {hero.videoUrl ? (
               <a
                 className="btn-video"
+                data-telemetry="video:hero"
                 href={hero.videoUrl}
                 target="_blank"
                 rel="noreferrer"

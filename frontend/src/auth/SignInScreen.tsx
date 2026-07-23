@@ -12,6 +12,7 @@
  * we broadcast `signed-in` to other tabs so AuthContext re-fetches there too.
  */
 import { useEffect, useRef, useState } from 'react';
+import { telemetryEvent, telemetryEventOnce } from '../lib/telemetry';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { apiPost } from '../lib/api';
 import { friendlySignInError, GENERIC_ERROR, SIGNIN_SEND_FAILED } from '../lib/friendlyError';
@@ -30,9 +31,15 @@ const CONFIRM_COUNTDOWN_SECONDS = 5;
 interface SignInScreenProps {
   /** Optional override for the rendered title (defaults to "Sign in"). */
   title?: string;
+  /**
+   * F-38.3 — HOW the visitor reached the gate: 'direct' (landed on the
+   * sign-in route) or 'redirect' (bounced here from a signed-out attempt at a
+   * protected action — RequireAuth passes this). Telemetry only.
+   */
+  telemetryTrigger?: 'direct' | 'redirect';
 }
 
-export function SignInScreen({ title = 'Sign in' }: SignInScreenProps) {
+export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct' }: SignInScreenProps) {
   const { user, refresh } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -47,6 +54,12 @@ export function SignInScreen({ title = 'Sign in' }: SignInScreenProps) {
   const [autofillAvailable, setAutofillAvailable] = useState<boolean | null>(null);
   const conditionalStarted = useRef(false);
   const emailValid = isValidEmail(emailInput);
+
+  // F-38.3 (AC-216) — the sign-in prompt became visible. Once per page load
+  // (eventOnce), naming the trigger; config-gated inside the module.
+  useEffect(() => {
+    telemetryEventOnce('signin_prompt', telemetryTrigger);
+  }, [telemetryTrigger]);
 
   // Magic-link confirmation card: counts down then tries to close the tab. A tab
   // opened from an email link usually CAN'T be closed by script (browser
@@ -182,6 +195,9 @@ export function SignInScreen({ title = 'Sign in' }: SignInScreenProps) {
 
   const requestMagicLink = async () => {
     if (!isValidEmail(emailInput)) return;
+    // F-38.3 — the magic-link submit (the act only; the address never rides
+    // telemetry — the identifier-free rail).
+    telemetryEvent('signin_submit');
     setError('');
     try {
       // F-37 — the attribution rider: the email submit runs in the browser
@@ -326,6 +342,7 @@ export function SignInScreen({ title = 'Sign in' }: SignInScreenProps) {
             autoComplete="username webauthn"
             value={emailInput}
             onChange={(e) => setEmailInput(e.target.value)}
+            onFocus={() => telemetryEventOnce('signin_email_focus')}
             placeholder="your@email.com"
             className="w-full min-h-[44px] border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
             onKeyDown={(e) => e.key === 'Enter' && requestMagicLink()}

@@ -119,6 +119,12 @@ export interface OperatorConfig {
    * default: false — a fresh fork captures nothing anywhere.
    */
   captureGclid: boolean;
+  /**
+   * Whether the F-38 pre-signin funnel telemetry rail runs in the browser
+   * (identifier-free step counts to the operator's own /v1/telemetry).
+   * Generic default: false — a fresh fork sends nothing anywhere.
+   */
+  telemetry: boolean;
   home: OperatorHome;
 }
 
@@ -135,6 +141,7 @@ export const GENERIC_OPERATOR_CONFIG: OperatorConfig = {
   showPricing: false,
   showBilling: false,
   captureGclid: false,
+  telemetry: false,
   home: {
     hero: {
       title: 'E-signatures that live in your inbox',
@@ -186,6 +193,7 @@ export function getOperatorConfig(): OperatorConfig {
     showPricing: parsed.showPricing ?? g.showPricing,
     showBilling: parsed.showBilling ?? g.showBilling,
     captureGclid: parsed.captureGclid ?? g.captureGclid,
+    telemetry: parsed.telemetry ?? g.telemetry,
     home: {
       hero: { ...g.home.hero, ...(home.hero ?? {}) },
       // Operator-specific sections: present only when the operator supplies them.

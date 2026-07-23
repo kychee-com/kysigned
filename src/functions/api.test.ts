@@ -120,6 +120,67 @@ describe('handleRequest — routing + auth gate', () => {
     assert.equal(res.status, 404);
   });
 
+  it('POST /v1/telemetry is public and answers silent success even with the rail disabled (F-38, fork default)', async () => {
+    const res = await handleRequest(
+      req('POST', '/v1/telemetry', { body: JSON.stringify({ page: '/', records: [{ event: 'page_view', seq: 1 }] }) }),
+      makeDeps(), // no deps.telemetry — the fork default
+    );
+    assert.equal(res.status, 204);
+  });
+
+  it('POST /v1/telemetry with the rail enabled records via the collection ctx', async () => {
+    const inserts: unknown[][] = [];
+    const pool = {
+      async query(text: string, values?: unknown[]) {
+        if (/INSERT INTO telemetry_events/i.test(text)) inserts.push(values ?? []);
+        return { rows: [], rowCount: 1 } as never;
+      },
+      async end() {},
+    };
+    const res = await handleRequest(
+      req('POST', '/v1/telemetry', { body: JSON.stringify({ page: '/pricing', records: [{ event: 'page_view', seq: 1 }] }) }),
+      makeDeps({
+        telemetry: { pool, ownHost: 'kysigned.com', limiter: { allow: () => true } },
+      }),
+    );
+    assert.equal(res.status, 204);
+    assert.equal(inserts.length, 1);
+    assert.equal(inserts[0][2], 'pricing');
+  });
+
+  it('GET /v1/telemetry is not a route (collection is POST-only)', async () => {
+    const res = await handleRequest(req('GET', '/v1/telemetry'), makeDeps());
+    assert.equal(res.status, 404);
+  });
+
+  it('the auth anchors thread the platform-provided country onto server-recorded steps (F-38.4/AC-218)', async () => {
+    const steps: Array<[string, { country?: string } | undefined]> = [];
+    const okSend = async (url: string) =>
+      ({ status: 200, ok: true, json: async () => ({}) }) as never;
+    const { pool } = makePool();
+    const res = await handleRequest(
+      req('POST', '/v1/auth/magic-link', {
+        body: JSON.stringify({ email: 'a@x.com' }),
+        headers: { 'cf-ipcountry': 'IL' },
+      }),
+      makeDeps({
+        authCtx: () =>
+          ({
+            pool,
+            appBaseUrl: 'https://kysigned.com',
+            session: { projectAnonKey: 'anon', fetchImpl: okSend },
+            telemetryStep: async (event: string, opts?: { country?: string }) => {
+              steps.push([event, opts]);
+            },
+          }) as never,
+      }),
+    );
+    assert.equal(res.status, 200);
+    assert.equal(steps.length, 1);
+    assert.equal(steps[0][0], 'send_ok');
+    assert.equal(steps[0][1]?.country, 'IL');
+  });
+
   it('dispatches a public route (health) with no auth', async () => {
     const res = await handleRequest(req('GET', '/v1/health'), makeDeps());
     assert.equal(res.status, 200);

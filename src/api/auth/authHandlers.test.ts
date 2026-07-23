@@ -527,3 +527,83 @@ describe('handleAuthSignout', () => {
     assert.match(r.setCookies![0]!, /Max-Age=0/);
   });
 });
+
+// ── F-38.4 / AC-217 — server-recorded funnel steps at the auth anchors ───────
+describe('F-38.4 — server-recorded funnel steps (send_ok / send_failed / link_opened / session_created)', () => {
+  type Step = { event: string; opts?: { paid?: boolean; country?: string } };
+  function stepRecorder(opts: { throwing?: boolean } = {}) {
+    const steps: Step[] = [];
+    return {
+      steps,
+      telemetryStep: async (event: string, o?: { paid?: boolean; country?: string }) => {
+        if (opts.throwing) throw new Error('telemetry down');
+        steps.push({ event, opts: o });
+      },
+    };
+  }
+  const okSend = fetchImpl({ status: 200, body: {} });
+  const failSend: FImpl = async (url: string) => {
+    if (url.includes('/auth/v1/magic-link')) return { status: 500, ok: false, json: async () => ({ error: 'smtp down' }) };
+    return { status: 404, ok: false, json: async () => ({}) };
+  };
+  const okExchange = fetchImpl({ status: 200, body: { access_token: 'at', refresh_token: 'rt', user: { email: 'v@x.com' } } });
+
+  it('an accepted magic-link send records send_ok — source unknown without a rider (never a guess)', async () => {
+    const rec = stepRecorder();
+    const c: AuthHandlerCtx = { ...ctx(fakePool().pool, okSend), telemetryStep: rec.telemetryStep };
+    const r = await handleAuthMagicLink(c, { email: 'a@x.com' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(rec.steps.map((s) => s.event), ['send_ok']);
+    assert.notEqual(rec.steps[0].opts?.paid, true);
+  });
+
+  it('a valid attribution rider on the SAME request marks the send step paid (DD-50.6)', async () => {
+    const rec = stepRecorder();
+    const c: AuthHandlerCtx = { ...ctx(fakePool().pool, okSend), attributionEnabled: true, telemetryStep: rec.telemetryStep };
+    const r = await handleAuthMagicLink(c, {
+      email: 'a@x.com',
+      attribution: { gclid: 'Cj0Kpaidclick', captured_at: new Date().toISOString(), consent: null },
+    });
+    assert.equal(r.status, 200);
+    assert.equal(rec.steps[0].event, 'send_ok');
+    assert.equal(rec.steps[0].opts?.paid, true);
+  });
+
+  it('a REJECTED send records send_failed instead — and the anti-enumeration 200 is unchanged', async () => {
+    const rec = stepRecorder();
+    const c: AuthHandlerCtx = { ...ctx(fakePool().pool, failSend), telemetryStep: rec.telemetryStep };
+    const r = await handleAuthMagicLink(c, { email: 'a@x.com' });
+    assert.equal(r.status, 200, 'the send outcome must never leak to the caller');
+    assert.deepEqual(rec.steps.map((s) => s.event), ['send_failed']);
+  });
+
+  it('a telemetry failure never gates the send (never-throw discipline)', async () => {
+    const rec = stepRecorder({ throwing: true });
+    const c: AuthHandlerCtx = { ...ctx(fakePool().pool, okSend), telemetryStep: rec.telemetryStep };
+    const r = await handleAuthMagicLink(c, { email: 'a@x.com' });
+    assert.equal(r.status, 200);
+  });
+
+  it('opening the emailed link records link_opened; completing sign-in records session_created', async () => {
+    const rec = stepRecorder();
+    const c: AuthHandlerCtx = { ...ctx(fakePool().pool, okExchange), telemetryStep: rec.telemetryStep };
+    const r = await handleAuthTokenExchange(c, { token: 'magic' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(rec.steps.map((s) => s.event), ['link_opened', 'session_created']);
+  });
+
+  it('a failed exchange records link_opened but NOT session_created', async () => {
+    const rec = stepRecorder();
+    const c: AuthHandlerCtx = { ...ctx(fakePool().pool, fetchImpl({ status: 401, body: { error: 'bad' } })), telemetryStep: rec.telemetryStep };
+    const r = await handleAuthTokenExchange(c, { token: 'expired' });
+    assert.equal(r.status, 401);
+    assert.deepEqual(rec.steps.map((s) => s.event), ['link_opened']);
+  });
+
+  it('a telemetry failure never gates sign-in either', async () => {
+    const rec = stepRecorder({ throwing: true });
+    const c: AuthHandlerCtx = { ...ctx(fakePool().pool, okExchange), telemetryStep: rec.telemetryStep };
+    const r = await handleAuthTokenExchange(c, { token: 'magic' });
+    assert.equal(r.status, 200);
+  });
+});

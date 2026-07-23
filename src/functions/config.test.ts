@@ -55,6 +55,60 @@ describe('buildAppDeps — F-18.1 session lifetime', () => {
   });
 });
 
+describe('buildAppDeps — F-38 telemetry gate (fork default OFF)', () => {
+  it('fresh fork: no KYSIGNED_TELEMETRY → deps.telemetry is undefined (zero collection)', () => {
+    const deps = buildAppDeps(baseEnv, fakeRuntime());
+    assert.equal(deps.telemetry, undefined);
+  });
+
+  it('KYSIGNED_TELEMETRY=1 → collection ctx built over the shared pool + own host', () => {
+    const deps = buildAppDeps({ ...baseEnv, KYSIGNED_TELEMETRY: '1', KYSIGNED_BASE_URL: 'https://kysigned.com' }, fakeRuntime());
+    assert.ok(deps.telemetry, 'telemetry ctx must be built when the flag is on');
+    assert.equal(deps.telemetry!.pool, deps.pool, 'must reuse the shared pool');
+    assert.equal(deps.telemetry!.ownHost, 'kysigned.com');
+    assert.equal(typeof deps.telemetry!.limiter.allow, 'function');
+  });
+
+  it('the enabled authCtx carries telemetryStep storing the identifier-free signin row (F-38.4)', async () => {
+    const queries: Array<{ sql: string }> = [];
+    const runtime = fakeRuntime();
+    (runtime as unknown as { adminDb: unknown }).adminDb = {
+      sql: async (text: string) => {
+        queries.push({ sql: text });
+        return { rows: [], row_count: 1 };
+      },
+    };
+    const deps = buildAppDeps({ ...baseEnv, KYSIGNED_TELEMETRY: '1' }, runtime);
+    const authCtx = deps.authCtx();
+    assert.equal(typeof authCtx.telemetryStep, 'function');
+    await authCtx.telemetryStep!('send_ok', { paid: true, country: 'IL' });
+    const insert = queries.find((q) => /INSERT INTO telemetry_events/i.test(q.sql));
+    assert.ok(insert, 'the step must store a telemetry row');
+  });
+
+  it('a telemetryStep store failure is swallowed (never gates auth)', async () => {
+    const runtime = fakeRuntime();
+    (runtime as unknown as { adminDb: unknown }).adminDb = {
+      sql: async () => {
+        throw new Error('db down');
+      },
+    };
+    const deps = buildAppDeps({ ...baseEnv, KYSIGNED_TELEMETRY: '1' }, runtime);
+    await assert.doesNotReject(() => deps.authCtx().telemetryStep!('session_created'));
+  });
+
+  it('fresh fork: authCtx carries NO telemetryStep', () => {
+    const deps = buildAppDeps(baseEnv, fakeRuntime());
+    assert.equal(deps.authCtx().telemetryStep, undefined);
+  });
+
+  it("KYSIGNED_TELEMETRY 'true' works; anything else stays off", () => {
+    assert.ok(buildAppDeps({ ...baseEnv, KYSIGNED_TELEMETRY: 'true' }, fakeRuntime()).telemetry);
+    assert.equal(buildAppDeps({ ...baseEnv, KYSIGNED_TELEMETRY: '0' }, fakeRuntime()).telemetry, undefined);
+    assert.equal(buildAppDeps({ ...baseEnv, KYSIGNED_TELEMETRY: 'yes' }, fakeRuntime()).telemetry, undefined);
+  });
+});
+
 describe('buildAppDeps — F-32.7/F-16.6 operator alert address', () => {
   it('KYSIGNED_OPERATOR_ALERT_EMAIL routes operator alerts to an external inbox', () => {
     const deps = buildAppDeps({ ...baseEnv, KYSIGNED_OPERATOR_ALERT_EMAIL: 'barry@kychee.com' }, fakeRuntime());

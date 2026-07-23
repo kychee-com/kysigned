@@ -1,0 +1,220 @@
+/**
+ * telemetry — F-38 collection endpoint (spec 0.59.0, DD-50).
+ *
+ * Locks the door: allowlist normalization (a URL carrying an envelope id or a
+ * signer token can NEVER become a stored value), unknown/oversized/malformed →
+ * dropped, per-page cap, per-source rate limit, always-silent success to the
+ * visitor, fork-default OFF = zero writes, and the F-38.5 derivation riders
+ * (referrer, click-id fact) are used then DISCARDED — never stored.
+ */
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import type { DbPool } from '../db/pool.js';
+import {
+  normalizeTelemetryPage,
+  handleTelemetryCollect,
+  createTelemetryLimiter,
+  TELEMETRY_MAX_RECORDS_PER_POST,
+  type TelemetryCollectCtx,
+} from './telemetry.js';
+
+function capturePool() {
+  const calls: Array<{ text: string; values: unknown[] }> = [];
+  const pool: DbPool = {
+    async query(text: string, values?: unknown[]) {
+      calls.push({ text, values: values ?? [] });
+      return { rows: [], rowCount: 1, command: '', oid: 0, fields: [] };
+    },
+    async end() {},
+  };
+  return { pool, calls };
+}
+
+function ctx(pool: DbPool, over: Partial<TelemetryCollectCtx> = {}): TelemetryCollectCtx {
+  return { pool, ownHost: 'kysigned.com', limiter: createTelemetryLimiter(), ...over };
+}
+
+const collect = (
+  c: TelemetryCollectCtx | undefined,
+  body: unknown,
+  over: { headers?: Headers; sourceAddr?: string | null } = {},
+) =>
+  handleTelemetryCollect(c, {
+    body,
+    headers: over.headers ?? new Headers(),
+    sourceAddr: over.sourceAddr ?? '198.51.100.7',
+  });
+
+const batch = (over: Record<string, unknown> = {}) => ({
+  page: '/pricing',
+  ref: 'https://news.ycombinator.com/item?id=1',
+  gclid: false,
+  records: [
+    { event: 'page_view', seq: 1 },
+    { event: 'click', element: 'cta_create:hero', seq: 2 },
+  ],
+  ...over,
+});
+
+describe('normalizeTelemetryPage (F-38.1 — the allowlist door)', () => {
+  it('maps known public paths to their page names', () => {
+    assert.equal(normalizeTelemetryPage('/'), 'home');
+    assert.equal(normalizeTelemetryPage('/index.html'), 'home');
+    assert.equal(normalizeTelemetryPage('/pricing.html'), 'pricing');
+    assert.equal(normalizeTelemetryPage('/pricing'), 'pricing');
+    assert.equal(normalizeTelemetryPage('/faq.html'), 'faq');
+    assert.equal(normalizeTelemetryPage('/how-it-works.html'), 'how_it_works');
+    assert.equal(normalizeTelemetryPage('/verify'), 'verify');
+  });
+
+  it('a signer link or an envelope page stores the page NAME, never the id or token', () => {
+    const p = normalizeTelemetryPage('/sign/7d0723ec-aaaa-bbbb-cccc-121212121212/tok_SECRETSECRET');
+    assert.equal(p, 'sign');
+    assert.equal(normalizeTelemetryPage('/review/abc/def'), 'review');
+    assert.equal(normalizeTelemetryPage('/dashboard/envelope/e6da6806'), 'dashboard');
+  });
+
+  it('unknown paths record as other; query/hash stripped; full URLs accepted', () => {
+    assert.equal(normalizeTelemetryPage('/wat-is-this'), 'other');
+    assert.equal(normalizeTelemetryPage('/pricing?gclid=SECRET#frag'), 'pricing');
+    assert.equal(normalizeTelemetryPage('https://kysigned.com/faq.html?x=1'), 'faq');
+  });
+});
+
+describe('handleTelemetryCollect — fork default + config gate (AC-221/AC-214)', () => {
+  it('ctx undefined (rail disabled — the fork default) → silent drop, ZERO queries', async () => {
+    const { calls } = capturePool();
+    await collect(undefined, batch());
+    assert.equal(calls.length, 0);
+  });
+
+  it('enabled: a valid batch inserts rows with normalized page, derived bucket/country, server time', async () => {
+    const { pool, calls } = capturePool();
+    await collect(ctx(pool), batch(), { headers: new Headers({ 'cf-ipcountry': 'IL' }) });
+    assert.equal(calls.length, 1);
+    const v = calls[0].values;
+    // Two records, seven params each: occurred_at, event, page, element, country, source, page_seq
+    assert.equal(v.length, 14);
+    assert.ok(v[0] instanceof Date);
+    assert.equal(v[1], 'page_view');
+    assert.equal(v[2], 'pricing');
+    assert.equal(v[3], null);
+    assert.equal(v[4], 'IL');
+    assert.equal(v[5], 'referral');
+    assert.equal(v[6], 1);
+    assert.equal(v[8], 'click');
+    assert.equal(v[10], 'cta_create:hero');
+  });
+
+  it('the derivation riders are DISCARDED — no referrer URL or click-id trace in any param (AC-218)', async () => {
+    const { pool, calls } = capturePool();
+    await collect(ctx(pool), batch({ ref: 'https://www.google.com/search?q=x', gclid: true }));
+    const flat = JSON.stringify(calls[0].values);
+    assert.ok(!flat.includes('google.com'), 'referrer leaked');
+    assert.ok(!/gclid/i.test(flat), 'click-id trace leaked');
+    // gclid presence → paid bucket, as a bucket only
+    assert.equal(calls[0].values[5], 'paid');
+  });
+
+  it('a raw signer-link page in the batch stores the known-set value only (AC-214)', async () => {
+    const { pool, calls } = capturePool();
+    await collect(ctx(pool), batch({ page: '/sign/7d0723ec-1111/tok_SECRET', records: [{ event: 'page_view', seq: 1 }] }));
+    const flat = JSON.stringify(calls[0].values);
+    assert.ok(!flat.includes('tok_SECRET') && !flat.includes('7d0723ec'), 'token/id leaked into a stored value');
+    assert.equal(calls[0].values[2], 'sign');
+  });
+});
+
+describe('handleTelemetryCollect — the validation door (AC-220)', () => {
+  it('malformed bodies are dropped silently, never throw, zero inserts', async () => {
+    const { pool, calls } = capturePool();
+    for (const junk of [null, 'a string', 42, [], {}, { records: 'nope' }, { page: 7, records: [] }]) {
+      await collect(ctx(pool), junk);
+    }
+    assert.equal(calls.length, 0);
+  });
+
+  it('unknown event names and SERVER-ONLY event names from the browser are dropped', async () => {
+    const { pool, calls } = capturePool();
+    await collect(
+      ctx(pool),
+      batch({
+        records: [
+          { event: 'made_up', seq: 1 },
+          { event: 'send_ok', seq: 2 }, // server-recorded step — a browser may not fabricate it
+          { event: 'session_created', seq: 3 },
+          { event: 'page_view', seq: 4 },
+        ],
+      }),
+    );
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].values.length, 7); // only page_view survived
+    assert.equal(calls[0].values[1], 'page_view');
+  });
+
+  it('click elements must match the registry grammar; junk and oversized elements drop', async () => {
+    const { pool, calls } = capturePool();
+    await collect(
+      ctx(pool),
+      batch({
+        records: [
+          { event: 'click', element: 'cta_create:hero', seq: 1 }, // named ok
+          { event: 'click', element: 'other:faq', seq: 2 }, // catch-all with allowlisted dest ok
+          { event: 'click', element: 'other:external', seq: 3 }, // catch-all external ok
+          { event: 'click', element: 'other:https://evil.example/x', seq: 4 }, // raw URL dest — drop
+          { event: 'click', element: 'cta_create:wat', seq: 5 }, // unknown location — drop
+          { event: 'click', element: 'x'.repeat(300), seq: 6 }, // oversized — drop
+          { event: 'click', seq: 7 }, // click without element — drop
+          { event: 'scroll', element: '50', seq: 8 }, // scroll threshold ok
+          { event: 'scroll', element: '33', seq: 9 }, // not a threshold — drop
+          { event: 'signin_prompt', element: 'redirect', seq: 10 }, // ok
+        ],
+      }),
+    );
+    const v = calls[0].values;
+    const elements = [v[3], v[10], v[17], v[24], v[31]];
+    assert.equal(v.length, 35); // 5 surviving records × 7
+    assert.deepEqual(elements, ['cta_create:hero', 'other:faq', 'other:external', '50', 'redirect']);
+  });
+
+  it('per-page caps: overflow records and out-of-range seq drop', async () => {
+    const { pool, calls } = capturePool();
+    const many = Array.from({ length: 80 }, (_, i) => ({ event: 'page_view', seq: i + 1 }));
+    await collect(ctx(pool), batch({ records: many }));
+    assert.equal(calls[0].values.length / 7 <= TELEMETRY_MAX_RECORDS_PER_POST, true);
+    const { pool: p2, calls: c2 } = capturePool();
+    await collect(ctx(p2), batch({ records: [{ event: 'page_view', seq: 5000 }] }));
+    assert.equal(c2.length, 0, 'a seq past the per-page-load cap must drop');
+  });
+
+  it('an insert failure is swallowed — the visitor never sees an error', async () => {
+    const pool: DbPool = {
+      async query() {
+        throw new Error('db down');
+      },
+      async end() {},
+    };
+    await assert.doesNotReject(() => collect(ctx(pool), batch()));
+  });
+});
+
+describe('handleTelemetryCollect — per-source rate limit (AC-220)', () => {
+  it('a flood from one source stops inserting; another source keeps recording', async () => {
+    const { pool, calls } = capturePool();
+    const c = ctx(pool);
+    for (let i = 0; i < 60; i++) {
+      await collect(c, batch({ records: [{ event: 'page_view', seq: 1 }] }), { sourceAddr: '203.0.113.66' });
+    }
+    const floodInserts = calls.length;
+    assert.ok(floodInserts < 60, `flood must be limited (got ${floodInserts} inserts)`);
+    const before = calls.length;
+    await collect(c, batch({ records: [{ event: 'page_view', seq: 1 }] }), { sourceAddr: '198.51.100.9' });
+    assert.equal(calls.length, before + 1, 'an unrelated source must be unaffected');
+  });
+
+  it('the address is used in memory only — it never appears in any SQL param', async () => {
+    const { pool, calls } = capturePool();
+    await collect(ctx(pool), batch(), { sourceAddr: '203.0.113.99' });
+    assert.ok(!JSON.stringify(calls.flatMap((c) => c.values)).includes('203.0.113.99'));
+  });
+});

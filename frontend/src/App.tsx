@@ -15,6 +15,7 @@ import { RequireAuth } from './auth/RequireAuth'
 import { SignInScreen } from './auth/SignInScreen'
 import { AppHeader } from './components/AppHeader'
 import { captureAttribution } from './lib/attribution'
+import { telemetryPageView } from './lib/telemetry'
 
 // v0.22.0 / 2F.AUTH7: `/` doubles as marketing landing AND sign-in entry.
 // AppHeader's "Sign in" routes through `/?intent=signin`; magic-link emails
@@ -42,6 +43,16 @@ export function App() {
     // to re-run per navigation, but re-running is harmless and keeps deep-link
     // arrivals covered when the SPA soft-navigates with a fresh gclid.
   }, [location.search])
+  // F-38 (AC-214/AC-215): one telemetry page view per SPA route — a soft-nav
+  // is a NEW per-page-load sequence (home → pricing is two sequences, never
+  // joinable). The `/?intent=signin` (or token) landing renders the sign-in
+  // screen, so it reports the normalized page `signin` rather than home.
+  // Config-gated inside the module: a fresh fork sends nothing.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const isSignIn = location.pathname === '/' && (params.get('intent') === 'signin' || params.has('token'))
+    telemetryPageView(isSignIn ? 'signin' : location.pathname)
+  }, [location.pathname, location.search])
   return (
     // v0.22.0 / 2F.AUTH7 / F2.1.10: AuthProvider wraps the whole SPA.
     // <AppHeader/> renders identity-aware nav above every route.

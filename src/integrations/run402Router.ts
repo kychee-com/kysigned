@@ -117,6 +117,11 @@ export const API_ROUTES: RouteDef[] = [
   // queries the archive directly. Forwards only domain+selector, never the file.
   { method: 'GET', pattern: '/v1/key-archive', name: 'keyArchive', auth: 'public' },
 
+  // F-38 (spec 0.59.0) — pre-signin funnel telemetry. Collection is necessarily
+  // public (the visitors it measures have no account); every bound lives in the
+  // handler (allowlist door, caps, per-source rate limit — DD-50).
+  { method: 'POST', pattern: '/v1/telemetry', name: 'telemetryCollect', auth: 'public' },
+
   // ── admin allowlist (session, operator-gated in the handler) ─────────────
   { method: 'GET', pattern: '/v1/admin/allowed-senders', name: 'listAllowedSenders', auth: 'session' },
   { method: 'GET', pattern: '/v1/admin/archive-confirmations', name: 'listArchiveConfirmations', auth: 'session' },

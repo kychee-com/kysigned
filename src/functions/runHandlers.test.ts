@@ -525,6 +525,41 @@ describe('runHandlers — retention_sweep (F-9.3 / F-013 backstop)', () => {
     assert.deepEqual(stamped, ['v1']);
     assert.ok(deleted.includes(DOC('hv')) && deleted.includes(COVER('hv', 'tv')));
   });
+
+  it('also prunes telemetry rows past the 90-day window (F-38.7 rides this sweep, no new schedule)', async () => {
+    const { pool } = retentionPool([], []);
+    const texts: string[] = [];
+    const recording: DbPool = {
+      async query(text: string, values?: unknown[]) {
+        texts.push(text);
+        if (/DELETE FROM telemetry_events/i.test(text)) return { rows: [], rowCount: 5 } as any;
+        return pool.query(text, values);
+      },
+      async end() {},
+    };
+    const handlers = buildRunHandlers(retentionDeps(recording, { async deletePdf() {} }, async () => ({ runId: 'r', deduplicated: false })));
+    const out = await handlers.retention_sweep({});
+    assert.equal(out.telemetry_pruned, 5);
+    assert.ok(texts.some((t) => /DELETE FROM telemetry_events/i.test(t)), 'sweep must issue the telemetry prune');
+  });
+
+  it('a telemetry-prune failure never breaks the document sweep (fail-open housekeeping)', async () => {
+    const envelopes = [{ id: 'v1', document_hash: 'hv', status: 'voided', completed_at: null, pdf_deleted_at: null }];
+    const signers = [{ envelope_id: 'v1', signing_token: 'tv', status: 'pending', completion_email_delivered_at: null, completion_email_bounced_at: null }];
+    const { pool, stamped } = retentionPool(envelopes, signers);
+    const failing: DbPool = {
+      async query(text: string, values?: unknown[]) {
+        if (/DELETE FROM telemetry_events/i.test(text)) throw new Error('db blip');
+        return pool.query(text, values);
+      },
+      async end() {},
+    };
+    const handlers = buildRunHandlers(retentionDeps(failing, { async deletePdf() {} }, async () => ({ runId: 'r', deduplicated: false })));
+    const out = await handlers.retention_sweep({});
+    assert.equal(out.deleted, 1, 'document sweep must still run');
+    assert.deepEqual(stamped, ['v1']);
+    assert.equal(out.telemetry_pruned, 0);
+  });
 });
 
 describe('runHandlers — completion_delivery / completion_bounced (F-013 registration)', () => {

@@ -61,6 +61,17 @@ export interface AuthHandlerCtx {
   createRun?: CreateRun;
   /** F-37 — the `[service]` upload-handler function name (fork default: unset → no enqueue). */
   adsUploadFunction?: string;
+  /**
+   * F-38.4 — record one server-side funnel step (send_ok / send_failed /
+   * link_opened / session_created). Present only when the telemetry rail is
+   * enabled; ALWAYS best-effort — a telemetry failure must never gate auth.
+   * `paid` is set only when THIS request establishes it (the attribution
+   * rider); everything else records the explicit unknown — never a guess.
+   */
+  telemetryStep?: (
+    event: 'send_ok' | 'send_failed' | 'link_opened' | 'session_created',
+    opts?: { paid?: boolean; country?: string },
+  ) => Promise<void>;
 }
 
 export interface AuthResult {
@@ -71,6 +82,30 @@ export interface AuthResult {
 }
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+/** F-38.4 — true only when a VALID attribution rider rides this request. */
+function riderIsPaid(ctx: AuthHandlerCtx, attribution: unknown): boolean {
+  if (!ctx.attributionEnabled) return false;
+  try {
+    return parseAttributionSubmission(attribution, new Date()) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/** F-38.4 — fire a server-recorded funnel step; never throws, never gates. */
+async function recordStep(
+  ctx: AuthHandlerCtx,
+  event: 'send_ok' | 'send_failed' | 'link_opened' | 'session_created',
+  opts?: { paid?: boolean },
+): Promise<void> {
+  if (!ctx.telemetryStep) return;
+  try {
+    await ctx.telemetryStep(event, opts);
+  } catch (err) {
+    console.error(`telemetry step ${event} failed (auth unaffected):`, err);
+  }
+}
 
 /**
  * GH#20 (P0) — the emailed link must land on an SPA-SERVED route. run402
@@ -100,13 +135,24 @@ export async function handleAuthMagicLink(
   if (!email || !EMAIL_RE.test(email)) {
     return { status: 400, body: { error: 'A valid email address is required', code: 'validation_email' } };
   }
-  await requestMagicLink({
-    email,
-    redirectUrl: magicLinkLandingUrl(ctx.appBaseUrl),
-    projectAnonKey: ctx.session.projectAnonKey,
-    run402BaseUrl: ctx.session.run402BaseUrl,
-    fetchImpl: ctx.session.fetchImpl,
-  });
+  // F-38.4 — the send outcome is a funnel fact (accepted vs rejected); the
+  // paid mark comes ONLY from the attribution rider on this same request
+  // (DD-50.6 — no email-join, the rail stays identifier-free end to end).
+  let sendOk = false;
+  try {
+    const sendResult = await requestMagicLink({
+      email,
+      redirectUrl: magicLinkLandingUrl(ctx.appBaseUrl),
+      projectAnonKey: ctx.session.projectAnonKey,
+      run402BaseUrl: ctx.session.run402BaseUrl,
+      fetchImpl: ctx.session.fetchImpl,
+    });
+    sendOk = sendResult.ok;
+  } catch (err) {
+    await recordStep(ctx, 'send_failed', { paid: riderIsPaid(ctx, body.attribution) });
+    throw err;
+  }
+  await recordStep(ctx, sendOk ? 'send_ok' : 'send_failed', { paid: riderIsPaid(ctx, body.attribution) });
 
   // F-37 — the attribution rider: the email submit happens in the browser that
   // holds the gclid capture (the link may be opened elsewhere), so the capture
@@ -130,6 +176,9 @@ export async function handleAuthMagicLink(
 export async function handleAuthTokenExchange(ctx: AuthHandlerCtx, body: { token?: unknown }): Promise<AuthResult> {
   const token = typeof body.token === 'string' ? body.token.trim() : '';
   if (!token) return { status: 400, body: { error: 'token is required', code: 'validation_token' } };
+  // F-38.4 — the emailed link was OPENED (browser-independent: this request IS
+  // the open, whatever device it lands on and whatever happens next).
+  await recordStep(ctx, 'link_opened');
   const r = await exchangeMagicLinkToken({
     magicLinkToken: token,
     projectAnonKey: ctx.session.projectAnonKey,
@@ -145,6 +194,8 @@ export async function handleAuthTokenExchange(ctx: AuthHandlerCtx, body: { token
     accessToken: r.accessToken,
     refreshToken: r.refreshToken,
   });
+  // F-38.4 — the session exists: the funnel's last step.
+  await recordStep(ctx, 'session_created');
 
   // F-13.4 / F-18.4 — new-account trial credit. The magic-link click is the
   // mailbox-control proof, and the grant is idempotent + deduped on the

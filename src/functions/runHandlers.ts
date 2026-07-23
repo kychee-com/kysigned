@@ -21,6 +21,7 @@ import { distributeEnvelopeBundle, type DistributeBundleDeps } from '../api/dist
 import { deliverEnvelopeWebhook } from '../api/webhookDeliver.js';
 import { shouldDeletePdf } from '../pdf/retention.js';
 import { sweepRetention } from '../pdf/sweep.js';
+import { pruneTelemetryEvents } from '../db/telemetryEvents.js';
 import { purgeEnvelopeBlobs } from '../pdf/blobPurge.js';
 import { handleCompletionDelivered, handleCompletionBounced } from '../api/emailWebhook.js';
 import { scheduleCompletionRetention, RETENTION_RETRY_DELAY, RETENTION_MAX_FAST_ATTEMPTS } from '../api/retentionSchedule.js';
@@ -347,7 +348,19 @@ export function buildRunHandlers(
      * (a lost schedule, or a rare shared-document race). Belt-and-suspenders for the
      * privacy guarantee that no document blob outlives its retention window.
      */
-    retention_sweep: async () => ({ ...(await sweepRetention(deps.pool, deps.expirationStorage(), new Date())) }),
+    retention_sweep: async () => {
+      const swept = await sweepRetention(deps.pool, deps.expirationStorage(), new Date());
+      // F-38.7 (spec 0.59.0): telemetry rows prune after 90 days, riding this
+      // existing schedule (no new cron — AC-121 posture). Fail-open housekeeping:
+      // a prune failure must never break the document-retention sweep.
+      let telemetryPruned = 0;
+      try {
+        telemetryPruned = await pruneTelemetryEvents(deps.pool, new Date());
+      } catch (err) {
+        console.error('telemetry prune failed (retention_sweep continues):', err);
+      }
+      return { ...swept, telemetry_pruned: telemetryPruned };
+    },
 
     /**
      * F-9.3 / F-013 — a completion email was DELIVERED (run402 `delivery` EMAIL

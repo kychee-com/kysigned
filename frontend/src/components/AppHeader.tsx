@@ -82,18 +82,19 @@ export function AppHeader() {
           <Link
             to="/dashboard/create"
             data-testid="header-create-link"
+            data-telemetry="cta_create:header"
             className="inline-flex items-center min-h-[36px] px-3 py-1.5 rounded-md bg-[#1a1b2f] text-white font-medium hover:bg-[#2a2b42] whitespace-nowrap"
           >
             Create
           </Link>
           {/* GH#103 — Pricing is operator-specific; shown only when the operator
               config enables it (a fresh fork has no pricing surface). */}
-          {showPricing && <a href="/pricing" className="hover:text-gray-900">Pricing</a>}
+          {showPricing && <a href="/pricing" data-telemetry="pricing:header" className="hover:text-gray-900">Pricing</a>}
           {/* AC-126 — how-it-works + FAQ are STATIC pages now, so full-navigation
               <a href> (a client-side <Link> would find no SPA route and white-page). */}
-          <a href="/how-it-works" className="hover:text-gray-900">How it works</a>
+          <a href="/how-it-works" data-telemetry="how_it_works:header" className="hover:text-gray-900">How it works</a>
           <a href="/faq" className="hover:text-gray-900">FAQ</a>
-          <Link to="/verify" className="hover:text-gray-900">Verify</Link>
+          <Link to="/verify" data-telemetry="verify:header" className="hover:text-gray-900">Verify</Link>
           {user && (
             <Link
               to="/dashboard"
@@ -157,6 +158,7 @@ export function AppHeader() {
             <Link
               to={signinHref}
               data-testid="header-signin"
+              data-telemetry="signin:header"
               className="inline-flex items-center min-h-[44px] px-3 py-1.5 border border-gray-300 text-gray-900 rounded-md text-sm font-medium hover:bg-gray-50 whitespace-nowrap shrink-0"
             >
               Sign in
@@ -182,6 +184,7 @@ export function AppHeader() {
             <Link
               to={signinHref}
               data-testid="header-signin-mobile"
+              data-telemetry="signin:header"
               className="inline-flex items-center min-h-[44px] px-3 py-1.5 border border-gray-300 text-gray-900 rounded-md text-sm font-medium hover:bg-gray-50 whitespace-nowrap"
             >
               Sign in

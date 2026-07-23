@@ -27,7 +27,10 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   }
 
   if (!user) {
-    return <SignInScreen />;
+    // F-38.3 — the visitor BOUNCED here from a protected action (e.g. a
+    // signed-out create-envelope attempt): the prompt records the redirect
+    // trigger, distinguishing "reached the gate" from "came to sign in".
+    return <SignInScreen telemetryTrigger="redirect" />;
   }
 
   return <>{children}</>;

@@ -33,6 +33,8 @@
  * route miss, so only `/v1/*` reaches here.
  */
 import { matchRoute } from '../integrations/run402Router.js';
+import { handleTelemetryCollect } from '../api/telemetry.js';
+import { deriveCountry } from '../api/telemetryDerive.js';
 import { csrfOk, resolveSession } from '../api/auth/session.js';
 import { resolveApiKey } from '../api/auth/apiKeyAuth.js';
 import { extractBearerKey } from '../api/auth/apiKeyAuth.js';
@@ -138,6 +140,20 @@ async function readJsonBody(req: Request): Promise<Record<string, unknown>> {
   } catch {
     return {};
   }
+}
+
+/**
+ * F-38.4 — bind the platform-provided country (cf-ipcountry /
+ * cloudfront-viewer-country, else the explicit unknown) onto the auth ctx's
+ * telemetryStep so server-recorded funnel steps carry it (AC-218). A no-op
+ * when the rail is off (no telemetryStep on the ctx).
+ */
+function telemetryBoundAuthCtx(deps: RequestDeps, req: Request): ReturnType<RequestDeps['authCtx']> {
+  const ctx = deps.authCtx();
+  const orig = ctx.telemetryStep;
+  if (!orig) return ctx;
+  const country = deriveCountry(req.headers);
+  return { ...ctx, telemetryStep: (event, opts) => orig(event, { ...opts, country }) };
 }
 
 /** Build the passkey-proxy ctx from the request deps (run402 anon key + base
@@ -348,11 +364,11 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
 
     // ── auth (public pre-session; session for user/signout) ──
     case 'authMagicLink': {
-      const r = await handleAuthMagicLink(deps.authCtx(), await readJsonBody(req));
+      const r = await handleAuthMagicLink(telemetryBoundAuthCtx(deps, req), await readJsonBody(req));
       return json(r.body, r.status, r.setCookies);
     }
     case 'authToken': {
-      const r = await handleAuthTokenExchange(deps.authCtx(), await readJsonBody(req));
+      const r = await handleAuthTokenExchange(telemetryBoundAuthCtx(deps, req), await readJsonBody(req));
       return json(r.body, r.status, r.setCookies);
     }
     case 'authUser': {
@@ -553,6 +569,21 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
     case 'keyArchive': {
       const r = await handleKeyArchiveLookup({}, url.searchParams.get('domain'), url.searchParams.get('selector'));
       return json(r.body, r.status);
+    }
+
+    // ── telemetry collection (public; F-38 / DD-50) ──
+    case 'telemetryCollect': {
+      // Always silent success — collection never surfaces an error to a
+      // visitor, whether the rail is disabled (fork default), the body is
+      // junk, the source is rate-limited, or the store is down.
+      await handleTelemetryCollect(deps.telemetry, {
+        body: await readJsonBody(req),
+        headers: req.headers,
+        // The gateway stamps the client address on x-forwarded-for; held in
+        // memory for rate-limiting only, never written (F-38.7).
+        sourceAddr: req.headers.get('x-forwarded-for'),
+      });
+      return new Response(null, { status: 204 });
     }
 
     // ── admin allowlist (session; operator-gated in the handler) ──

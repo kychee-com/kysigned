@@ -68,6 +68,8 @@ import { resolveDocumentKey } from '../pdf/documentKey.js';
 import type { BundleSignerInput } from '../bundle/types.js';
 import { emitAppEvent, type EmitAppEvent, type RuntimeEventEmitter } from '../integrations/appEvents.js';
 import { createInternalSubjectGate, type InternalSubjectGate } from '../integrations/internalSubject.js';
+import { createTelemetryLimiter, type TelemetryCollectCtx } from '../api/telemetry.js';
+import { insertTelemetryEvents } from '../db/telemetryEvents.js';
 
 // ── The run402 runtime surface (structural) ────────────────────────────────
 // The deployed-function entry injects the real `@run402/functions` adminDb()
@@ -208,6 +210,15 @@ export interface AppEnv {
    */
   KYSIGNED_CAPTURE_GCLID?: string;
   /**
+   * F-38 — enables the pre-signin funnel telemetry rail server-side
+   * (`1`/`true`): the public collection endpoint stores normalized,
+   * identifier-free records and the operator summary serves them. Unset (the
+   * forker default) the endpoint accepts-and-drops with zero database work
+   * and the summary exposes nothing. Pairs with the SPA's `telemetry`
+   * operator-config flag and the static-page snippet stamp (both `[service]`).
+   */
+  KYSIGNED_TELEMETRY?: string;
+  /**
    * F-37 — the `[service]` function that handles `ads_conversion_upload`
    * durable runs (kysigned.com: `kysigned-billing`). Unset (the forker
    * default): no conversion is ever enqueued. The public repo carries no
@@ -336,6 +347,12 @@ export interface AppDeps {
   // per-request / per-sweep ctx factories
   apiContext: (creatorEmail: string) => ApiContext;
   authCtx: () => AuthHandlerCtx;
+  /**
+   * F-38 — the telemetry collection ctx. Present ONLY when
+   * `KYSIGNED_TELEMETRY` is on; absent (the fork default) the public
+   * collection route accepts-and-drops with zero database work.
+   */
+  telemetry?: TelemetryCollectCtx;
   adminCtx: (operator: string) => AdminContext;
   signerCtx: () => SignerApiCtx;
 
@@ -564,6 +581,40 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
   const attributionEnabled =
     env.KYSIGNED_CAPTURE_GCLID === '1' || env.KYSIGNED_CAPTURE_GCLID === 'true';
 
+  // F-38 — the funnel-telemetry rail's server gate (fork default: off). One
+  // limiter per warm container; the per-source map lives in memory only.
+  const telemetryEnabled = env.KYSIGNED_TELEMETRY === '1' || env.KYSIGNED_TELEMETRY === 'true';
+  const telemetry: TelemetryCollectCtx | undefined = telemetryEnabled
+    ? { pool, ownHost: baseUrlParsed.hostname, limiter: createTelemetryLimiter() }
+    : undefined;
+
+  // F-38.4 — the server-recorded funnel steps (send_ok / send_failed /
+  // link_opened / session_created): one identifier-free `signin` row each.
+  // `paid` only when the step's own request establishes it (the attribution
+  // rider — DD-50.6); otherwise the explicit unknown. Never throws.
+  const telemetryStep = telemetryEnabled
+    ? async (
+        event: 'send_ok' | 'send_failed' | 'link_opened' | 'session_created',
+        opts?: { paid?: boolean; country?: string },
+      ) => {
+        try {
+          await insertTelemetryEvents(pool, [
+            {
+              occurredAt: new Date(),
+              event,
+              page: 'signin',
+              element: null,
+              country: opts?.country ?? 'unknown',
+              source: opts?.paid === true ? 'paid' : 'unknown',
+              pageSeq: 0,
+            },
+          ]);
+        } catch (err) {
+          console.error(`telemetry step ${event} store failed (auth unaffected):`, err);
+        }
+      }
+    : undefined;
+
   const authCtx = (): AuthHandlerCtx => ({
     pool,
     session: sessionConfig,
@@ -573,6 +624,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     emitAppEvent: emitAppEventDep, // F-36.4 creator_signed_up
     internalGate, // F-36.6
     ...(attributionEnabled ? { attributionEnabled } : {}), // F-37 gclid rail
+    ...(telemetryStep ? { telemetryStep } : {}), // F-38.4 server-recorded steps
     createRun: runtime.createRun, // F-37 sign-up conversion enqueue
     ...(adsUploadFunction ? { adsUploadFunction } : {}),
   });
@@ -725,6 +777,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     healthChecks,
     apiContext,
     authCtx,
+    ...(telemetry ? { telemetry } : {}), // F-38 funnel-telemetry rail
     adminCtx,
     signerCtx,
     inboundEmailCtx,
