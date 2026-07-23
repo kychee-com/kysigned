@@ -93,14 +93,11 @@ export function App() {
               </RequireAuth>
             }
           />
-          <Route
-            path="/dashboard/create"
-            element={
-              <RequireAuth>
-                <CreateEnvelopePage />
-              </RequireAuth>
-            }
-          />
+          {/* F-39.1 (AC-223) — the ONE carved route: the envelope editor is
+              open to guests, and the sign-in moment moves to "Send for
+              signing" (the page gates the submit itself, F-39.3). Every other
+              dashboard/account route keeps its RequireAuth wrap. */}
+          <Route path="/dashboard/create" element={<CreateEnvelopePage />} />
           <Route
             path="/account/passkeys"
             element={

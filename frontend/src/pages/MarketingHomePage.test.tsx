@@ -121,6 +121,15 @@ describe('MarketingHomePage — operator config injected (kysigned.com restored,
     expect(t).toMatch(/Kychee/); // the operator footer brand
   });
 
+  it('renders the hero note as a FIRST-CLASS line — body-copy size, never a footnote (F-39.7 / AC-229)', () => {
+    vi.stubEnv('VITE_OPERATOR_CONFIG', KYSIGNED_CONFIG);
+    const { getByText } = render(<MemoryRouter><MarketingHomePage /></MemoryRouter>);
+    const note = getByText('Try 4 envelopes free, no credit card.');
+    // 18px = the hero body-copy size (.marketing-home-page .hero p). The old
+    // 14px footnote rendering is exactly what AC-229 forbids.
+    expect(note.style.fontSize).toBe('18px');
+  });
+
   it('renders a card with ctaIcon "github" as an icon-only GitHub link (aria-label carries the name)', () => {
     vi.stubEnv('VITE_OPERATOR_CONFIG', KYSIGNED_CONFIG);
     const { container } = render(<MemoryRouter><MarketingHomePage /></MemoryRouter>);

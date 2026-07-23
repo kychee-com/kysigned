@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ApiError, apiGet, apiPost, formatUsd, type CreditBalance } from '../lib/api'
 import { friendlyCreateError } from '../lib/friendlyError'
 import { isPdfTooLarge, pdfTooLargeMessage } from '../lib/pdfSize'
 import { useAuth } from '../auth/auth-core'
+import { SignInScreen } from '../auth/SignInScreen'
 import { trackEvent, GA_EVENTS } from '../lib/analytics'
+import { telemetryEvent, telemetryEventOnce } from '../lib/telemetry'
 import { getOperatorConfig } from '../config/operator'
 
 interface SignerInput {
@@ -27,6 +29,10 @@ const emptySigner = (email = '', name = ''): SignerInput => ({ email, name, onBe
 export function CreateEnvelopePage() {
   const navigate = useNavigate()
   const { user } = useAuth()
+  // F-39.1 — the editor is open to guests; the sign-in moment is the SEND
+  // (F-39.3), not the way in. Guest mode hides the self-sign row (its values
+  // belong to a signed-in creator, F-39.2) and shows the trial line instead.
+  const isGuest = !user
   const [docName, setDocName] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [signers, setSigners] = useState<SignerInput[]>([emptySigner()])
@@ -36,6 +42,14 @@ export function CreateEnvelopePage() {
   const [autoClose, setAutoClose] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  // F-39.3 — the sign-in gate at Send. 'form' = drafting; 'gate' = a validated
+  // guest draft is HELD (heldPayloadRef) while the in-flow SignInScreen runs;
+  // 'sending' = a session appeared and the held create is dispatching. The
+  // draft never leaves this tab (DD-51): no envelope, bytes, or charge exists
+  // server-side before the gate is crossed.
+  const [gatePhase, setGatePhase] = useState<'form' | 'gate' | 'sending'>('form')
+  const heldPayloadRef = useRef<Record<string, unknown> | null>(null)
+  const gateSentOnceRef = useRef(false)
   // Which mandatory field failed validation — drives the per-field red highlight.
   // (Scroll-to-section was replaced by scroll-to-top so the error banner is always
   // seen even when several fields are wrong — Barry QA 2026-06-19.)
@@ -55,9 +69,11 @@ export function CreateEnvelopePage() {
   // is inert there and creation is allowlist-gated server-side instead.
   const { showBilling } = getOperatorConfig()
   useEffect(() => {
-    if (!showBilling) return
+    // Guests have no balance to read (F-39.1) — the credit outcome surfaces
+    // AFTER the send-gate sign-in (F-39.4), not before.
+    if (!showBilling || isGuest) return
     apiGet<CreditBalance>('/v1/credits/balance').then(setBalance).catch(() => setBalance(null))
-  }, [showBilling])
+  }, [showBilling, isGuest])
   const insufficientCredit = balance != null && !balance.sufficient_for_envelope
 
   const goToTopUp = async () => {
@@ -71,6 +87,21 @@ export function CreateEnvelopePage() {
       setRedirecting(false)
     }
   }
+
+  // F-39.4 (AC-226) — top-up WITHOUT losing the draft: when a draft exists the
+  // checkout opens in a NEW tab, so this tab (the only place the draft lives,
+  // DD-51) stays alive and the same draft sends after the top-up.
+  const topUpInNewTab = async () => {
+    setRedirecting(true)
+    try {
+      const { url } = await apiPost<{ url: string }>('/v1/credits/checkout', { email: user?.email })
+      window.open(url, '_blank', 'noopener')
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setRedirecting(false)
+    }
+  }
   // F16.10 suggestion state intentionally removed in v0.18.x — see note in
   // handleSubmit. Will be reinstated when the backend + message logic land
   // their rewrite. createdEnvelopeId was the marker for that branch; now
@@ -78,8 +109,15 @@ export function CreateEnvelopePage() {
 
   const addSigner = () => setSigners([...signers, emptySigner()])
   const removeSigner = (i: number) => setSigners(signers.filter((_, idx) => idx !== i))
-  const patchSigner = (i: number, patch: Partial<SignerInput>) =>
+  // F-39.5 (AC-227) — the "invested in the editor" funnel fact, DD-52: fired by
+  // hand at the interaction sites (first file pick / first signer keystroke),
+  // deduped per page load by the rail's eventOnce. The FACT only — no filename,
+  // address, or any other draft value ever rides a telemetry call.
+  const markDraftStarted = () => telemetryEventOnce('draft_started')
+  const patchSigner = (i: number, patch: Partial<SignerInput>) => {
+    markDraftStarted()
     setSigners((prev) => prev.map((s, idx) => (idx === i ? { ...s, ...patch } : s)))
+  }
 
   // F1.10 / F1.11 (DD-98): "Will you also sign?" adds the CREATOR to the
   // SUBMITTED signer list as a real signer row — email locked to their login
@@ -105,38 +143,20 @@ export function CreateEnvelopePage() {
     }
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    // On ANY validation failure, jump to the TOP of the page so the red error
-    // banner is always seen — NOT to the offending field (there may be several;
-    // scrolling to one hides the rest). The per-field red highlight (firstError)
-    // still flags which inputs need fixing. (Barry QA 2026-06-19.)
-    const scrollToTop = () => window.scrollTo({ top: 0, behavior: 'smooth' })
-    if (!file) { setError('Please upload a PDF'); setFirstError('file'); scrollToTop(); return }
-    // Reject oversize PDFs here, with a clear message — otherwise the base64 upload
-    // inflates past the 6 MiB Lambda invoke cap and the gateway returns an opaque 502.
-    if (isPdfTooLarge(file.size)) { setError(pdfTooLargeMessage(file.size)); setFirstError('file'); scrollToTop(); return }
-    if (!docName.trim()) { setError('Please enter a document name'); setFirstError('docName'); scrollToTop(); return }
-    if (signers.some((s) => !s.email || !s.name)) { setError('All signers need name and email'); setFirstError('signers'); scrollToTop(); return }
-    setFirstError(null)
+  // On ANY validation failure, jump to the TOP of the page so the red error
+  // banner is always seen — NOT to the offending field (there may be several;
+  // scrolling to one hides the rest). The per-field red highlight (firstError)
+  // still flags which inputs need fixing. (Barry QA 2026-06-19.)
+  const scrollToTop = () => window.scrollTo({ top: 0, behavior: 'smooth' })
 
+  /**
+   * The actual create POST + success routing — one path for both the classic
+   * signed-in Send and the F-39.3 held send after the gate.
+   */
+  const dispatchEnvelope = async (payload: Record<string, unknown>) => {
     setSubmitting(true)
     setError('')
-
     try {
-      const base64 = await new Promise<string>((resolve) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve((reader.result as string).split(',')[1])
-        reader.readAsDataURL(file)
-      })
-
-      const signerList = signers.map((s) => ({
-        email: s.email,
-        name: s.name,
-        // F-22.2 — only emit on_behalf_of when the checkbox is on AND a name was typed.
-        on_behalf_of: s.onBehalf && s.onBehalfOf.trim() ? s.onBehalfOf.trim() : undefined,
-      }))
-
       const result = await apiPost<{
         envelope_id: string
         // 2026-06-21 — per-signer send outcome. `undeliverable`/`failed` mean the
@@ -149,12 +169,7 @@ export function CreateEnvelopePage() {
           total_count: number
           missing_signers: Array<{ email: string; name: string }>
         }
-      }>('/v1/envelope', {
-        document_name: docName,
-        pdf_base64: base64,
-        signers: signerList,
-        auto_close: autoClose,
-      })
+      }>('/v1/envelope', payload)
 
       // GA4 key event (F-14.6 / AC-47): an envelope was created. Consent-gated
       // upstream by Consent Mode v2; a no-op when no GA4 is configured.
@@ -182,7 +197,82 @@ export function CreateEnvelopePage() {
     } catch (e) {
       // Don't leak an opaque server fault (run402's "Internal function error") —
       // show a calm fallback for 5xx/opaque, keep helpful 4xx validation messages
-      // (2026-06-21). scroll-to-top so the banner is seen.
+      // (2026-06-21). scroll-to-top so the banner is seen. A held-send failure
+      // (e.g. the F-39.4 insufficient-credit outcome) returns to the FORM with
+      // the draft intact — never a dead end.
+      setError(friendlyCreateError(e instanceof ApiError ? e.status : undefined, e instanceof Error ? e.message : undefined))
+      setFirstError(null)
+      setGatePhase('form')
+      scrollToTop()
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  /** Build the create body from the draft (shared by preflight + dispatch). */
+  const buildPayload = async (): Promise<Record<string, unknown>> => {
+    const base64 = await new Promise<string>((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve((reader.result as string).split(',')[1])
+      reader.readAsDataURL(file!)
+    })
+    const signerList = signers.map((s) => ({
+      email: s.email,
+      name: s.name,
+      // F-22.2 — only emit on_behalf_of when the checkbox is on AND a name was typed.
+      on_behalf_of: s.onBehalf && s.onBehalfOf.trim() ? s.onBehalfOf.trim() : undefined,
+    }))
+    return {
+      document_name: docName,
+      pdf_base64: base64,
+      signers: signerList,
+      auto_close: autoClose,
+    }
+  }
+
+  // F-39.3 — a session appeared in THIS browser while the gate held the draft:
+  // fire the held send exactly once (SignInScreen ref-guards the callback; the
+  // ref here is belt-and-braces against a remount).
+  const handleGateSignedIn = () => {
+    if (gateSentOnceRef.current || !heldPayloadRef.current) return
+    gateSentOnceRef.current = true
+    setGatePhase('sending')
+    void dispatchEnvelope(heldPayloadRef.current)
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    // F-39.5 — every Send PRESS is a funnel fact (valid or not, guest or
+    // signed in): the click measures intent; validation outcomes follow.
+    telemetryEvent('send_clicked')
+    if (!file) { setError('Please upload a PDF'); setFirstError('file'); scrollToTop(); return }
+    // Reject oversize PDFs here, with a clear message — otherwise the base64 upload
+    // inflates past the 6 MiB Lambda invoke cap and the gateway returns an opaque 502.
+    if (isPdfTooLarge(file.size)) { setError(pdfTooLargeMessage(file.size)); setFirstError('file'); scrollToTop(); return }
+    if (!docName.trim()) { setError('Please enter a document name'); setFirstError('docName'); scrollToTop(); return }
+    if (signers.some((s) => !s.email || !s.name)) { setError('All signers need name and email'); setFirstError('signers'); scrollToTop(); return }
+    setFirstError(null)
+
+    if (!isGuest) {
+      // Signed-in Send: unchanged — immediate dispatch, no gate (AC-225).
+      const payload = await buildPayload()
+      await dispatchEnvelope(payload)
+      return
+    }
+
+    // Guest Send (F-39.3): validate FIRST — the free public preflight runs the
+    // same server-side rejections a signed-in create would hit (F-3.2a address
+    // rules, size guards), so nobody signs in just to learn the form is
+    // invalid. Preflight is STATELESS: nothing is stored server-side. Only a
+    // draft that passes opens the gate.
+    setSubmitting(true)
+    setError('')
+    try {
+      const payload = await buildPayload()
+      await apiPost('/v1/envelope/preflight', payload)
+      heldPayloadRef.current = payload
+      setGatePhase('gate')
+    } catch (e) {
       setError(friendlyCreateError(e instanceof ApiError ? e.status : undefined, e instanceof Error ? e.message : undefined))
       setFirstError(null)
       scrollToTop()
@@ -195,17 +285,59 @@ export function CreateEnvelopePage() {
   // handleSubmit. Future fix will reinstate with correct filter logic and
   // a sensible message template.
 
+  // F-39.3 — the gate view: the draft is HELD (state + heldPayloadRef live on;
+  // the form is merely unmounted) while the one SignInScreen runs in-flow. The
+  // back link abandons nothing — it just re-renders the form.
+  if (gatePhase === 'gate') {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-8">
+        <button
+          type="button"
+          data-testid="gate-back"
+          onClick={() => setGatePhase('form')}
+          className="inline-flex items-center gap-1 min-h-[44px] text-sm text-gray-500 hover:text-gray-900 mb-3 cursor-pointer"
+        >
+          <span aria-hidden>←</span> Back to your envelope
+        </button>
+        <SignInScreen title="Sign in to send your envelope" telemetryTrigger="send" onSignedIn={handleGateSignedIn} />
+      </div>
+    )
+  }
+
+  // The held send is dispatching (a session just appeared) — F-39.3.
+  if (gatePhase === 'sending') {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-8 text-center" data-testid="gate-sending">
+        <div className="animate-spin h-6 w-6 border-4 border-gray-300 border-t-gray-900 rounded-full mx-auto mt-16" />
+        <p className="text-sm text-gray-500 mt-4">Sending your envelope…</p>
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
       <Link
-        to="/dashboard"
+        to={isGuest ? '/' : '/dashboard'}
         className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-900 mb-3"
       >
-        <span aria-hidden>←</span> Back to Dashboard
+        <span aria-hidden>←</span> {isGuest ? 'Back to Home' : 'Back to Dashboard'}
       </Link>
       <h1 className="text-2xl font-semibold mb-6">Create an Envelope</h1>
+      {/* F-39.1 — the cost question answered before the gate ever appears: the
+          F-39.7 teaching line, guest-only (a signed-in creator has the credit
+          pill). */}
+      {isGuest && (
+        <p className="text-sm text-gray-600 -mt-4 mb-6" data-testid="guest-trial-line">
+          An envelope is one document sent out for signatures. Your first 4 are free. No credit card.
+        </p>
+      )}
 
-      {insufficientCredit ? (
+      {/* The replacing credit card serves its ORIGINAL purpose only — stopping
+          someone from FILLING a form they can't send (Barry QA 2026-06-16). A
+          draft that already exists must never be swallowed by it (F-39.4 /
+          AC-226): with a file picked, the form stays and the inline top-up
+          strip below carries the referral instead. */}
+      {insufficientCredit && !file ? (
         <div className="bg-white border border-gray-200 rounded-xl p-8 text-center space-y-4">
           <div
             className="mx-auto w-12 h-12 rounded-full bg-amber-50 flex items-center justify-center text-amber-600 text-2xl font-semibold"
@@ -237,6 +369,26 @@ export function CreateEnvelopePage() {
       <form onSubmit={handleSubmit} className="space-y-6">
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">{error}</div>
+        )}
+
+        {/* F-39.4 / AC-226 — the draft-preserving top-up: shown when the
+            balance is short but a draft EXISTS. Checkout opens in a new tab so
+            the draft tab survives; Send again afterward sends this same draft. */}
+        {insufficientCredit && file && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-900" data-testid="topup-inline">
+            <p className="font-medium mb-2">
+              Add credits to send. Your envelope is saved in this tab: top up, then press Send again.
+            </p>
+            <button
+              type="button"
+              data-testid="topup-inline-btn"
+              onClick={topUpInNewTab}
+              disabled={redirecting}
+              className="min-h-[44px] px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-40"
+            >
+              {redirecting ? 'Opening checkout…' : 'Add credits (opens a new tab)'}
+            </button>
+          </div>
         )}
 
         {/* F22.7.1 — Cover-page disclosure. Before the file picker, tell the
@@ -274,6 +426,7 @@ export function CreateEnvelopePage() {
               onClick={(e) => { e.currentTarget.value = '' }}
               onChange={(e) => {
                 const f = e.target.files?.[0] ?? null
+                if (f) markDraftStarted() // F-39.5 — the fact of the pick, never the file
                 setFile(f)
                 // Always reflect the chosen file in the display name, overwriting a
                 // prior value — so re-picking a file refreshes the name. The user can
@@ -310,12 +463,17 @@ export function CreateEnvelopePage() {
             </button>
           </div>
 
-          {/* Sender as signer */}
-          <label className="flex items-center gap-2 text-sm text-gray-600">
-            <input type="checkbox" checked={isSenderSigner} onChange={(e) => toggleSenderSigner(e.target.checked)}
-                   className="rounded border-gray-300" />
-            Will you also sign this document?
-          </label>
+          {/* Sender as signer — F-39.2: ABSENT (not disabled) for a guest; the
+              row's email/name are the signed-in creator's values, which a
+              guest session does not have. A guest who wants to sign their own
+              envelope adds themselves after the gated send (F-23 editing). */}
+          {!isGuest && (
+            <label className="flex items-center gap-2 text-sm text-gray-600">
+              <input type="checkbox" checked={isSenderSigner} onChange={(e) => toggleSenderSigner(e.target.checked)}
+                     className="rounded border-gray-300" />
+              Will you also sign this document?
+            </label>
+          )}
 
           {signers.map((s, i) => (
             <div key={i} className="border border-gray-100 rounded-lg p-4 space-y-3">

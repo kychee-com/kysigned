@@ -124,13 +124,19 @@ describe('telemetryEvents — operator funnel summary (F-38.6 / AC-219)', () => 
     ...over,
   });
 
-  it('returns the eight funnel steps in order with their counts, split by source and country, plus home per-element clicks', async () => {
+  it('returns every funnel step in order — landing through session-created incl. the F-39.5 editor steps — split by source and country, plus home per-element clicks (AC-219 0.61.0)', async () => {
     const { pool } = seededPool([
       r('page_view'),
       r('page_view', { country: 'US', source: 'organic', campaign: 'spring_promo' }),
       r('click', { element: 'cta_create:hero' }),
       r('click', { element: 'cta_create:header', country: 'US', source: 'organic', campaign: 'spring_promo' }),
       r('click', { element: 'other:faq' }), // home click, NOT a create click
+      // F-39.5 — the editor steps. The create-page landing counts BOTH as a
+      // generic landing and as editor_reached (page-scoped page_view).
+      r('page_view', { page: 'create' }),
+      r('draft_started', { page: 'create' }),
+      r('send_clicked', { page: 'create' }),
+      r('signin_prompt', { element: 'send', page: 'create' }),
       r('signin_prompt', { element: 'redirect', page: 'signin' }),
       r('signin_email_focus', { page: 'signin' }),
       r('signin_submit', { page: 'signin' }),
@@ -144,9 +150,12 @@ describe('telemetryEvents — operator funnel summary (F-38.6 / AC-219)', () => 
     assert.deepEqual(
       s.steps.map((x) => [x.step, x.count]),
       [
-        ['landed', 2],
+        ['landed', 3],
         ['clicked_create', 2],
-        ['prompt_shown', 1],
+        ['editor_reached', 1],
+        ['draft_started', 1],
+        ['send_clicked', 1],
+        ['prompt_shown', 2],
         ['email_touched', 1],
         ['link_requested', 1],
         ['link_sent', 1],
@@ -154,20 +163,20 @@ describe('telemetryEvents — operator funnel summary (F-38.6 / AC-219)', () => 
         ['session_created', 1],
       ],
     );
-    assert.deepEqual(s.by_source.organic, [1, 1, 0, 0, 0, 0, 0, 0]);
-    assert.equal(s.by_source.paid[0], 1);
-    assert.deepEqual(s.by_country.US, [1, 1, 0, 0, 0, 0, 0, 0]);
-    assert.equal(s.by_country.IL[0], 1);
+    assert.deepEqual(s.by_source.organic, [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert.equal(s.by_source.paid[0], 2);
+    assert.deepEqual(s.by_country.US, [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert.equal(s.by_country.IL[0], 2);
     // AC-219 (0.60.0): the campaign split answers "what did campaign X's visitors do".
-    assert.equal(s.by_campaign.summer_launch[0], 1);
-    assert.deepEqual(s.by_campaign.spring_promo, [1, 1, 0, 0, 0, 0, 0, 0]);
+    assert.equal(s.by_campaign.summer_launch[0], 2);
+    assert.deepEqual(s.by_campaign.spring_promo, [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     assert.deepEqual(s.home_clicks, { 'cta_create:hero': 1, 'cta_create:header': 1, 'other:faq': 1 });
   });
 
   it('an empty window returns zeroed steps, empty splits', async () => {
     const { pool } = seededPool([]);
     const s = await summarizeTelemetry(pool, { windowDays: 7, now: NOW });
-    assert.equal(s.steps.length, 8);
+    assert.equal(s.steps.length, 11);
     assert.ok(s.steps.every((x) => x.count === 0));
     assert.deepEqual(s.by_source, {});
     assert.deepEqual(s.by_campaign, {});

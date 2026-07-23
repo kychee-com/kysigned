@@ -28,6 +28,11 @@ const BROWSER_EVENTS = new Set([
   'signin_prompt',
   'signin_email_focus',
   'signin_submit',
+  // F-39.5 (0.61.0) — the guest-editor steps, hand-fired (DD-52): first draft
+  // interaction and the Send press. Element-less by design so no draft-adjacent
+  // label can ride them.
+  'draft_started',
+  'send_clicked',
 ]);
 
 /** Server-recorded funnel steps (F-38.4) — never accepted from a browser. */
@@ -53,6 +58,7 @@ const PAGES = new Set([
   'verify',
   'hashcheck',
   'dashboard',
+  'create',
   'account',
   'admin',
   'other',
@@ -88,7 +94,9 @@ const NAMED_CLICKABLES = new Set(['cta_create', 'signin', 'pricing', 'how_it_wor
 const CLICK_LOCATIONS = new Set(['hero', 'header', 'footer', 'pricing', 'audience_card']);
 
 const SCROLL_THRESHOLDS = new Set(['25', '50', '75', '100']);
-const PROMPT_TRIGGERS = new Set(['direct', 'redirect']);
+// AC-230 — the three gate arrivals: a deliberate sign-in, a protected-page
+// bounce, and (0.61.0) the send gate at the end of a guest draft.
+const PROMPT_TRIGGERS = new Set(['direct', 'redirect', 'send']);
 
 // ── caps (F-38.7) ───────────────────────────────────────────────────────────
 
@@ -127,7 +135,12 @@ export function normalizeTelemetryPage(raw: unknown): string {
   }
   path = path.split('?')[0].split('#')[0];
   if (PAGES.has(path)) return path; // already a normalized name
-  const seg = path.replace(/^\/+/, '').split('/')[0].toLowerCase().replace(/\.html$/, '');
+  const segs = path.replace(/^\/+/, '').replace(/\/+$/, '').split('/');
+  const seg = segs[0].toLowerCase().replace(/\.html$/, '');
+  // F-39.5 (0.61.0) — the editor is its own funnel page, split out of the
+  // dashboard first-segment mapping. EXACTLY /dashboard/create — a deeper path
+  // (or an envelope id) stays 'dashboard', so ids never gain a page value.
+  if (seg === 'dashboard' && segs.length === 2 && segs[1].toLowerCase() === 'create') return 'create';
   return SEGMENT_TO_PAGE[seg] ?? 'other';
 }
 
@@ -142,6 +155,8 @@ function validElement(event: string, element: unknown): string | null | undefine
     case 'page_view':
     case 'signin_email_focus':
     case 'signin_submit':
+    case 'draft_started':
+    case 'send_clicked':
       return null; // element ignored on element-less events
     case 'scroll':
       return el !== null && SCROLL_THRESHOLDS.has(el) ? el : undefined;

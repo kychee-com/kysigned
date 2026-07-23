@@ -66,10 +66,18 @@ export async function pruneTelemetryEvents(pool: DbPool, now: Date): Promise<num
 
 // ── F-38.6 — the operator funnel summary ────────────────────────────────────
 
-/** The eight funnel steps, in order (AC-219). */
-export const TELEMETRY_FUNNEL_STEPS: ReadonlyArray<{ step: string; event: string }> = [
+/**
+ * The funnel steps, in order (AC-219, reworded 0.61.0 — F-39.5 adds the guest
+ * editor: reached it, invested in it, met the gate). `page` scopes a step to
+ * one page value — `editor_reached` is the create page's own landing, counted
+ * alongside the generic `landed`.
+ */
+export const TELEMETRY_FUNNEL_STEPS: ReadonlyArray<{ step: string; event: string; page?: string }> = [
   { step: 'landed', event: 'page_view' },
   { step: 'clicked_create', event: 'click' }, // click on a cta_create element
+  { step: 'editor_reached', event: 'page_view', page: 'create' },
+  { step: 'draft_started', event: 'draft_started' },
+  { step: 'send_clicked', event: 'send_clicked' },
   { step: 'prompt_shown', event: 'signin_prompt' },
   { step: 'email_touched', event: 'signin_email_focus' },
   { step: 'link_requested', event: 'signin_submit' },
@@ -104,7 +112,8 @@ interface SummaryRow {
 function isStep(row: SummaryRow, stepIndex: number): boolean {
   const def = TELEMETRY_FUNNEL_STEPS[stepIndex];
   if (row.event !== def.event) return false;
-  // Step 2 is specifically a create-envelope click, wherever it sits.
+  if (def.page !== undefined && row.page !== def.page) return false; // page-scoped step (editor_reached)
+  // The create click is specifically a cta_create element, wherever it sits.
   if (def.step === 'clicked_create') return (row.element ?? '').startsWith('cta_create');
   return true;
 }

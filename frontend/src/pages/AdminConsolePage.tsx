@@ -547,7 +547,8 @@ const SIGNAL_COLS: DrillCol[] = [
 
 
 // ── F-38.6 / AC-219 — the Funnel tab ────────────────────────────────────────
-// The pre-signin funnel: eight steps in order with the drop between adjacent
+// The pre-signin funnel: every step in order — landing through session-created,
+// incl. the F-39.5 editor steps (0.61.0) — with the drop between adjacent
 // steps (the read that answers "WHERE do visitors stop"), split by traffic
 // source and country, plus the home page's per-element clicks. The rail is
 // identifier-free, so there is nothing for exclude-internal to classify — the

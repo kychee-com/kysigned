@@ -179,10 +179,13 @@ export function MarketingHomePage() {
               </a>
             ) : null}
           </div>
-          {/* Operator note under the CTA — kysigned.com's trial offer
-              (F-14.8 / AC-98) or, on a fresh fork, a "replace this" hint. */}
+          {/* Operator note under the CTA — F-39.7 (AC-229): a FIRST-CLASS hero
+              line at body-copy size (18px = .hero p), never a footnote. It
+              carries the envelope-teaching + trial copy (F-14.8), so its
+              prominence IS the requirement. KEEP IN SYNC with
+              build-home-page.ts's heroSection note. */}
           {hero.note ? (
-            <p style={{ marginTop: 14, fontSize: 14, fontWeight: 600, color: '#666' }}>{hero.note}</p>
+            <p style={{ marginTop: 14, fontSize: 18, fontWeight: 600, color: '#666' }}>{hero.note}</p>
           ) : null}
         </div>
       </section>

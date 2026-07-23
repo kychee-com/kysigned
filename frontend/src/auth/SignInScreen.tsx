@@ -32,14 +32,23 @@ interface SignInScreenProps {
   /** Optional override for the rendered title (defaults to "Sign in"). */
   title?: string;
   /**
-   * F-38.3 — HOW the visitor reached the gate: 'direct' (landed on the
-   * sign-in route) or 'redirect' (bounced here from a signed-out attempt at a
-   * protected action — RequireAuth passes this). Telemetry only.
+   * F-38.3 / AC-230 — WHICH gate the visitor met: 'direct' (landed on the
+   * sign-in route), 'redirect' (bounced here from a signed-out attempt at a
+   * protected route — RequireAuth passes this), or 'send' (the F-39.3 gate at
+   * the end of a guest draft — the envelope editor passes this). 'send' also
+   * flips the waiting state to the ON THIS DEVICE instruction (F-39.6).
    */
-  telemetryTrigger?: 'direct' | 'redirect';
+  telemetryTrigger?: 'direct' | 'redirect' | 'send';
+  /**
+   * F-39.3 — embedding hook: when provided, a session appearing in this
+   * browser calls this EXACTLY ONCE instead of navigating away, so the page
+   * holding a draft (the envelope editor) keeps its state and owns what
+   * happens next (the held send). Absent → the classic navigate-to-dashboard.
+   */
+  onSignedIn?: () => void;
 }
 
-export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct' }: SignInScreenProps) {
+export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct', onSignedIn }: SignInScreenProps) {
   const { user, refresh } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -76,9 +85,19 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct' }:
   // /dashboard. We DO NOT navigate while showing the post-token-exchange
   // confirmation card — that tab opened from the magic-link click and the
   // user explicitly chooses Continue/Close themselves.
+  // F-39.3 — embedded (send-gate) mode: the embedding page owns the moment a
+  // session appears. Ref-guarded so re-renders and fresh user identities can
+  // never re-fire the held send (AC-225's exactly-once).
+  const signedInFired = useRef(false);
   useEffect(() => {
     if (!user) return;
     if (signedInConfirmation) return;
+    if (onSignedIn) {
+      if (signedInFired.current) return;
+      signedInFired.current = true;
+      onSignedIn();
+      return;
+    }
     const params = new URLSearchParams(location.search);
     const next = params.get('next');
     // Land on the dashboard after sign-in. `next` only redirects to a REAL
@@ -87,7 +106,7 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct' }:
     // back to marketing.
     const dest = next && next.startsWith('/') && next !== '/' ? next : '/dashboard';
     navigate(dest, { replace: true });
-  }, [user, signedInConfirmation, location.search, navigate]);
+  }, [user, signedInConfirmation, location.search, navigate, onSignedIn]);
 
   // Magic-link forwarder: if the URL contains ?token=<...>, treat THIS render
   // as a post-magic-link landing and auto-exchange the token. Replaces the
@@ -324,8 +343,14 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct' }:
         className="w-14 h-14 rounded-xl mx-auto mb-5"
       />
       <h1 className="text-2xl font-semibold mb-4">{title}</h1>
-      <p className="text-gray-500 mb-6">
-        Sign in with your email to view your dashboard.
+      {/* F-39.6 — ONE screen serves sign-up AND sign-in: no separate
+          registration exists, and a first-time creator must learn that here,
+          not bounce off looking for a "create account" button. */}
+      <p className="text-gray-500 mb-1">
+        Sign in or create your account with your email.
+      </p>
+      <p className="text-sm text-gray-400 mb-6">
+        New here? Your account is created on your first sign-in.
       </p>
 
       {!magicLinkSent ? (
@@ -374,6 +399,29 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct' }:
               Sign in with a passkey instead
             </button>
           )}
+
+          {/* F-39.6 / AC-228 — the gate answers the fear before the field:
+              why an account exists, what it costs (nothing, 4 free), and —
+              prominently, size+weight emphasis (AC-231, never color alone) —
+              that SIGNERS never need any of this. Long version: FAQ. */}
+          <div className="mt-8 text-left bg-gray-50 border border-gray-100 rounded-xl p-5" data-testid="signin-why">
+            <h2 className="text-sm font-semibold text-gray-900 mb-2">Why do I need to sign in?</h2>
+            <p className="text-sm text-gray-600 leading-relaxed">
+              Your account is where your sent envelopes live: track who has signed, get the completed
+              signing record, and keep your credits. Your first 4 envelopes are free. No credit card.
+            </p>
+            <p className="text-base font-bold text-gray-900 mt-4 leading-snug" data-testid="signin-signers-note">
+              Only people SENDING documents need an account. Signers never sign in: they just
+              forward the email, and that&rsquo;s it.
+            </p>
+            <a
+              href="/faq#why-sign-in"
+              className="inline-flex items-center min-h-[44px] mt-1 text-sm text-gray-500 hover:text-gray-900 underline underline-offset-2"
+              data-testid="signin-why-faq-link"
+            >
+              Read more in the FAQ &rarr;
+            </a>
+          </div>
         </div>
       ) : (
         <div className="space-y-4" data-testid="signin-check-email">
@@ -390,16 +438,34 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct' }:
           <p className="text-sm text-gray-700">
             Check your email at <span className="font-medium">{emailInput}</span>. Click the sign-in link.
           </p>
-          <p className="text-xs text-gray-500 mb-4">
-            This tab continues automatically once you click the link — or use the button below.
-          </p>
-          <button
-            onClick={goToDashboard}
-            data-testid="signin-continue"
-            className="w-full px-6 py-3 bg-gray-900 text-white rounded-lg font-medium transition-colors duration-150 hover:bg-gray-700 active:bg-gray-950 cursor-pointer"
-          >
-            I&rsquo;ve clicked the link &mdash; continue
-          </button>
+          {telemetryTrigger === 'send' ? (
+            // F-39.6 / AC-228 — the send gate holds a draft that lives ONLY in
+            // this browser (sessions are per-browser), so a link opened on the
+            // phone would sign the phone in and strand the draft here. Shout
+            // the device instruction, emphasized by SIZE + WEIGHT (never color
+            // alone — AC-231).
+            <p className="text-base font-semibold text-gray-900 mb-4" data-testid="gate-device-note">
+              Open the email and click the link{' '}
+              <span className="text-lg font-extrabold" data-testid="gate-device-phrase">ON THIS DEVICE</span>{' '}
+              to send your envelope.
+            </p>
+          ) : (
+            <p className="text-xs text-gray-500 mb-4">
+              This tab continues automatically once you click the link — or use the button below.
+            </p>
+          )}
+          {telemetryTrigger !== 'send' && (
+            // Hidden at the send gate: this is a FULL navigation to /dashboard,
+            // which would destroy the held draft (F-39.3). The session poll +
+            // onSignedIn fire the held send by themselves.
+            <button
+              onClick={goToDashboard}
+              data-testid="signin-continue"
+              className="w-full px-6 py-3 bg-gray-900 text-white rounded-lg font-medium transition-colors duration-150 hover:bg-gray-700 active:bg-gray-950 cursor-pointer"
+            >
+              I&rsquo;ve clicked the link &mdash; continue
+            </button>
+          )}
           <details className="text-xs text-gray-400 mt-6">
             <summary className="cursor-pointer hover:text-gray-600">
               Sign-in link not working in your email? Paste the URL here

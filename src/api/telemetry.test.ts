@@ -94,6 +94,65 @@ describe('normalizeCampaign (F-38.1 0.60.0 — bounded operator cohort tag)', ()
   });
 });
 
+describe('0.61.0 vocabulary — the moved gate (F-39.5 / AC-227 / AC-230)', () => {
+  it('/dashboard/create normalizes to its OWN page value; other dashboard paths stay dashboard', () => {
+    assert.equal(normalizeTelemetryPage('/dashboard/create'), 'create');
+    assert.equal(normalizeTelemetryPage('/dashboard/create?step=2#top'), 'create');
+    assert.equal(normalizeTelemetryPage('https://kysigned.com/dashboard/create'), 'create');
+    assert.equal(normalizeTelemetryPage('create'), 'create'); // already-normalized name
+    assert.equal(normalizeTelemetryPage('/dashboard'), 'dashboard');
+    assert.equal(normalizeTelemetryPage('/dashboard/7d0723ec-aaaa-bbbb-cccc-000000000000'), 'dashboard');
+    assert.equal(normalizeTelemetryPage('/dashboard/create/extra'), 'dashboard'); // only the exact editor route is create
+  });
+
+  it('draft_started and send_clicked are accepted from the browser, element-less', async () => {
+    const { pool, calls } = capturePool();
+    await collect(ctx(pool), batch({
+      page: '/dashboard/create',
+      records: [
+        { event: 'page_view', seq: 1 },
+        { event: 'draft_started', seq: 2 },
+        { event: 'send_clicked', element: 'ignored-junk', seq: 3 },
+      ],
+    }));
+    assert.equal(calls.length, 1);
+    const vals = calls[0].values;
+    assert.ok(vals.includes('draft_started'));
+    assert.ok(vals.includes('send_clicked'));
+    assert.ok(vals.includes('create'));
+    assert.ok(!vals.includes('ignored-junk')); // element-less events store null
+  });
+
+  it('near-miss editor event names are dropped by the allowlist', async () => {
+    const { pool, calls } = capturePool();
+    await collect(ctx(pool), batch({
+      records: [
+        { event: 'draft_startedx', seq: 1 },
+        { event: 'send_click', seq: 2 },
+        { event: 'editor_reached', seq: 3 }, // a summary STEP name, not a browser event
+      ],
+    }));
+    assert.equal(calls.length, 0);
+  });
+
+  it('signin_prompt accepts the send trigger; near-miss triggers still drop (AC-230)', async () => {
+    const { pool, calls } = capturePool();
+    await collect(ctx(pool), batch({
+      page: '/dashboard/create',
+      records: [
+        { event: 'signin_prompt', element: 'send', seq: 1 },
+        { event: 'signin_prompt', element: 'sendx', seq: 2 },
+        { event: 'signin_prompt', element: 'SEND', seq: 3 },
+      ],
+    }));
+    assert.equal(calls.length, 1);
+    const vals = calls[0].values;
+    assert.equal(vals.filter((v) => v === 'send').length, 1);
+    assert.ok(!vals.includes('sendx'));
+    assert.ok(!vals.includes('SEND'));
+  });
+});
+
 describe('handleTelemetryCollect — fork default + config gate (AC-221/AC-214)', () => {
   it('ctx undefined (rail disabled — the fork default) → silent drop, ZERO queries', async () => {
     const { calls } = capturePool();
