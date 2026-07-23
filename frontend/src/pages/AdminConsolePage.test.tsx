@@ -305,3 +305,70 @@ describe('AdminConsolePage — F-34.7 view-state persistence (AC-202)', () => {
     expect(JSON.parse(localStorage.getItem(VIEW_KEY) ?? '{}')).toMatchObject({ window: '7d' });
   });
 });
+
+// ── F-38.6 / AC-219 — the Funnel tab ─────────────────────────────────────────
+describe('AdminConsolePage — Funnel tab (F-38.6)', () => {
+  const summary = {
+    enabled: true,
+    window_days: 30,
+    steps: [
+      { step: 'landed', event: 'page_view', count: 100 },
+      { step: 'clicked_create', event: 'click', count: 40 },
+      { step: 'prompt_shown', event: 'signin_prompt', count: 30 },
+      { step: 'email_touched', event: 'signin_email_focus', count: 20 },
+      { step: 'link_requested', event: 'signin_submit', count: 12 },
+      { step: 'link_sent', event: 'send_ok', count: 12 },
+      { step: 'link_opened', event: 'link_opened', count: 8 },
+      { step: 'session_created', event: 'session_created', count: 7 },
+    ],
+    by_source: { paid: [60, 20, 15, 10, 6, 6, 4, 3], direct: [40, 20, 15, 10, 6, 6, 4, 4] },
+    by_country: { IL: [80, 30, 25, 15, 10, 10, 6, 5], US: [20, 10, 5, 5, 2, 2, 2, 2] },
+    home_clicks: { 'cta_create:hero': 33, 'other:faq': 9 },
+  };
+
+  it('renders the eight steps in order with counts and the drop between adjacent steps', async () => {
+    const fetchMock = mockFetchByPath({ '/v1/admin/overview': overview, '/v1/telemetry/summary': summary });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<MemoryRouter><AdminConsolePage /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId('admin-tab-funnel')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('admin-tab-funnel'));
+    await waitFor(() => expect(screen.getByTestId('admin-funnel')).toBeInTheDocument());
+    const rows = screen.getAllByTestId(/admin-funnel-step-/);
+    expect(rows).toHaveLength(8);
+    expect(rows[0]).toHaveTextContent('landed');
+    expect(rows[0]).toHaveTextContent('100');
+    // The largest drop (clicked_create: 100 → 40) is visible as a percentage.
+    expect(screen.getByTestId('admin-funnel-step-clicked_create')).toHaveTextContent('-60%');
+    // Splits + home clicks render.
+    expect(screen.getByTestId('admin-funnel-sources')).toHaveTextContent('paid');
+    expect(screen.getByTestId('admin-funnel-countries')).toHaveTextContent('IL');
+    expect(screen.getByTestId('admin-funnel-home-clicks')).toHaveTextContent('cta_create:hero');
+    // The window selector drives the days param.
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/v1/telemetry/summary') && String(c[0]).includes('days=30'))).toBe(true);
+  });
+
+  it('window selection re-fetches with the mapped days', async () => {
+    const fetchMock = mockFetchByPath({ '/v1/admin/overview': overview, '/v1/telemetry/summary': summary });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<MemoryRouter><AdminConsolePage /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId('admin-tab-funnel')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('admin-tab-funnel'));
+    await waitFor(() => expect(screen.getByTestId('admin-funnel')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('admin-window-24h'));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/v1/telemetry/summary') && String(c[0]).includes('days=1'))).toBe(true),
+    );
+  });
+
+  it('a disabled rail renders the telemetry-off notice instead of an empty funnel', async () => {
+    const fetchMock = mockFetchByPath({
+      '/v1/admin/overview': overview,
+      '/v1/telemetry/summary': { enabled: false, window_days: 0, steps: [], by_source: {}, by_country: {}, home_clicks: {} },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<MemoryRouter><AdminConsolePage /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId('admin-tab-funnel')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('admin-tab-funnel'));
+    await waitFor(() => expect(screen.getByTestId('admin-funnel-disabled')).toBeInTheDocument());
+  });
+});

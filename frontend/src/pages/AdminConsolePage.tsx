@@ -17,13 +17,13 @@ import { apiGet, ApiError, formatUsd } from '../lib/api';
 import { AdminReconciliationPage } from './AdminReconciliationPage';
 
 type WindowKey = '24h' | '7d' | '30d' | '365d' | 'all';
-type TabKey = 'overview' | 'accounts' | 'envelopes' | 'signals' | 'reconciliation';
+type TabKey = 'overview' | 'accounts' | 'envelopes' | 'signals' | 'funnel' | 'reconciliation';
 
 const WINDOWS: Array<[WindowKey, string]> = [
   ['24h', '24h'], ['7d', '7 days'], ['30d', '30 days'], ['365d', '1 year'], ['all', 'All time'],
 ];
 const TABS: Array<[TabKey, string]> = [
-  ['overview', 'Overview'], ['accounts', 'Accounts'], ['envelopes', 'Envelopes'], ['signals', 'Signals'], ['reconciliation', 'Reconciliation'],
+  ['overview', 'Overview'], ['accounts', 'Accounts'], ['envelopes', 'Envelopes'], ['signals', 'Signals'], ['funnel', 'Funnel'], ['reconciliation', 'Reconciliation'],
 ];
 
 // ── F-34.7 view-state persistence ──────────────────────────────────────────────
@@ -545,6 +545,124 @@ const SIGNAL_COLS: DrillCol[] = [
   { key: 'detail', label: 'Detail' }, { key: 'at', label: 'When' },
 ];
 
+
+// ── F-38.6 / AC-219 — the Funnel tab ────────────────────────────────────────
+// The pre-signin funnel: eight steps in order with the drop between adjacent
+// steps (the read that answers "WHERE do visitors stop"), split by traffic
+// source and country, plus the home page's per-element clicks. The rail is
+// identifier-free, so there is nothing for exclude-internal to classify — the
+// toggle deliberately does not apply here. Window → days (records prune at 90).
+const FUNNEL_WINDOW_DAYS: Record<WindowKey, number> = { '24h': 1, '7d': 7, '30d': 30, '365d': 90, 'all': 90 };
+
+interface FunnelSummary {
+  enabled: boolean;
+  window_days: number;
+  steps: Array<{ step: string; event: string; count: number }>;
+  by_source: Record<string, number[]>;
+  by_country: Record<string, number[]>;
+  home_clicks: Record<string, number>;
+}
+
+function FunnelSplitTable({ title, testId, split, steps }: {
+  title: string; testId: string; split: Record<string, number[]>; steps: FunnelSummary['steps'];
+}) {
+  const keys = Object.keys(split).sort();
+  if (keys.length === 0) return null;
+  return (
+    <div className="mb-6" data-testid={testId}>
+      <h3 className="text-sm font-medium mb-2">{title}</h3>
+      <div className="overflow-x-auto">
+        <table className="text-xs w-full border-collapse">
+          <thead>
+            <tr className="text-left text-gray-500">
+              <th className="py-1 pr-3 font-normal" />
+              {steps.map((st) => (
+                <th key={st.step} className="py-1 pr-3 font-normal whitespace-nowrap">{st.step.replace(/_/g, ' ')}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {keys.map((k) => (
+              <tr key={k} className="border-t border-gray-100">
+                <td className="py-1 pr-3 font-medium whitespace-nowrap">{k}</td>
+                {(split[k] ?? []).map((n, i) => (
+                  <td key={i} className="py-1 pr-3 tabular-nums">{n}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function FunnelTab({ window }: { window: WindowKey }) {
+  const days = FUNNEL_WINDOW_DAYS[window];
+  const [data, setData] = useState<FunnelSummary | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let active = true;
+    setData(null);
+    setError('');
+    apiGet<FunnelSummary>(`/v1/telemetry/summary?days=${days}`)
+      .then((d) => { if (active) setData(d); })
+      .catch((e) => { if (active) setError(e instanceof Error ? e.message : 'failed'); });
+    return () => { active = false; };
+  }, [days]);
+
+  if (error) return <p className="text-sm text-red-600 py-6" data-testid="admin-funnel-error">{error}</p>;
+  if (!data) return <Spinner />;
+  if (!data.enabled) {
+    return (
+      <p className="text-sm text-gray-600 py-6" data-testid="admin-funnel-disabled">
+        Funnel telemetry is off (KYSIGNED_TELEMETRY). Enable the rail to collect the pre-signin funnel.
+      </p>
+    );
+  }
+
+  return (
+    <div data-testid="admin-funnel">
+      <div className="mb-6">
+        {data.steps.map((st, i) => {
+          const prev = i === 0 ? null : data.steps[i - 1].count;
+          const drop = prev && prev > 0 ? Math.round(((st.count - prev) / prev) * 100) : null;
+          const width = data.steps[0].count > 0 ? Math.max(2, Math.round((st.count / data.steps[0].count) * 100)) : 2;
+          return (
+            <div key={st.step} className="flex items-center gap-3 py-1" data-testid={`admin-funnel-step-${st.step}`}>
+              <span className="w-32 shrink-0 text-xs text-gray-700 whitespace-nowrap">{st.step.replace(/_/g, ' ')}</span>
+              <div className="flex-1 min-w-0">
+                <div className="h-5 rounded bg-gray-900" style={{ width: `${width}%` }} />
+              </div>
+              <span className="w-16 shrink-0 text-right text-sm tabular-nums font-medium">{st.count}</span>
+              <span className="w-14 shrink-0 text-right text-xs tabular-nums text-gray-500">
+                {drop === null ? '' : `${drop}%`}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <FunnelSplitTable title="By traffic source" testId="admin-funnel-sources" split={data.by_source} steps={data.steps} />
+      <FunnelSplitTable title="By country" testId="admin-funnel-countries" split={data.by_country} steps={data.steps} />
+      {Object.keys(data.home_clicks).length > 0 && (
+        <div className="mb-6" data-testid="admin-funnel-home-clicks">
+          <h3 className="text-sm font-medium mb-2">Home page clicks</h3>
+          <table className="text-xs border-collapse">
+            <tbody>
+              {Object.entries(data.home_clicks).sort((a, b) => b[1] - a[1]).map(([el, n]) => (
+                <tr key={el} className="border-t border-gray-100">
+                  <td className="py-1 pr-6 font-mono">{el}</td>
+                  <td className="py-1 tabular-nums text-right">{n}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SignalsTab({ window, excludeInternal }: { window: WindowKey; excludeInternal: boolean }) {
   const { data, loading, denied, error } = useAdminData<Signals>('/v1/admin/signals', window, excludeInternal);
   const [drill, setDrill] = useState<SignalGroup | null>(null);
@@ -666,6 +784,7 @@ export function AdminConsolePage() {
       {tab === 'accounts' && <AccountsTab window={window} excludeInternal={excludeInternal} />}
       {tab === 'envelopes' && <EnvelopesTab window={window} excludeInternal={excludeInternal} />}
       {tab === 'signals' && <SignalsTab window={window} excludeInternal={excludeInternal} />}
+      {tab === 'funnel' && <FunnelTab window={window} />}
       {tab === 'reconciliation' && <AdminReconciliationPage excludeInternal={excludeInternal} />}
     </div>
   );

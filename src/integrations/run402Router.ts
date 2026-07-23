@@ -121,6 +121,8 @@ export const API_ROUTES: RouteDef[] = [
   // public (the visitors it measures have no account); every bound lives in the
   // handler (allowlist door, caps, per-source rate limit — DD-50).
   { method: 'POST', pattern: '/v1/telemetry', name: 'telemetryCollect', auth: 'public' },
+  // The operator funnel view (F-38.6) — session + the F-33 operator gate.
+  { method: 'GET', pattern: '/v1/telemetry/summary', name: 'telemetrySummary', auth: 'session' },
 
   // ── admin allowlist (session, operator-gated in the handler) ─────────────
   { method: 'GET', pattern: '/v1/admin/allowed-senders', name: 'listAllowedSenders', auth: 'session' },

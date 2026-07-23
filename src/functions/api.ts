@@ -34,6 +34,7 @@
  */
 import { matchRoute } from '../integrations/run402Router.js';
 import { handleTelemetryCollect } from '../api/telemetry.js';
+import { summarizeTelemetry } from '../db/telemetryEvents.js';
 import { deriveCountry } from '../api/telemetryDerive.js';
 import { csrfOk, resolveSession } from '../api/auth/session.js';
 import { resolveApiKey } from '../api/auth/apiKeyAuth.js';
@@ -224,6 +225,7 @@ const OPERATOR_ROUTES: ReadonlySet<string> = new Set([
   'adminLedger',
   'adminActive',
   'adminSignalRows',
+  'telemetrySummary', // F-38.6 — the funnel view is operator-only
 ]);
 
 export async function handleRequest(req: Request, deps: RequestDeps): Promise<Response> {
@@ -569,6 +571,19 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
     case 'keyArchive': {
       const r = await handleKeyArchiveLookup({}, url.searchParams.get('domain'), url.searchParams.get('selector'));
       return json(r.body, r.status);
+    }
+
+    // ── telemetry summary (session + operator gate; F-38.6) ──
+    case 'telemetrySummary': {
+      // Rail disabled (fork default): no data and no telemetry reads — the
+      // summary answers with the explicit empty shape (AC-221).
+      if (!deps.telemetry) {
+        return json({ enabled: false, window_days: 0, steps: [], by_source: {}, by_country: {}, home_clicks: {} }, 200);
+      }
+      const daysRaw = Number(url.searchParams.get('days') ?? '7');
+      const days = Number.isFinite(daysRaw) ? Math.min(90, Math.max(1, Math.trunc(daysRaw))) : 7;
+      const summary = await summarizeTelemetry(deps.telemetry.pool, { windowDays: days });
+      return json({ enabled: true, ...summary }, 200);
     }
 
     // ── telemetry collection (public; F-38 / DD-50) ──

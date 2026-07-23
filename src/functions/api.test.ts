@@ -153,6 +153,55 @@ describe('handleRequest — routing + auth gate', () => {
     assert.equal(res.status, 404);
   });
 
+  it('GET /v1/telemetry/summary refuses an unauthenticated caller (401) and a signed-in NON-operator (403) — AC-219', async () => {
+    const anon = await handleRequest(req('GET', '/v1/telemetry/summary'), makeDeps());
+    assert.equal(anon.status, 401);
+    const nonOp = await handleRequest(
+      req('GET', '/v1/telemetry/summary', { headers: { cookie: `${SESSION_COOKIE}=${VALID_SESSION_ID}` } }),
+      makeDeps({ pool: validSessionPool('creator@example.com'), operatorEmails: ['op@kychee.com'] }),
+    );
+    assert.equal(nonOp.status, 403);
+    assert.equal(((await nonOp.json()) as { code: string }).code, 'auth_operator_scope');
+  });
+
+  it('GET /v1/telemetry/summary serves the operator the eight-step funnel (rail enabled)', async () => {
+    const sessionPool = validSessionPool('op@kychee.com');
+    const telemetryPool = {
+      async query(text: string) {
+        if (/FROM telemetry_events/i.test(text)) {
+          return { rows: [{ event: 'page_view', page: 'home', element: null, country: 'IL', source: 'paid' }], rowCount: 1 } as never;
+        }
+        return { rows: [], rowCount: 0 } as never;
+      },
+      async end() {},
+    };
+    const res = await handleRequest(
+      req('GET', '/v1/telemetry/summary?days=14', { headers: { cookie: `${SESSION_COOKIE}=${VALID_SESSION_ID}` } }),
+      makeDeps({
+        pool: sessionPool,
+        operatorEmails: ['op@kychee.com'],
+        telemetry: { pool: telemetryPool, ownHost: 'kysigned.com', limiter: { allow: () => true } },
+      }),
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { window_days: number; steps: Array<{ step: string; count: number }> };
+    assert.equal(body.window_days, 14);
+    assert.equal(body.steps.length, 8);
+    assert.equal(body.steps[0].step, 'landed');
+    assert.equal(body.steps[0].count, 1);
+  });
+
+  it('GET /v1/telemetry/summary with the rail DISABLED returns the empty shape — no data, zero telemetry reads (AC-221)', async () => {
+    const res = await handleRequest(
+      req('GET', '/v1/telemetry/summary', { headers: { cookie: `${SESSION_COOKIE}=${VALID_SESSION_ID}` } }),
+      makeDeps({ pool: validSessionPool('op@kychee.com'), operatorEmails: ['op@kychee.com'] }),
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { enabled: boolean; steps: unknown[] };
+    assert.equal(body.enabled, false);
+    assert.deepEqual(body.steps, []);
+  });
+
   it('the auth anchors thread the platform-provided country onto server-recorded steps (F-38.4/AC-218)', async () => {
     const steps: Array<[string, { country?: string } | undefined]> = [];
     const okSend = async (url: string) =>
