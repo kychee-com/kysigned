@@ -58,14 +58,35 @@ describe('disabled (fresh-fork default) — sends nothing, touches nothing', () 
 
 describe('page views, seq, and batching', () => {
   it('pageView queues a page_view with seq 1 and flush sends the batch with riders', () => {
-    const { rail, sent } = harness({ search: '?gclid=Cj0Kabc' });
+    const { rail, sent } = harness({ search: '?gclid=Cj0Kabc&utm_campaign=Summer_Launch' });
     rail.pageView('/pricing');
     rail.flush();
     expect(sent).toHaveLength(1);
     expect(sent[0].page).toBe('/pricing');
     expect(sent[0].ref).toBe('https://news.ycombinator.com/');
     expect(sent[0].gclid).toBe(true);
+    // 0.60.0 — the campaign rider: the RAW landing utm_campaign value; the
+    // server normalizes and stores the bounded token.
+    expect(sent[0].utm).toBe('Summer_Launch');
     expect(sent[0].records).toEqual([{ event: 'page_view', seq: 1 }]);
+  });
+
+  it('the campaign rider stays in page memory across SPA soft-navs of the same load — never in storage', () => {
+    const { rail, sent } = harness({ search: '?utm_campaign=spring_promo' });
+    rail.pageView('/');
+    rail.flush();
+    rail.pageView('/pricing'); // soft-nav: URL no longer carries the param
+    rail.flush();
+    expect(sent[1].utm).toBe('spring_promo');
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it('no utm_campaign → no utm rider field at all', () => {
+    const { rail, sent } = harness({ search: '?gclid=x' });
+    rail.pageView('/');
+    rail.flush();
+    expect('utm' in sent[0]).toBe(false);
   });
 
   it('events number sequentially within one page load; a new pageView resets the sequence', () => {
@@ -198,7 +219,7 @@ describe('static-page mirror (telemetry.mjs) — interop with the SPA rail', () 
       send: (b: TelemetryBatch) => (sent.push(b), true),
       path: '/pricing.html',
       referrer: 'https://www.google.com/',
-      search: '',
+      search: '?utm_campaign=Summer_Launch',
       doc: document,
     });
     (document.getElementById('named') as HTMLElement).click();
@@ -212,6 +233,7 @@ describe('static-page mirror (telemetry.mjs) — interop with the SPA rail', () 
     const records = sent.flatMap((b) => b.records);
     expect(sent[0].page).toBe('/pricing.html');
     expect(sent[0].ref).toBe('https://www.google.com/');
+    expect(sent[0].utm).toBe('Summer_Launch');
     expect(records[0]).toEqual({ event: 'page_view', seq: 1 });
     expect(records.filter((r) => r.event === 'click').map((r) => r.element)).toEqual([
       'pricing:header',

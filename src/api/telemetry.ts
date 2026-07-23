@@ -97,6 +97,18 @@ export const TELEMETRY_MAX_RECORDS_PER_POST = 25;
 export const TELEMETRY_MAX_PAGE_SEQ = 60;
 const MAX_RAW_FIELD_LEN = 256;
 
+/**
+ * F-38.1 (0.60.0) — the campaign label: the operator's OWN `utm_campaign` tag,
+ * normalized to a bounded lowercase token. A cohort name shared by every
+ * visitor the campaign brings — 'none' when absent, 'other' when malformed
+ * (the raw value is never stored).
+ */
+export function normalizeCampaign(raw: unknown): string {
+  if (typeof raw !== 'string' || raw === '') return 'none';
+  const v = raw.trim().toLowerCase();
+  return /^[a-z0-9_-]{1,64}$/.test(v) ? v : 'other';
+}
+
 // ── page normalization ──────────────────────────────────────────────────────
 
 /**
@@ -226,6 +238,9 @@ export async function handleTelemetryCollect(
     const gclidPresent = b.gclid === true;
     const source = deriveSourceBucket({ referrer, gclidPresent, ownHost: ctx.ownHost });
     const country = deriveCountry(req.headers);
+    // F-38.5 (0.60.0) — the campaign rider: normalized then stored; the raw
+    // query value is discarded with the other riders.
+    const campaign = normalizeCampaign(b.utm);
 
     const rows: TelemetryEventRow[] = [];
     for (const raw of b.records) {
@@ -237,7 +252,7 @@ export async function handleTelemetryCollect(
       if (element === undefined) continue;
       const seq = typeof r.seq === 'number' && Number.isInteger(r.seq) && r.seq >= 0 && r.seq <= TELEMETRY_MAX_PAGE_SEQ ? r.seq : null;
       if (seq === null) continue;
-      rows.push({ occurredAt: now, event: r.event, page, element, country, source, pageSeq: seq });
+      rows.push({ occurredAt: now, event: r.event, page, element, country, source, campaign, pageSeq: seq });
     }
     if (rows.length === 0) return;
     await insertTelemetryEvents(ctx.pool, rows);

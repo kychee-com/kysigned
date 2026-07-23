@@ -25,6 +25,12 @@ export interface TelemetryEventRow {
   country: string;
   /** Coarse traffic-source bucket: paid | organic | referral | direct | unknown. */
   source: string;
+  /**
+   * The operator's own campaign tag from the arriving link (`utm_campaign`),
+   * normalized to a bounded token — a cohort name shared by every visitor the
+   * campaign brings, never a per-visitor value. 'none' when absent.
+   */
+  campaign: string;
   /** Per-page-load sequence id — orders records within ONE page view only. */
   pageSeq: number;
 }
@@ -41,11 +47,11 @@ export async function insertTelemetryEvents(pool: DbPool, rows: TelemetryEventRo
   const tuples: string[] = [];
   for (const r of rows) {
     const base = values.length;
-    values.push(r.occurredAt, r.event, r.page, r.element, r.country, r.source, r.pageSeq);
-    tuples.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`);
+    values.push(r.occurredAt, r.event, r.page, r.element, r.country, r.source, r.campaign, r.pageSeq);
+    tuples.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8})`);
   }
   await pool.query(
-    `INSERT INTO telemetry_events (occurred_at, event, page, element, country, source, page_seq)
+    `INSERT INTO telemetry_events (occurred_at, event, page, element, country, source, campaign, page_seq)
      VALUES ${tuples.join(', ')}`,
     values,
   );
@@ -79,6 +85,8 @@ export interface TelemetryFunnelSummary {
   by_source: Record<string, number[]>;
   /** Per-country eight-step counts, in TELEMETRY_FUNNEL_STEPS order. */
   by_country: Record<string, number[]>;
+  /** Per-campaign eight-step counts (AC-219 0.60.0 — the cohort read). */
+  by_campaign: Record<string, number[]>;
   /** Home-page per-element click counts (F-38.2's named + catch-all buckets). */
   home_clicks: Record<string, number>;
 }
@@ -89,6 +97,7 @@ interface SummaryRow {
   element: string | null;
   country: string;
   source: string;
+  campaign: string;
 }
 
 /** True when a row lands the given funnel step. */
@@ -113,7 +122,7 @@ export async function summarizeTelemetry(
   const now = opts.now ?? new Date();
   const since = new Date(now.getTime() - opts.windowDays * 24 * 60 * 60 * 1000);
   const res = await pool.query(
-    `SELECT event, page, element, country, source FROM telemetry_events WHERE occurred_at >= $1`,
+    `SELECT event, page, element, country, source, campaign FROM telemetry_events WHERE occurred_at >= $1`,
     [since],
   );
   const rows = (res.rows ?? []) as SummaryRow[];
@@ -121,6 +130,7 @@ export async function summarizeTelemetry(
   const stepCounts = TELEMETRY_FUNNEL_STEPS.map(() => 0);
   const bySource: Record<string, number[]> = {};
   const byCountry: Record<string, number[]> = {};
+  const byCampaign: Record<string, number[]> = {};
   const homeClicks: Record<string, number> = {};
 
   const bump = (map: Record<string, number[]>, key: string, stepIndex: number) => {
@@ -134,6 +144,7 @@ export async function summarizeTelemetry(
       stepCounts[i] += 1;
       bump(bySource, row.source, i);
       bump(byCountry, row.country, i);
+      bump(byCampaign, row.campaign ?? 'none', i);
     }
     if (row.event === 'click' && row.page === 'home' && row.element) {
       homeClicks[row.element] = (homeClicks[row.element] ?? 0) + 1;
@@ -145,6 +156,7 @@ export async function summarizeTelemetry(
     steps: TELEMETRY_FUNNEL_STEPS.map((s, i) => ({ ...s, count: stepCounts[i] })),
     by_source: bySource,
     by_country: byCountry,
+    by_campaign: byCampaign,
     home_clicks: homeClicks,
   };
 }

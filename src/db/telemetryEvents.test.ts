@@ -36,6 +36,7 @@ const row = (over: Partial<TelemetryEventRow> = {}): TelemetryEventRow => ({
   element: null,
   country: 'unknown',
   source: 'direct',
+  campaign: 'none',
   pageSeq: 1,
   ...over,
 });
@@ -50,7 +51,9 @@ describe('telemetryEvents — insert (F-38.1 identifier-free shape lock)', () =>
     const colsMatch = sql.match(/INSERT INTO telemetry_events\s*\(([^)]*)\)/i);
     assert.ok(colsMatch, `insert must target telemetry_events with an explicit column list: ${sql}`);
     const cols = colsMatch[1].split(',').map((c) => c.trim()).sort();
-    assert.deepEqual(cols, ['country', 'element', 'event', 'occurred_at', 'page', 'page_seq', 'source']);
+    // Spec 0.60.0: the exhaustive record shape is the EIGHT F-38.1 fields —
+    // the campaign label (an operator cohort tag) joined in 67.13.
+    assert.deepEqual(cols, ['campaign', 'country', 'element', 'event', 'occurred_at', 'page', 'page_seq', 'source']);
   });
 
   it('an extra property smuggled onto a row object never reaches the SQL params', async () => {
@@ -116,6 +119,7 @@ describe('telemetryEvents — operator funnel summary (F-38.6 / AC-219)', () => 
     element: null,
     country: 'IL',
     source: 'paid',
+    campaign: 'summer_launch',
     page_seq: 1,
     ...over,
   });
@@ -123,9 +127,9 @@ describe('telemetryEvents — operator funnel summary (F-38.6 / AC-219)', () => 
   it('returns the eight funnel steps in order with their counts, split by source and country, plus home per-element clicks', async () => {
     const { pool } = seededPool([
       r('page_view'),
-      r('page_view', { country: 'US', source: 'organic' }),
+      r('page_view', { country: 'US', source: 'organic', campaign: 'spring_promo' }),
       r('click', { element: 'cta_create:hero' }),
-      r('click', { element: 'cta_create:header', country: 'US', source: 'organic' }),
+      r('click', { element: 'cta_create:header', country: 'US', source: 'organic', campaign: 'spring_promo' }),
       r('click', { element: 'other:faq' }), // home click, NOT a create click
       r('signin_prompt', { element: 'redirect', page: 'signin' }),
       r('signin_email_focus', { page: 'signin' }),
@@ -154,6 +158,9 @@ describe('telemetryEvents — operator funnel summary (F-38.6 / AC-219)', () => 
     assert.equal(s.by_source.paid[0], 1);
     assert.deepEqual(s.by_country.US, [1, 1, 0, 0, 0, 0, 0, 0]);
     assert.equal(s.by_country.IL[0], 1);
+    // AC-219 (0.60.0): the campaign split answers "what did campaign X's visitors do".
+    assert.equal(s.by_campaign.summer_launch[0], 1);
+    assert.deepEqual(s.by_campaign.spring_promo, [1, 1, 0, 0, 0, 0, 0, 0]);
     assert.deepEqual(s.home_clicks, { 'cta_create:hero': 1, 'cta_create:header': 1, 'other:faq': 1 });
   });
 
@@ -163,6 +170,7 @@ describe('telemetryEvents — operator funnel summary (F-38.6 / AC-219)', () => 
     assert.equal(s.steps.length, 8);
     assert.ok(s.steps.every((x) => x.count === 0));
     assert.deepEqual(s.by_source, {});
+    assert.deepEqual(s.by_campaign, {});
     assert.deepEqual(s.home_clicks, {});
   });
 });

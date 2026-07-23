@@ -322,6 +322,7 @@ describe('AdminConsolePage — Funnel tab (F-38.6)', () => {
       { step: 'session_created', event: 'session_created', count: 7 },
     ],
     by_source: { paid: [60, 20, 15, 10, 6, 6, 4, 3], direct: [40, 20, 15, 10, 6, 6, 4, 4] },
+    by_campaign: { summer_launch: [55, 22, 18, 12, 8, 8, 5, 4], none: [45, 18, 12, 8, 4, 4, 3, 3] },
     by_country: { IL: [80, 30, 25, 15, 10, 10, 6, 5], US: [20, 10, 5, 5, 2, 2, 2, 2] },
     home_clicks: { 'cta_create:hero': 33, 'other:faq': 9 },
   };
@@ -341,6 +342,8 @@ describe('AdminConsolePage — Funnel tab (F-38.6)', () => {
     expect(screen.getByTestId('admin-funnel-step-clicked_create')).toHaveTextContent('-60%');
     // Splits + home clicks render.
     expect(screen.getByTestId('admin-funnel-sources')).toHaveTextContent('paid');
+    // 0.60.0 — the cohort read: per-campaign funnels.
+    expect(screen.getByTestId('admin-funnel-campaigns')).toHaveTextContent('summer_launch');
     expect(screen.getByTestId('admin-funnel-countries')).toHaveTextContent('IL');
     expect(screen.getByTestId('admin-funnel-home-clicks')).toHaveTextContent('cta_create:hero');
     // The window selector drives the days param.

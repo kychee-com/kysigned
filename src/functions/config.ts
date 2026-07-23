@@ -606,6 +606,8 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
               element: null,
               country: opts?.country ?? 'unknown',
               source: opts?.paid === true ? 'paid' : 'unknown',
+              // Server steps have no page URL in reach — explicit none (F-38.5).
+              campaign: 'none',
               pageSeq: 0,
             },
           ]);

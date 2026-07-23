@@ -77,6 +77,13 @@ export function initStaticTelemetry(opts) {
   const ownHost = o.ownHost !== undefined ? o.ownHost : location.hostname;
   const endpoint = o.endpoint || ENDPOINT;
   const gclid = /[?&]gclid=/.test(search);
+  // 0.60.0 — the landing campaign tag (raw; server normalizes). Memory only.
+  let utm = null;
+  try {
+    utm = new URLSearchParams(search).get('utm_campaign');
+  } catch {
+    utm = null;
+  }
 
   const send =
     o.send ||
@@ -105,7 +112,9 @@ export function initStaticTelemetry(opts) {
     const records = queue.splice(0, queue.length);
     try {
       for (let i = 0; i < records.length; i += BATCH_CAP) {
-        send({ page: path, ref: referrer, gclid: gclid, records: records.slice(i, i + BATCH_CAP) });
+        const batch = { page: path, ref: referrer, gclid: gclid, records: records.slice(i, i + BATCH_CAP) };
+        if (utm) batch.utm = utm;
+        send(batch);
       }
     } catch {
       /* silent */

@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import type { DbPool } from '../db/pool.js';
 import {
   normalizeTelemetryPage,
+  normalizeCampaign,
   handleTelemetryCollect,
   createTelemetryLimiter,
   TELEMETRY_MAX_RECORDS_PER_POST,
@@ -81,6 +82,18 @@ describe('normalizeTelemetryPage (F-38.1 — the allowlist door)', () => {
   });
 });
 
+describe('normalizeCampaign (F-38.1 0.60.0 — bounded operator cohort tag)', () => {
+  it('lowercases and passes clean tokens; none when absent; other when malformed', () => {
+    assert.equal(normalizeCampaign('Summer_Launch-2026'), 'summer_launch-2026');
+    assert.equal(normalizeCampaign(undefined), 'none');
+    assert.equal(normalizeCampaign(''), 'none');
+    assert.equal(normalizeCampaign('has spaces!'), 'other');
+    assert.equal(normalizeCampaign('x'.repeat(65)), 'other');
+    assert.equal(normalizeCampaign('<script>'), 'other');
+    assert.equal(normalizeCampaign(42), 'none');
+  });
+});
+
 describe('handleTelemetryCollect — fork default + config gate (AC-221/AC-214)', () => {
   it('ctx undefined (rail disabled — the fork default) → silent drop, ZERO queries', async () => {
     const { calls } = capturePool();
@@ -93,17 +106,19 @@ describe('handleTelemetryCollect — fork default + config gate (AC-221/AC-214)'
     await collect(ctx(pool), batch(), { headers: new Headers({ 'cf-ipcountry': 'IL' }) });
     assert.equal(calls.length, 1);
     const v = calls[0].values;
-    // Two records, seven params each: occurred_at, event, page, element, country, source, page_seq
-    assert.equal(v.length, 14);
+    // Two records, EIGHT params each (0.60.0): occurred_at, event, page,
+    // element, country, source, campaign, page_seq
+    assert.equal(v.length, 16);
     assert.ok(v[0] instanceof Date);
     assert.equal(v[1], 'page_view');
     assert.equal(v[2], 'pricing');
     assert.equal(v[3], null);
     assert.equal(v[4], 'IL');
     assert.equal(v[5], 'referral');
-    assert.equal(v[6], 1);
-    assert.equal(v[8], 'click');
-    assert.equal(v[10], 'cta_create:hero');
+    assert.equal(v[6], 'none');
+    assert.equal(v[7], 1);
+    assert.equal(v[9], 'click');
+    assert.equal(v[11], 'cta_create:hero');
   });
 
   it('the derivation riders are DISCARDED — no referrer URL or click-id trace in any param (AC-218)', async () => {
@@ -114,6 +129,21 @@ describe('handleTelemetryCollect — fork default + config gate (AC-221/AC-214)'
     assert.ok(!/gclid/i.test(flat), 'click-id trace leaked');
     // gclid presence → paid bucket, as a bucket only
     assert.equal(calls[0].values[5], 'paid');
+  });
+
+  it('the utm rider records the NORMALIZED campaign label on every record of the load (AC-218 0.60.0)', async () => {
+    const { pool, calls } = capturePool();
+    await collect(ctx(pool), batch({ utm: 'Summer_Launch' }));
+    // 8 params/record now: occurred_at, event, page, element, country, source, campaign, page_seq
+    assert.equal(calls[0].values[6], 'summer_launch');
+    assert.equal(calls[0].values[14], 'summer_launch');
+    const { pool: p2, calls: c2 } = capturePool();
+    await collect(ctx(p2), batch()); // no utm rider
+    assert.equal(c2[0].values[6], 'none');
+    const { pool: p3, calls: c3 } = capturePool();
+    await collect(ctx(p3), batch({ utm: 'evil value <script>' }));
+    assert.equal(c3[0].values[6], 'other');
+    assert.ok(!JSON.stringify(c3[0].values).includes('<script>'), 'raw utm leaked');
   });
 
   it('a raw signer-link page in the batch stores the known-set value only (AC-214)', async () => {
@@ -148,7 +178,7 @@ describe('handleTelemetryCollect — the validation door (AC-220)', () => {
       }),
     );
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].values.length, 7); // only page_view survived
+    assert.equal(calls[0].values.length, 8); // only page_view survived
     assert.equal(calls[0].values[1], 'page_view');
   });
 
@@ -172,8 +202,8 @@ describe('handleTelemetryCollect — the validation door (AC-220)', () => {
       }),
     );
     const v = calls[0].values;
-    const elements = [v[3], v[10], v[17], v[24], v[31]];
-    assert.equal(v.length, 35); // 5 surviving records × 7
+    const elements = [v[3], v[11], v[19], v[27], v[35]];
+    assert.equal(v.length, 40); // 5 surviving records × 8
     assert.deepEqual(elements, ['cta_create:hero', 'other:faq', 'other:external', '50', 'redirect']);
   });
 
@@ -181,7 +211,7 @@ describe('handleTelemetryCollect — the validation door (AC-220)', () => {
     const { pool, calls } = capturePool();
     const many = Array.from({ length: 80 }, (_, i) => ({ event: 'page_view', seq: i + 1 }));
     await collect(ctx(pool), batch({ records: many }));
-    assert.equal(calls[0].values.length / 7 <= TELEMETRY_MAX_RECORDS_PER_POST, true);
+    assert.equal(calls[0].values.length / 8 <= TELEMETRY_MAX_RECORDS_PER_POST, true);
     const { pool: p2, calls: c2 } = capturePool();
     await collect(ctx(p2), batch({ records: [{ event: 'page_view', seq: 5000 }] }));
     assert.equal(c2.length, 0, 'a seq past the per-page-load cap must drop');

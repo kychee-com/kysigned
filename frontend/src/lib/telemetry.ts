@@ -38,6 +38,12 @@ export interface TelemetryBatch {
   page: string;
   ref: string;
   gclid: boolean;
+  /**
+   * 0.60.0 — the campaign rider: the landing URL's raw `utm_campaign` value
+   * (the server normalizes + stores the bounded token). Held in page memory
+   * only; omitted entirely when the load carried none.
+   */
+  utm?: string;
   records: TelemetryRecord[];
 }
 
@@ -128,6 +134,14 @@ export function createTelemetryRail(opts: TelemetryRailOptions = {}) {
   const search = opts.search ?? (typeof window !== 'undefined' ? window.location.search : '');
   const ownHost = opts.ownHost ?? (typeof window !== 'undefined' ? window.location.hostname : '');
   const gclid = /[?&]gclid=/.test(search);
+  // 0.60.0 — the landing load's campaign tag, kept in module memory for the
+  // life of this page load (soft-navs included). Never stored anywhere.
+  let utm: string | null = null;
+  try {
+    utm = new URLSearchParams(search).get('utm_campaign');
+  } catch {
+    utm = null;
+  }
 
   let state: PageState | null = null;
   let attached = false;
@@ -137,7 +151,13 @@ export function createTelemetryRail(opts: TelemetryRailOptions = {}) {
     const records = state.queue.splice(0, state.queue.length);
     try {
       for (let i = 0; i < records.length; i += BATCH_CAP) {
-        send({ page: state.page, ref: referrer, gclid, records: records.slice(i, i + BATCH_CAP) });
+        send({
+          page: state.page,
+          ref: referrer,
+          gclid,
+          ...(utm ? { utm } : {}),
+          records: records.slice(i, i + BATCH_CAP),
+        });
       }
     } catch {
       // Silent — collection never surfaces an error (F-38.2).
