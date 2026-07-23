@@ -8,11 +8,19 @@
  * caller throws the riders away — no referrer URL and no click-id value ever
  * reach a stored row (F-38.1).
  *
- * Country comes from what the serving platform stamps on the request:
- * kysigned.com rides the Cloudflare custom-domain edge (`cf-ipcountry`, when
- * the zone's IP-geolocation flag is on); managed run402 subdomains would carry
- * `cloudfront-viewer-country`. Anything else — including Cloudflare's XX/T1
- * sentinels — is the explicit 'unknown', never a guess (AC-218).
+ * Country comes from what the serving platform stamps on the request. run402
+ * mints ONE canonical header, `x-run402-country`, on BOTH ingress paths
+ * (run402-private#609): custom domains from the edge Worker's authoritative
+ * `request.cf.country`, managed `*.run402.com` subdomains from CloudFront's
+ * viewer country. `cf-ipcountry` remains as run402's documented compat alias on
+ * the custom-domain path, and stays trustworthy there because the Worker scrubs
+ * any client-supplied copy before stamping its own (#608).
+ *
+ * The raw `cloudfront-viewer-country` is deliberately NOT read: the gateway
+ * blocklists it and translates it to the canonical header, so a copy arriving
+ * here could only have been supplied by the caller. Anything else — including
+ * Cloudflare's XX/T1 sentinels — is the explicit 'unknown', never a guess
+ * (AC-218).
  */
 
 export type TelemetrySourceBucket = 'paid' | 'organic' | 'referral' | 'direct' | 'unknown';
@@ -66,11 +74,13 @@ export function deriveSourceBucket(input: {
 
 /**
  * The visitor's country as the serving platform provides it for THIS request,
- * or the explicit 'unknown'. Only a clean ISO 3166-1 alpha-2 shape passes;
- * Cloudflare's XX (unknown) and T1 (Tor) sentinels normalize to 'unknown'.
+ * or the explicit 'unknown'. The canonical platform header wins; the vendor
+ * alias is the fallback for a deployment whose edge predates it. Only a clean
+ * ISO 3166-1 alpha-2 shape passes; Cloudflare's XX (unknown) and T1 (Tor)
+ * sentinels normalize to 'unknown'.
  */
 export function deriveCountry(headers: Headers): string {
-  const raw = headers.get('cf-ipcountry') ?? headers.get('cloudfront-viewer-country') ?? '';
+  const raw = headers.get('x-run402-country') ?? headers.get('cf-ipcountry') ?? '';
   const code = raw.trim().toUpperCase();
   if (!/^[A-Z]{2}$/.test(code)) return 'unknown';
   if (code === 'XX' || code === 'T1') return 'unknown';

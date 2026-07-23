@@ -144,10 +144,10 @@ async function readJsonBody(req: Request): Promise<Record<string, unknown>> {
 }
 
 /**
- * F-38.4 — bind the platform-provided country (cf-ipcountry /
- * cloudfront-viewer-country, else the explicit unknown) onto the auth ctx's
- * telemetryStep so server-recorded funnel steps carry it (AC-218). A no-op
- * when the rail is off (no telemetryStep on the ctx).
+ * F-38.4 — bind the platform-provided country (the canonical x-run402-country,
+ * else its cf-ipcountry compat alias, else the explicit unknown) onto the auth
+ * ctx's telemetryStep so server-recorded funnel steps carry it (AC-218). A
+ * no-op when the rail is off (no telemetryStep on the ctx).
  */
 function telemetryBoundAuthCtx(deps: RequestDeps, req: Request): ReturnType<RequestDeps['authCtx']> {
   const ctx = deps.authCtx();

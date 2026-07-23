@@ -39,13 +39,26 @@ describe('deriveSourceBucket (F-38.5)', () => {
 describe('deriveCountry (F-38.5 / DD-50.4 — platform-provided or explicit unknown)', () => {
   const h = (entries: Record<string, string>) => new Headers(entries);
 
-  it('reads cf-ipcountry when Cloudflare stamps it', () => {
+  it('reads the canonical x-run402-country (run402 #609 — minted on BOTH ingress edges)', () => {
+    assert.equal(deriveCountry(h({ 'x-run402-country': 'IL' })), 'IL');
+    assert.equal(deriveCountry(h({ 'X-Run402-Country': 'de' })), 'DE');
+  });
+
+  it('the canonical header wins over the vendor alias when both are present', () => {
+    assert.equal(deriveCountry(h({ 'x-run402-country': 'IL', 'cf-ipcountry': 'DE' })), 'IL');
+  });
+
+  it('falls back to cf-ipcountry — the documented custom-domain compat alias', () => {
     assert.equal(deriveCountry(h({ 'cf-ipcountry': 'IL' })), 'IL');
     assert.equal(deriveCountry(h({ 'CF-IPCountry': 'de' })), 'DE');
   });
 
-  it('falls back to cloudfront-viewer-country (the managed-subdomain edge)', () => {
-    assert.equal(deriveCountry(h({ 'cloudfront-viewer-country': 'US' })), 'US');
+  // run402 #609 blocklists the raw CloudFront header at the gateway on the managed
+  // path and translates it to the canonical header, so this vendor header reaching
+  // the function can only be a client spoof (a direct-to-ALB caller) — never trusted.
+  it('a raw cloudfront-viewer-country is NOT trusted (post-#609 it can only be a spoof)', () => {
+    assert.equal(deriveCountry(h({ 'cloudfront-viewer-country': 'US' })), 'unknown');
+    assert.equal(deriveCountry(h({ 'x-run402-country': 'IL', 'cloudfront-viewer-country': 'US' })), 'IL');
   });
 
   it('nothing provided → the explicit unknown, never empty or a guess', () => {
