@@ -408,7 +408,7 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct', o
             <h2 className="text-sm font-semibold text-gray-900 mb-2">Why do I need to sign in?</h2>
             <p className="text-sm text-gray-600 leading-relaxed">
               Your account is where your sent envelopes live: track who has signed, get the completed
-              signing record, and keep your credits. Your first 4 envelopes are free. No credit card.
+              signing record, and keep your credits. Your first 4 envelopes are free. No credit card needed.
             </p>
             <p className="text-base font-bold text-gray-900 mt-4 leading-snug" data-testid="signin-signers-note">
               Only people SENDING documents need an account. Signers never sign in: they just

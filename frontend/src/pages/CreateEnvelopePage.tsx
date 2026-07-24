@@ -328,7 +328,7 @@ export function CreateEnvelopePage() {
           pill). */}
       {isGuest && (
         <p className="text-sm text-gray-600 -mt-4 mb-6" data-testid="guest-trial-line">
-          An envelope is one document sent out for signatures. Your first 4 are free. No credit card.
+          An envelope is one document sent out for signatures. Your first 4 are free. No credit card needed.
         </p>
       )}
 
