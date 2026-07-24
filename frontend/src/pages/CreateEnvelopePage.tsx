@@ -26,6 +26,27 @@ interface SignerInput {
 
 const emptySigner = (email = '', name = ''): SignerInput => ({ email, name, onBehalf: false, onBehalfOf: '' })
 
+/**
+ * F-025 (AC-228, 0.61.1 "no link on the gate may cost the visitor their
+ * envelope") — is there a held/unsent draft worth guarding navigation against?
+ * The gate/sending phases always are; on the form, any real content (a file, a
+ * doc name, or a signer with a name/email) counts. An empty form is not a draft.
+ */
+export function hasUnsentDraft(s: {
+  gatePhase: 'form' | 'gate' | 'sending'
+  file: File | null
+  docName: string
+  signers: Array<{ email: string; name: string }>
+}): boolean {
+  if (s.gatePhase !== 'form') return true
+  if (s.file) return true
+  if (s.docName.trim() !== '') return true
+  return s.signers.some((x) => x.email.trim() !== '' || x.name.trim() !== '')
+}
+
+const DRAFT_LEAVE_WARNING =
+  'You have an unsent envelope on this page. If you leave, your document and signers will be lost. Leave anyway?'
+
 export function CreateEnvelopePage() {
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -75,6 +96,53 @@ export function CreateEnvelopePage() {
     apiGet<CreditBalance>('/v1/credits/balance').then(setBalance).catch(() => setBalance(null))
   }, [showBilling, isGuest])
   const insufficientCredit = balance != null && !balance.sufficient_for_envelope
+
+  // F-025 — guard the held draft against EVERY exit vector, not just the gate's
+  // own links (F-024 already opens those in new tabs). The persistent site
+  // header is a SEPARATE component the gate can't reach, and browser Back /
+  // typed URL / tab close bypass links entirely. This app uses BrowserRouter
+  // (not a data router), so useBlocker is unavailable — instead we guard
+  // NAVIGATION router-agnostically:
+  //   (1) a CAPTURE-phase click on any anchor leaving this page — a soft SPA
+  //       <Link> OR a hard static-page link — is confirmed; decline cancels
+  //       both the client-side and the hard navigation (preventDefault +
+  //       stopPropagation, before React's own handler runs);
+  //   (2) beforeunload catches the non-anchor exits (browser Back, typed URL,
+  //       refresh, tab close).
+  // A successful send flips allowNavRef so its own result navigation is never
+  // guarded; an accepted hard-nav click marks the unload approved so
+  // beforeunload does not double-prompt.
+  const allowNavRef = useRef(false)
+  const draftDirty = hasUnsentDraft({ gatePhase, file, docName, signers })
+  useEffect(() => {
+    if (!draftDirty) return
+    const approvedUnload = { current: false }
+    const onClickCapture = (e: MouseEvent) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+      const a = (e.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null
+      if (!a) return
+      const href = a.getAttribute('href') ?? ''
+      if (a.target === '_blank' || href === '' || href.startsWith('#') || href.startsWith('mailto:')) return
+      if (allowNavRef.current) return
+      if (window.confirm(DRAFT_LEAVE_WARNING)) {
+        approvedUnload.current = true // a hard-nav anchor unloads next — don't double-prompt
+      } else {
+        e.preventDefault()
+        e.stopPropagation()
+      }
+    }
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (allowNavRef.current || approvedUnload.current) return
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    document.addEventListener('click', onClickCapture, true)
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => {
+      document.removeEventListener('click', onClickCapture, true)
+      window.removeEventListener('beforeunload', onBeforeUnload)
+    }
+  }, [draftDirty])
 
   const goToTopUp = async () => {
     setRedirecting(true)
@@ -191,6 +259,7 @@ export function CreateEnvelopePage() {
         ...(result.delivery?.undeliverable ?? []),
         ...(result.delivery?.failed ?? []),
       ]
+      allowNavRef.current = true // F-025 — the send's own result navigation must never be guarded
       navigate(`/dashboard/envelope/${result.envelope_id}`, {
         state: { justSent: true, ...(deliveryProblems.length ? { deliveryProblems } : {}) },
       })
@@ -439,7 +508,7 @@ export function CreateEnvelopePage() {
                 if (f && isPdfTooLarge(f.size)) { setError(pdfTooLargeMessage(f.size)); setFirstError('file') }
                 else if (f && firstError === 'file') { setFirstError(null); setError('') }
               }}
-              className={`w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200 ${firstError === 'file' ? 'ring-2 ring-red-400 rounded-lg' : ''}`}
+              className={`w-full min-h-[44px] flex items-center text-sm text-gray-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200 ${firstError === 'file' ? 'ring-2 ring-red-400 rounded-lg' : ''}`}
             />
             <p className="text-xs text-gray-500 mt-1">Max 3 MB per PDF.</p>
           </div>

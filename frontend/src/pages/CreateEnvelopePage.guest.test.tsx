@@ -89,6 +89,15 @@ describe('CreateEnvelopePage — guest mode (F-39.1/.2)', () => {
       expect(document.querySelector(`label[for="${input.id}"]`)).toBeTruthy();
     });
 
+    // F-026 (Cycle 20, AC-231): the native file input measured 278x36 on mobile —
+    // a residual of F-023 that min-h-44 on the TEXT inputs did not cover (a file
+    // input is not a text input). It must meet the 44px tap minimum too.
+    it('the PDF file input meets the 44px tap-target minimum (F-026)', () => {
+      renderPage();
+      const input = document.getElementById('pdf-file-input') as HTMLInputElement;
+      expect(input.className).toMatch(/min-h-\[44px\]/);
+    });
+
     it('no low-contrast .text-gray-400 remains on the editor', () => {
       const { container } = renderPage();
       expect(container.querySelectorAll('.text-gray-400')).toHaveLength(0);
