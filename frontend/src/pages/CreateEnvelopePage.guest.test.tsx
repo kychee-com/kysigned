@@ -68,4 +68,30 @@ describe('CreateEnvelopePage — guest mode (F-39.1/.2)', () => {
     renderPage();
     expect(apiGetMock).not.toHaveBeenCalled();
   });
+
+  // F-023 (Cycle 19, AC-231) — the visual sweep's blocking findings on the
+  // guest-facing editor: sub-44 tap targets (+Add signer, Back link, text
+  // inputs), an unlabeled file input, and low-contrast .text-gray-400 hints.
+  describe('a11y — the Cycle-19 visual-sweep locks (F-023 / AC-231)', () => {
+    it('interactive controls carry the 44px tap-target class', () => {
+      renderPage();
+      expect(screen.getByRole('button', { name: /add signer/i }).className).toMatch(/min-h-\[44px\]/);
+      expect(screen.getByText(/back to home/i).closest('a')!.className).toMatch(/min-h-\[44px\]/);
+      expect((screen.getByPlaceholderText('e.g., NDA for Acme Corp') as HTMLInputElement).className).toMatch(/min-h-\[44px\]/);
+      expect((screen.getAllByPlaceholderText('e.g., Jane Smith')[0] as HTMLInputElement).className).toMatch(/min-h-\[44px\]/);
+      expect((screen.getAllByPlaceholderText('jane.smith@example.com')[0] as HTMLInputElement).className).toMatch(/min-h-\[44px\]/);
+    });
+
+    it('the file input has an accessible name (bound label)', () => {
+      renderPage();
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      expect(input.id).toBeTruthy();
+      expect(document.querySelector(`label[for="${input.id}"]`)).toBeTruthy();
+    });
+
+    it('no low-contrast .text-gray-400 remains on the editor', () => {
+      const { container } = renderPage();
+      expect(container.querySelectorAll('.text-gray-400')).toHaveLength(0);
+    });
+  });
 });

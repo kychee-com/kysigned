@@ -309,7 +309,7 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct', o
                 Close this page
               </button>
               {autoCloseActive && (
-                <p className="text-xs text-gray-400" data-testid="confirm-countdown">
+                <p className="text-xs text-gray-500" data-testid="confirm-countdown">
                   This page will close in {countdown}s.
                 </p>
               )}
@@ -349,7 +349,7 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct', o
       <p className="text-gray-500 mb-1">
         Sign in or create your account with your email.
       </p>
-      <p className="text-sm text-gray-400 mb-6">
+      <p className="text-sm text-gray-500 mb-6">
         New here? Your account is created on your first sign-in.
       </p>
 
@@ -374,7 +374,7 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct', o
             data-testid="signin-email"
           />
           {emailInput.trim() !== '' && !emailValid && (
-            <p className="text-left text-xs text-gray-400" data-testid="signin-email-hint">
+            <p className="text-left text-xs text-gray-500" data-testid="signin-email-hint">
               Enter a valid email address.
             </p>
           )}
@@ -384,7 +384,7 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct', o
             className={`w-full px-6 py-3 rounded-lg font-medium transition-colors duration-150 ${
               emailValid
                 ? 'bg-gray-900 text-white hover:bg-gray-700 active:bg-gray-950 cursor-pointer'
-                : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                : 'bg-gray-200 text-gray-500 cursor-not-allowed'
             }`}
             data-testid="signin-send-link"
           >
@@ -414,8 +414,14 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct', o
               Only people SENDING documents need an account. Signers never sign in: they just
               forward the email, and that&rsquo;s it.
             </p>
+            {/* F-024 — ALWAYS a new tab: at the send gate this tab holds the
+                draft (in-tab state is the F-39.3 design), so an in-tab
+                navigation here silently destroys the envelope. Barry hit it
+                live. New-tab on every arrival of the screen, for consistency. */}
             <a
               href="/faq#why-sign-in"
+              target="_blank"
+              rel="noopener noreferrer"
               className="inline-flex items-center min-h-[44px] mt-1 text-sm text-gray-500 hover:text-gray-900 underline underline-offset-2"
               data-testid="signin-why-faq-link"
             >
@@ -466,7 +472,7 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct', o
               I&rsquo;ve clicked the link &mdash; continue
             </button>
           )}
-          <details className="text-xs text-gray-400 mt-6">
+          <details className="text-xs text-gray-500 mt-6">
             <summary className="cursor-pointer hover:text-gray-600">
               Sign-in link not working in your email? Paste the URL here
             </summary>

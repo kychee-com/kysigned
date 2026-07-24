@@ -12,11 +12,13 @@
  * (which would 401 on submit). They see the sign-in screen.
  */
 import type { ReactNode } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from './auth-core';
 import { SignInScreen } from './SignInScreen';
 
 export function RequireAuth({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -27,10 +29,14 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   }
 
   if (!user) {
-    // F-38.3 — the visitor BOUNCED here from a protected action (e.g. a
-    // signed-out create-envelope attempt): the prompt records the redirect
-    // trigger, distinguishing "reached the gate" from "came to sign in".
-    return <SignInScreen telemetryTrigger="redirect" />;
+    // F-38.3 / AC-230 (F-022) — name WHICH gate this is: `?intent=signin`
+    // marks a DELIBERATE sign-in (every static page's Sign-in link carries it;
+    // the SPA header's link routes through /?intent=signin already), while a
+    // bare protected-path arrival is the genuine bounce. Before F-022 the two
+    // were indistinguishable — the majority real-world path (static-header
+    // Sign-in → /dashboard) recorded as a bounce.
+    const deliberate = new URLSearchParams(location.search).get('intent') === 'signin';
+    return <SignInScreen telemetryTrigger={deliberate ? 'direct' : 'redirect'} />;
   }
 
   return <>{children}</>;

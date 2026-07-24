@@ -318,7 +318,7 @@ export function CreateEnvelopePage() {
     <div className="max-w-2xl mx-auto px-4 py-8">
       <Link
         to={isGuest ? '/' : '/dashboard'}
-        className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-900 mb-3"
+        className="inline-flex items-center gap-1 min-h-[44px] text-sm text-gray-500 hover:text-gray-900 mb-3"
       >
         <span aria-hidden>←</span> {isGuest ? 'Back to Home' : 'Back to Dashboard'}
       </Link>
@@ -361,7 +361,7 @@ export function CreateEnvelopePage() {
           >
             {redirecting ? 'Taking you to checkout…' : 'Add credits'}
           </button>
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-gray-500">
             You&rsquo;ll top up on our secure payment page, then come straight back here to send.
           </p>
         </div>
@@ -416,8 +416,11 @@ export function CreateEnvelopePage() {
         >
           <h2 className="text-sm font-medium">Document</h2>
           <div>
-            <label className="block text-sm text-gray-600 mb-1">PDF file</label>
+            {/* F-023 (AC-231) — the label is BOUND so the file input has an
+                accessible name (it was the sweep's unlabeled-control finding). */}
+            <label htmlFor="pdf-file-input" className="block text-sm text-gray-600 mb-1">PDF file</label>
             <input
+              id="pdf-file-input"
               type="file" accept=".pdf"
               // Clear the value before the picker opens so re-selecting the SAME
               // file still counts as a change — otherwise the browser fires no
@@ -438,17 +441,17 @@ export function CreateEnvelopePage() {
               }}
               className={`w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200 ${firstError === 'file' ? 'ring-2 ring-red-400 rounded-lg' : ''}`}
             />
-            <p className="text-xs text-gray-400 mt-1">Max 3 MB per PDF.</p>
+            <p className="text-xs text-gray-500 mt-1">Max 3 MB per PDF.</p>
           </div>
           <div>
             <label className="block text-sm text-gray-600 mb-1">Display name</label>
             <input
               type="text" value={docName}
               onChange={(e) => { setDocName(e.target.value); if (firstError === 'docName') setFirstError(null) }}
-              className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 ${firstError === 'docName' ? 'border-red-400 ring-1 ring-red-400' : 'border-gray-300'}`}
+              className={`w-full min-h-[44px] border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 ${firstError === 'docName' ? 'border-red-400 ring-1 ring-red-400' : 'border-gray-300'}`}
               placeholder="e.g., NDA for Acme Corp"
             />
-            <p className="text-xs text-gray-400 mt-1">
+            <p className="text-xs text-gray-500 mt-1">
               Shown to signers in the email subject and signing page. Auto-filled from the filename, edit if you want something nicer.
             </p>
           </div>
@@ -458,7 +461,7 @@ export function CreateEnvelopePage() {
         <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-medium">Signers</h2>
-            <button type="button" onClick={addSigner} className="text-sm text-blue-600 hover:underline">
+            <button type="button" onClick={addSigner} className="inline-flex items-center min-h-[44px] text-sm text-blue-600 hover:underline">
               + Add signer
             </button>
           </div>
@@ -478,7 +481,7 @@ export function CreateEnvelopePage() {
           {signers.map((s, i) => (
             <div key={i} className="border border-gray-100 rounded-lg p-4 space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-gray-400">Signer {i + 1}{isCreatorRow(s) ? ' (you)' : ''}</span>
+                <span className="text-xs text-gray-500">Signer {i + 1}{isCreatorRow(s) ? ' (you)' : ''}</span>
                 {signers.length > 1 && !isCreatorRow(s) && (
                   <button type="button" onClick={() => removeSigner(i)} className="text-xs text-red-400 hover:text-red-600">
                     Remove
@@ -497,7 +500,7 @@ export function CreateEnvelopePage() {
                     type="text" autoComplete="off" data-1p-ignore="true" data-lpignore="true" data-form-type="other"
                     autoFocus={i === 0} placeholder="e.g., Jane Smith" value={s.name}
                     onChange={(e) => { patchSigner(i, { name: e.target.value }); if (firstError === 'signers') setFirstError(null) }}
-                    className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 ${firstError === 'signers' && !s.name ? 'border-red-400 ring-1 ring-red-400' : 'border-gray-300'}`}
+                    className={`w-full min-h-[44px] border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 ${firstError === 'signers' && !s.name ? 'border-red-400 ring-1 ring-red-400' : 'border-gray-300'}`}
                   />
                 </div>
                 <div>
@@ -512,11 +515,11 @@ export function CreateEnvelopePage() {
                     onChange={(e) => { patchSigner(i, { email: e.target.value }); if (firstError === 'signers') setFirstError(null) }}
                     readOnly={isCreatorRow(s)}
                     title={isCreatorRow(s) ? 'Your account email: you’re signing as yourself. To sign from another address, add it as a separate signer.' : undefined}
-                    className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900${isCreatorRow(s) ? ' bg-gray-50 text-gray-500 cursor-not-allowed' : ''} ${firstError === 'signers' && !s.email ? 'border-red-400 ring-1 ring-red-400' : 'border-gray-300'}`}
+                    className={`w-full min-h-[44px] border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900${isCreatorRow(s) ? ' bg-gray-50 text-gray-500 cursor-not-allowed' : ''} ${firstError === 'signers' && !s.email ? 'border-red-400 ring-1 ring-red-400' : 'border-gray-300'}`}
                   />
                 </div>
               </div>
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-gray-500">
                 Full name appears in the signing email greeting and audit trail. Email is the identity used for signing.
               </p>
 
@@ -537,9 +540,9 @@ export function CreateEnvelopePage() {
                   <input
                     type="text" autoComplete="organization" placeholder="e.g., Acme Corp" value={s.onBehalfOf}
                     onChange={(e) => patchSigner(i, { onBehalfOf: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                    className="w-full min-h-[44px] border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
                   />
-                  <p className="text-xs text-gray-400 mt-1">
+                  <p className="text-xs text-gray-500 mt-1">
                     Added to this signer&rsquo;s legal declaration in the signing email and shown on the signing record&rsquo;s signature page.
                   </p>
                 </div>
@@ -559,7 +562,7 @@ export function CreateEnvelopePage() {
             />
             <span>
               <span className="font-medium">Send the signing record automatically when everyone has signed</span>
-              <span className="block text-xs text-gray-400 mt-0.5">
+              <span className="block text-xs text-gray-500 mt-0.5">
                 On by default. Turn this off to review the signers and seal the envelope yourself
                 (&ldquo;Seal &amp; send&rdquo;) once all signatures are in.
               </span>

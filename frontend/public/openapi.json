@@ -3,7 +3,7 @@
   "info": {
     "title": "kysigned API",
     "description": "Self-verifying e-signatures: create an envelope from a PDF plus signers; each human signer signs by forwarding one email (their provider DKIM-signs it); every party receives an offline-verifiable evidence bundle. This document describes the public /v1 surface of a kysigned instance. Machine-readable errors: every error response is `{ \"error\": string, \"code\": string }` where `code` is a stable taxonomy value (`auth_*`, `csrf_*`, `payment_*`, `validation_*`, `state_*`, `not_found`, `rate_size_*`, `idempotency_*`, `internal_*`). Completion webhooks: pass `callback_url` at create; deliveries are signed with `X-Kysigned-Signature: t=<unix>,v1=<hex hmac-sha256(callback_secret, \"<t>.<rawBody>\")>` — verify by recomputing the HMAC over `t + \".\" + rawBody` with the `callback_secret` returned once in the create response, comparing constant-time, and rejecting timestamps outside your tolerance window.",
-    "version": "0.61.0",
+    "version": "0.61.1",
     "license": { "name": "Apache-2.0", "identifier": "Apache-2.0" }
   },
   "servers": [{ "url": "/", "description": "This kysigned instance (origin-relative)" }],

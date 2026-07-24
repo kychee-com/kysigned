@@ -75,9 +75,30 @@ describe('SignInScreen — the gate explains itself (F-39.6 / AC-228)', () => {
     expect(link.getAttribute('href')).toBe('/faq#why-sign-in');
   });
 
+  // F-024 (Barry, live QA 2026-07-23): the FAQ link navigated IN-TAB, which
+  // destroys a held draft — the exact failure class F-39.3 forbids. The gate
+  // holds irreplaceable in-tab state, so EVERY anchor the gate renders must
+  // open elsewhere. Class-level lock, not a single-link patch.
+  it('every anchor on the gate opens in a NEW tab — no link may cost the held draft (F-024)', () => {
+    const { container } = renderScreen({ telemetryTrigger: 'send' });
+    const anchors = Array.from(container.querySelectorAll('a[href]'));
+    expect(anchors.length).toBeGreaterThan(0);
+    for (const a of anchors) {
+      expect(a.getAttribute('target'), `anchor ${a.getAttribute('href')} must not navigate the draft tab`).toBe('_blank');
+      expect(a.getAttribute('rel') ?? '').toMatch(/noopener/);
+    }
+  });
+
   it('the explainer renders on every arrival of the same screen — send gate included', () => {
     renderScreen({ telemetryTrigger: 'send' });
     expect(screen.getByTestId('signin-why')).toBeTruthy();
     expect(screen.getByTestId('signin-signers-note')).toBeTruthy();
+  });
+
+  // F-023 (Cycle 19, AC-231): the sweep flagged .text-gray-400 as failing AA
+  // contrast on the gate. gray-500 is the floor on white.
+  it('no low-contrast .text-gray-400 remains on the sign-in screen', () => {
+    const { container } = renderScreen();
+    expect(container.querySelectorAll('.text-gray-400')).toHaveLength(0);
   });
 });
