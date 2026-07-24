@@ -93,7 +93,7 @@ export function ApiKeysPage() {
     <div className="max-w-3xl mx-auto px-4 py-8" data-testid="apikeys-page">
       <h1 className="text-2xl font-semibold mb-2">API keys</h1>
       <p className="text-sm text-gray-600 mb-6">
-        Keys let an agent or script send and track envelopes as you — pass one in the{' '}
+        Keys let an agent or script send and track documents as you — pass one in the{' '}
         <code className="font-mono text-xs">Authorization</code> header (works with{' '}
         <code className="font-mono text-xs">kysigned-mcp</code> via{' '}
         <code className="font-mono text-xs">KYSIGNED_AUTHORIZATION</code>). A key cannot manage
@@ -114,7 +114,7 @@ export function ApiKeysPage() {
           </h2>
           <p className="text-xs text-green-800 mb-3">
             Copy it now — this is the only time it is shown. Anyone holding it can act as you on
-            envelope actions until you revoke it.
+            document-sending actions until you revoke it.
           </p>
           <div className="flex gap-2 items-center">
             <code
@@ -172,7 +172,7 @@ export function ApiKeysPage() {
         </div>
       ) : keys.length === 0 ? (
         <p className="text-sm text-gray-600 py-8 text-center bg-white border border-gray-200 rounded-lg">
-          No API keys yet. Create one above to let an agent send envelopes as you.
+          No API keys yet. Create one above to let an agent send documents as you.
         </p>
       ) : (
         <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">

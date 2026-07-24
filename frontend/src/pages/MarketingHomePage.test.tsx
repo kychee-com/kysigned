@@ -26,16 +26,16 @@ const KYSIGNED_CONFIG = JSON.stringify({
   showPricing: true,
   home: {
     hero: {
-      title: 'E-signatures at $0.25 an envelope.',
+      title: 'E-signatures at $0.25 per document.',
       subtitle: 'Simple, secure signing, powered by your email.',
       bodyHtml: 'Other tools charge <strong>way too much</strong>. By signing with <strong>DKIM</strong> kysigned is cheaper.',
-      note: 'Try 4 envelopes free, no credit card.',
+      note: 'Try 4 documents free, no credit card.',
       videoUrl: 'https://youtu.be/Ek1kZM5lhOU',
     },
     comparison: {
       heading: 'Why switch?',
       columns: ['Traditional e-sign', 'kysigned'],
-      rows: [{ label: 'Price', aHtml: '<strong>Way too much</strong>', bHtml: '$0.25 an envelope' }],
+      rows: [{ label: 'Price', aHtml: '<strong>Way too much</strong>', bHtml: '$0.25 per document' }],
     },
     audiences: {
       heading: 'Two ways to use',
@@ -43,8 +43,8 @@ const KYSIGNED_CONFIG = JSON.stringify({
         {
           kicker: 'For signers + small teams',
           tagline: 'Use kysigned.com',
-          itemsHtml: ['$0.25 an envelope'],
-          ctaLabel: 'Create an envelope →',
+          itemsHtml: ['$0.25 per document'],
+          ctaLabel: 'Send a document for signing →',
           ctaHref: '/dashboard/create',
           ctaStyle: 'primary',
           ctaExternal: false,
@@ -76,7 +76,7 @@ describe('MarketingHomePage — generic public default (no operator config, AC-1
     expect(t).toMatch(/live in your inbox/i); // the generic placeholder hero
     expect(t).toMatch(/powered by your email/i); // plain-language trust value (generic)
     expect(t).toMatch(/replace/i); // the "replace this copy" forker note
-    expect(t).toMatch(/Create an envelope/i); // the CTA is always present
+    expect(t).toMatch(/Send a document for signing/i); // the CTA is always present
   });
 
   it('ships NO pricing, NO operator brand, NO chain/all-caps residue', () => {
@@ -117,16 +117,16 @@ describe('MarketingHomePage — operator config injected (kysigned.com restored,
     expect(t).toMatch(/\$0\.25/); // operator pricing is restored
     expect(t).toMatch(/way too much/i); // the comparison table
     expect(t).toMatch(/Use kysigned\.com/); // the audience card
-    expect(t).toMatch(/4 envelopes free/i); // the trial note
+    expect(t).toMatch(/4 documents free/i); // the trial note
     expect(t).toMatch(/Kychee/); // the operator footer brand
   });
 
-  it('renders the hero note as a FIRST-CLASS line — body-copy size, never a footnote (F-39.7 / AC-229)', () => {
+  it('renders the hero note as a FIRST-CLASS line — body-copy size, never a footnote (F-39.7 v2 / AC-234)', () => {
     vi.stubEnv('VITE_OPERATOR_CONFIG', KYSIGNED_CONFIG);
     const { getByText } = render(<MemoryRouter><MarketingHomePage /></MemoryRouter>);
-    const note = getByText('Try 4 envelopes free, no credit card.');
+    const note = getByText('Try 4 documents free, no credit card.');
     // 18px = the hero body-copy size (.marketing-home-page .hero p). The old
-    // 14px footnote rendering is exactly what AC-229 forbids.
+    // 14px footnote rendering is exactly what AC-234 forbids.
     expect(note.style.fontSize).toBe('18px');
   });
 

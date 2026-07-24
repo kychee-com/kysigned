@@ -194,13 +194,13 @@ export function SigningPage() {
     const completedAt = info.completed_at ? new Date(info.completed_at).toLocaleString() : null
     let statusMessage: string
     if (info.status === 'completed') {
-      statusMessage = `This envelope was completed${completedAt ? ` on ${completedAt}` : ''}. We deleted the document after delivering the signing record to every party.`
+      statusMessage = `This signing was completed${completedAt ? ` on ${completedAt}` : ''}. We deleted the document after delivering the signing record to every party.`
     } else if (info.status === 'voided') {
-      statusMessage = `This envelope was voided by the sender. We deleted the document at that point — no further signing is possible.`
+      statusMessage = `This signing was cancelled by the sender. We deleted the document at that point — no further signing is possible.`
     } else if (info.status === 'expired') {
-      statusMessage = `This envelope expired without all signatures. We deleted the document — contact the sender to start over.`
+      statusMessage = `This signing expired without all signatures. We deleted the document — contact the sender to start over.`
     } else {
-      statusMessage = `This envelope's document is no longer stored on our servers (status: ${info.status}).`
+      statusMessage = `This document is no longer stored on our servers (status: ${info.status}).`
     }
     return (
       <div className={PAGE_SHELL}>
@@ -238,7 +238,7 @@ export function SigningPage() {
         </div>
 
         <div className="bg-white border border-gray-200 rounded-xl p-5 mb-5">
-          <h2 className="text-sm font-medium mb-3">Envelope details</h2>
+          <h2 className="text-sm font-medium mb-3">Signing details</h2>
           <dl className="text-xs space-y-2">
             <div>
               <dt className="inline text-gray-500">Status:</dt>{' '}
@@ -254,7 +254,7 @@ export function SigningPage() {
 
         <p className="text-xs text-gray-500">
           <strong>Why did you delete it?</strong> kysigned holds documents only as long as
-          operationally needed (active envelopes; completion emails not yet delivered).
+          operationally needed (signings still in progress; completion emails not yet delivered).
           After delivery we delete them to minimize breach blast radius. The durable
           record is the signing record in every party's inbox, not anything on our servers.
         </p>

@@ -787,7 +787,7 @@ describe('Envelope API — from spec acceptance criteria', () => {
         { pdf_base64: TEST_FIXTURE_PDF_B64, document_name: 'Creation Email Test', signers: [{ email: 'bob@t.com', name: 'Bob' }] },
       );
       assert.equal(result.status, 201);
-      const created = fresh.sent.filter((m) => /Envelope created/i.test(m.subject ?? '') && m.to === 'creator@acme.com');
+      const created = fresh.sent.filter((m) => /Document sent for signing/i.test(m.subject ?? '') && m.to === 'creator@acme.com');
       assert.equal(created.length, 1, 'exactly one creation email to the creator');
       const att = created[0]!.attachments;
       assert.ok(att && att.length === 1, 'one PDF attachment');
@@ -817,7 +817,7 @@ describe('Envelope API — from spec acceptance criteria', () => {
         { pool: db.pool, emailProvider: fresh, baseUrl: 'https://kysigned.com', senderIdentity: 'creator@acme.com' },
         { pdf_base64: TEST_FIXTURE_PDF_B64, document_name: 'Wallet Create', signers: [{ email: 'bob@t.com', name: 'Bob' }] },
       );
-      const created = fresh.sent.filter((m) => /Envelope created/i.test(m.subject ?? ''));
+      const created = fresh.sent.filter((m) => /Document sent for signing/i.test(m.subject ?? ''));
       assert.equal(created.length, 1);
       assert.equal(created[0]!.to, 'creator@acme.com');
     });

@@ -346,9 +346,9 @@ export function CreateEnvelopePage() {
           onClick={() => setGatePhase('form')}
           className="inline-flex items-center gap-1 min-h-[44px] text-sm text-gray-500 hover:text-gray-900 mb-3 cursor-pointer"
         >
-          <span aria-hidden>←</span> Back to your envelope
+          <span aria-hidden>←</span> Back to your document
         </button>
-        <SignInScreen title="Sign in to send your envelope" telemetryTrigger="send" onSignedIn={handleGateSignedIn} />
+        <SignInScreen title="Sign in to send your document" telemetryTrigger="send" onSignedIn={handleGateSignedIn} />
       </div>
     )
   }
@@ -358,7 +358,7 @@ export function CreateEnvelopePage() {
     return (
       <div className="max-w-2xl mx-auto px-4 py-8 text-center" data-testid="gate-sending">
         <div className="animate-spin h-6 w-6 border-4 border-gray-300 border-t-gray-900 rounded-full mx-auto mt-16" />
-        <p className="text-sm text-gray-500 mt-4">Sending your envelope…</p>
+        <p className="text-sm text-gray-500 mt-4">Sending your document…</p>
       </div>
     )
   }
@@ -371,13 +371,13 @@ export function CreateEnvelopePage() {
       >
         <span aria-hidden>←</span> {isGuest ? 'Back to Home' : 'Back to Dashboard'}
       </Link>
-      <h1 className="text-2xl font-semibold mb-6">Create an Envelope</h1>
+      <h1 className="text-2xl font-semibold mb-6">Send a document for signing</h1>
       {/* F-39.1 — the cost question answered before the gate ever appears: the
-          F-39.7 teaching line, guest-only (a signed-in creator has the credit
-          pill). */}
+          F-39.7 v2 trial line (document vocabulary, F-2.2), guest-only (a
+          signed-in creator has the credit pill). */}
       {isGuest && (
         <p className="text-sm text-gray-600 -mt-4 mb-6" data-testid="guest-trial-line">
-          An envelope is one document sent out for signatures. Your first 4 are free. No credit card needed.
+          Your first 4 documents are free. No credit card needed.
         </p>
       )}
 
@@ -394,9 +394,9 @@ export function CreateEnvelopePage() {
           >
             $
           </div>
-          <h2 className="text-lg font-semibold">Add credits to send an envelope</h2>
+          <h2 className="text-lg font-semibold">Add credits to send your document</h2>
           <p className="text-sm text-gray-600 max-w-md mx-auto">
-            Sending an envelope costs a flat{' '}
+            Sending a document for signing costs a flat{' '}
             <strong>{formatUsd(balance!.envelope_cost_usd_micros)}</strong>, for any number of
             signers, one price. Your balance is{' '}
             <strong>{formatUsd(balance!.balance_usd_micros)}</strong>.
@@ -426,7 +426,7 @@ export function CreateEnvelopePage() {
         {insufficientCredit && file && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-900" data-testid="topup-inline">
             <p className="font-medium mb-2">
-              Add credits to send. Your envelope is saved in this tab: top up, then press Send again.
+              Add credits to send. Your document is saved in this tab: top up, then press Send again.
             </p>
             <button
               type="button"
@@ -447,15 +447,15 @@ export function CreateEnvelopePage() {
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-900">
           <p className="font-medium mb-1">kysigned adds a one-page cover before sending</p>
           <p className="text-xs text-blue-800 mb-1">
-            Every envelope ships with a kysigned-generated cover page (page 1) before your content. The cover carries:
+            Every document you send ships with a kysigned-generated cover page (page 1) before your content. The cover carries:
           </p>
           <ul className="text-xs text-blue-800 list-disc ml-5 space-y-0.5">
-            <li>The document name, your email (shown to signers as &ldquo;Sender&rdquo;), envelope ID, and timestamp</li>
+            <li>The document name, your email (shown to signers as &ldquo;Sender&rdquo;), the envelope ID (the document&rsquo;s technical reference), and timestamp</li>
             <li>The signer&rsquo;s consent to sign electronically instead of with a wet-ink signature, and to be legally bound, satisfying US (ESIGN, UETA) and EU (eIDAS) e-signature law in a single reply (<a href="/how-it-works" target="_blank" rel="noopener noreferrer" className="text-blue-900 underline">how this works &rarr;</a>)</li>
             <li>Instructions so the signer can independently verify the document hash before replying</li>
           </ul>
           <p className="text-xs text-blue-700 mt-2">
-            Keep your original PDF: you can re-check it later from the envelope detail page to confirm we didn&rsquo;t tamper with your upload.
+            Keep your original PDF: you can re-check it later from the document&rsquo;s detail page to confirm we didn&rsquo;t tamper with your upload.
           </p>
         </div>
 
@@ -612,7 +612,7 @@ export function CreateEnvelopePage() {
             <span>
               <span className="font-medium">Send the signing record automatically when everyone has signed</span>
               <span className="block text-xs text-gray-500 mt-0.5">
-                On by default. Turn this off to review the signers and seal the envelope yourself
+                On by default. Turn this off to review the signers and seal the document yourself
                 (&ldquo;Seal &amp; send&rdquo;) once all signatures are in.
               </span>
             </span>

@@ -125,7 +125,7 @@ describe('Cancel grey-out once auto-complete is done (F-24.1 / Barry QA)', () =>
       signer({ email: 'b@x.com', status: 'signed', signed_at: new Date().toISOString() }),
     ] }));
     renderPage();
-    expect(await screen.findByRole('button', { name: /cancel envelope/i })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: /cancel document/i })).toBeDisabled();
   });
 
   it('keeps Cancel enabled while a signer is still pending', async () => {
@@ -134,7 +134,7 @@ describe('Cancel grey-out once auto-complete is done (F-24.1 / Barry QA)', () =>
       signer({ email: 'b@x.com', status: 'pending' }),
     ] }));
     renderPage();
-    expect(await screen.findByRole('button', { name: /cancel envelope/i })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: /cancel document/i })).toBeEnabled();
   });
 
   it('keeps Cancel enabled in MANUAL-seal mode even when all-signed (creator can still cancel before sealing)', async () => {
@@ -142,7 +142,7 @@ describe('Cancel grey-out once auto-complete is done (F-24.1 / Barry QA)', () =>
       signer({ email: 'a@x.com', status: 'signed', signed_at: new Date().toISOString() }),
     ] }));
     renderPage();
-    expect(await screen.findByRole('button', { name: /cancel envelope/i })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: /cancel document/i })).toBeEnabled();
   });
 });
 

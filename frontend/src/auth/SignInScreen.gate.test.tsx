@@ -118,7 +118,7 @@ describe('SignInScreen — send-gate mode (F-39.3/.6)', () => {
     const note = await screen.findByTestId('gate-device-note');
     expect(note.textContent).toMatch(/open the email and click the link/i);
     expect(note.textContent).toMatch(/on this device/i);
-    expect(note.textContent).toMatch(/send your envelope/i);
+    expect(note.textContent).toMatch(/send your document/i);
     // Emphasis by typography: the device phrase sits in its own emphasized element.
     expect(note.querySelector('[data-testid="gate-device-phrase"]')).toBeTruthy();
   });

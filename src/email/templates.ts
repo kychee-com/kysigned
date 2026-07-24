@@ -222,9 +222,9 @@ export const templates = {
     statusLink?: string;
   }) {
     const statusRow = vars.statusLink
-      ? `<table cellpadding="0" cellspacing="0" style="margin:4px 0 18px;"><tr><td style="border:1px solid #1a1a2e;border-radius:6px;padding:10px 22px;"><a href="${vars.statusLink}" style="color:#1a1a2e;text-decoration:none;font-weight:600;font-size:14px;">View this envelope&rsquo;s status</a></td></tr></table>`
+      ? `<table cellpadding="0" cellspacing="0" style="margin:4px 0 18px;"><tr><td style="border:1px solid #1a1a2e;border-radius:6px;padding:10px 22px;"><a href="${vars.statusLink}" style="color:#1a1a2e;text-decoration:none;font-weight:600;font-size:14px;">View this document&rsquo;s status</a></td></tr></table>`
       : '';
-    const statusText = vars.statusLink ? `\nView this envelope's status: ${vars.statusLink}` : '';
+    const statusText = vars.statusLink ? `\nView this document's status: ${vars.statusLink}` : '';
     return {
       subject: `We received your signature on "${vars.documentName}"`,
       html: wrap(`Signature Recorded`, `
@@ -409,7 +409,7 @@ export const templates = {
   voidNotification(vars: { signerName: string; senderName: string; documentName: string; operatorDomain: string }) {
     return {
       subject: `"${vars.documentName}" has been voided`,
-      html: wrap(`Envelope Voided`, `
+      html: wrap(`Signing Cancelled`, `
         <p style="margin:0 0 15px;">Hi ${vars.signerName},</p>
         <p style="margin:0 0 15px;"><strong>${vars.senderName}</strong> has voided the signing request for <strong>"${vars.documentName}"</strong>. No further action is needed.</p>
       `),
@@ -455,12 +455,12 @@ export const templates = {
       subject: `All signers have signed "${vars.documentName}": review & seal`,
       html: wrap(`Ready to Seal`, `
         <p style="margin:0 0 15px;">Hi ${vars.recipientName},</p>
-        <p style="margin:0 0 15px;">All <strong>${vars.signerCount}</strong> ${signedVerb} signed <strong>"${vars.documentName}"</strong>. Nothing has been sent yet. This envelope is waiting for you to seal it.</p>
-        <p style="margin:0 0 20px;">Review the signers and, when you're ready, click <strong>Seal &amp; send signed envelope</strong> to finalise and deliver everyone's signing record.</p>
-        <p style="margin:0 0 10px;"><a href="${vars.dashboardLink}" style="display:inline-block;padding:12px 24px;background:#1a1a2e;color:#ffffff;text-decoration:none;border-radius:6px;">Seal &amp; send signed envelope</a></p>
+        <p style="margin:0 0 15px;">All <strong>${vars.signerCount}</strong> ${signedVerb} signed <strong>"${vars.documentName}"</strong>. Nothing has been sent yet. This document is waiting for you to seal it.</p>
+        <p style="margin:0 0 20px;">Review the signers and, when you're ready, click <strong>Seal &amp; send signed document</strong> to finalise and deliver everyone's signing record.</p>
+        <p style="margin:0 0 10px;"><a href="${vars.dashboardLink}" style="display:inline-block;padding:12px 24px;background:#1a1a2e;color:#ffffff;text-decoration:none;border-radius:6px;">Seal &amp; send signed document</a></p>
       `),
       text: textWrap(
-        `Hi ${vars.recipientName},\n\nAll ${vars.signerCount} ${signedVerb} signed "${vars.documentName}". Nothing has been sent yet. This envelope is waiting for you to seal it.\n\nReview the signers and, when ready, seal the envelope to deliver everyone's signing record:\n${vars.dashboardLink}`
+        `Hi ${vars.recipientName},\n\nAll ${vars.signerCount} ${signedVerb} signed "${vars.documentName}". Nothing has been sent yet. This document is waiting for you to seal it.\n\nReview the signers and, when ready, seal the document to deliver everyone's signing record:\n${vars.dashboardLink}`
       ),
       from: `notifications@${vars.operatorDomain}`,
       replyTo: `info@${vars.operatorDomain}`,
@@ -470,7 +470,7 @@ export const templates = {
   expiryNotification(vars: { recipientName: string; documentName: string; operatorDomain: string }) {
     return {
       subject: `"${vars.documentName}" has expired`,
-      html: wrap(`Envelope Expired`, `
+      html: wrap(`Signing Expired`, `
         <p style="margin:0 0 15px;">Hi ${vars.recipientName},</p>
         <p style="margin:0 0 15px;">The signing request for <strong>"${vars.documentName}"</strong> has expired. Not all signatures were collected before the deadline.</p>
       `),
@@ -516,12 +516,12 @@ export const templates = {
   }) {
     const openingHtml =
       vars.role === 'sender'
-        ? `Your envelope for <strong>"${vars.documentName}"</strong> has expired without collecting all signatures.`
+        ? `Your document <strong>"${vars.documentName}"</strong> has expired without collecting all signatures.`
         : `The signing request for <strong>"${vars.documentName}"</strong> sent by ${vars.senderName} has expired.`;
 
     const openingText =
       vars.role === 'sender'
-        ? `Your envelope for "${vars.documentName}" has expired without collecting all signatures.`
+        ? `Your document "${vars.documentName}" has expired without collecting all signatures.`
         : `The signing request for "${vars.documentName}" sent by ${vars.senderName} has expired.`;
 
     const statusLine = `${vars.signedCount} of ${vars.totalCount} signer${vars.totalCount === 1 ? '' : 's'} completed.`;
@@ -535,7 +535,7 @@ export const templates = {
 
     const closingHtml =
       vars.role === 'sender'
-        ? `<p style="margin:0;">If you'd still like to get this document signed, you can create a new envelope with the same PDF and invite only the signers who didn't complete.</p>`
+        ? `<p style="margin:0;">If you'd still like to get this document signed, you can send it again with the same PDF and invite only the signers who didn't complete.</p>`
         : `<p style="margin:0;">No further action is required. Any signatures already collected remain valid.</p>`;
 
     const signedBlockText = vars.signedNames.length ? `Signed: ${vars.signedNames.join(', ')}\n` : '';
@@ -543,12 +543,12 @@ export const templates = {
 
     const closingText =
       vars.role === 'sender'
-        ? `If you'd still like to get this document signed, you can create a new envelope with the same PDF and invite only the signers who didn't complete.`
+        ? `If you'd still like to get this document signed, you can send it again with the same PDF and invite only the signers who didn't complete.`
         : `No further action is required. Any signatures already collected remain valid.`;
 
     return {
       subject: `"${vars.documentName}" signing request has expired`,
-      html: wrap(`Envelope Expired`, `
+      html: wrap(`Signing Expired`, `
         <p style="margin:0 0 15px;">Hi ${vars.recipientName},</p>
         <p style="margin:0 0 15px;">${openingHtml}</p>
         <p style="margin:0 0 15px;">${statusLine}</p>
@@ -580,18 +580,18 @@ export const templates = {
     const n = vars.signers.length;
     const signerCount = `${n} signer${n === 1 ? '' : 's'}`;
     return {
-      subject: `Envelope created: "${vars.documentName}"`,
-      html: wrap(`Envelope Created`, `
-        <p style="margin:0 0 15px;">Your envelope <strong>&ldquo;${vars.documentName}&rdquo;</strong> has been created and the signing requests are on their way to <strong>${signerCount}</strong>.</p>
+      subject: `Document sent for signing: "${vars.documentName}"`,
+      html: wrap(`Document Sent`, `
+        <p style="margin:0 0 15px;">Your document <strong>&ldquo;${vars.documentName}&rdquo;</strong> has been sent and the signing requests are on their way to <strong>${signerCount}</strong>.</p>
         <table cellpadding="0" cellspacing="0" style="margin:0 0 20px;">
         <tr><td style="background:#1a1a2e;border-radius:6px;padding:12px 28px;">
-        <a href="${vars.dashboardLink}" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">View this envelope&rsquo;s status</a>
+        <a href="${vars.dashboardLink}" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">View this document&rsquo;s status</a>
         </td></tr>
         </table>
-        <p style="margin:0;font-size:13px;color:#666;"><strong>Your document is attached to this email, keep your copy.</strong> kysigned deletes the stored document once the envelope completes; the durable copy is the signing record emailed to every party.</p>
+        <p style="margin:0;font-size:13px;color:#666;"><strong>Your document is attached to this email, keep your copy.</strong> kysigned deletes the stored document once the signing completes; the durable copy is the signing record emailed to every party.</p>
       `),
       text: textWrap(
-        `Your envelope "${vars.documentName}" has been created and signing requests are on their way to ${signerCount}.\n\nView this envelope's status:\n${vars.dashboardLink}\n(envelope ${vars.envelopeId})\n\nYour document is attached to this email, keep your copy. kysigned deletes the stored document once the envelope completes; the durable copy is the signing record emailed to every party.`
+        `Your document "${vars.documentName}" has been sent and signing requests are on their way to ${signerCount}.\n\nView this document's status:\n${vars.dashboardLink}\n(envelope ${vars.envelopeId})\n\nYour document is attached to this email, keep your copy. kysigned deletes the stored document once the signing completes; the durable copy is the signing record emailed to every party.`
       ),
       from: `notifications@${vars.operatorDomain}`,
       replyTo: `info@${vars.operatorDomain}`,
@@ -619,13 +619,13 @@ export const templates = {
     const completionHtml = !isComplete
       ? ''
       : vars.autoClose === false
-        ? `<p style="margin:0 0 18px;font-size:14px;color:#444;">All signers are in. Head to your dashboard to <strong>review and seal</strong> this envelope (&ldquo;Seal &amp; send&rdquo;) and deliver the final signing record to everyone.</p>`
-        : `<p style="margin:0 0 18px;font-size:14px;color:#444;">All signers are in, your envelope is <strong>complete</strong>. Because it&rsquo;s set to send automatically when everyone signs, the final signing record is on its way to all parties.</p>`;
+        ? `<p style="margin:0 0 18px;font-size:14px;color:#444;">All signers are in. Head to your dashboard to <strong>review and seal</strong> this document (&ldquo;Seal &amp; send&rdquo;) and deliver the final signing record to everyone.</p>`
+        : `<p style="margin:0 0 18px;font-size:14px;color:#444;">All signers are in, your document is <strong>complete</strong>. Because it&rsquo;s set to send automatically when everyone signs, the final signing record is on its way to all parties.</p>`;
     const completionText = !isComplete
       ? ''
       : vars.autoClose === false
-        ? `All signers are in. Head to your dashboard to review and seal this envelope ("Seal & send") and deliver the final signing record to everyone.\n\n`
-        : `All signers are in, your envelope is complete. Because it's set to send automatically when everyone signs, the final signing record is on its way to all parties.\n\n`;
+        ? `All signers are in. Head to your dashboard to review and seal this document ("Seal & send") and deliver the final signing record to everyone.\n\n`
+        : `All signers are in, your document is complete. Because it's set to send automatically when everyone signs, the final signing record is on its way to all parties.\n\n`;
     return {
       subject: `${vars.signerName} signed "${vars.documentName}"`,
       html: wrap(`Signature Received`, `
@@ -634,12 +634,12 @@ export const templates = {
         ${completionHtml}
         <table cellpadding="0" cellspacing="0" style="margin:0 0 8px;">
         <tr><td style="background:#1a1a2e;border-radius:6px;padding:12px 28px;">
-        <a href="${vars.statusPageLink}" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">View this envelope&rsquo;s status</a>
+        <a href="${vars.statusPageLink}" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">View this document&rsquo;s status</a>
         </td></tr>
         </table>
       `),
       text: textWrap(
-        `${vars.signerName} just signed "${vars.documentName}".\n\n${vars.signedCount} of ${vars.totalCount} signers complete.\n\n${completionText}View this envelope's status:\n${vars.statusPageLink}`
+        `${vars.signerName} just signed "${vars.documentName}".\n\n${vars.signedCount} of ${vars.totalCount} signers complete.\n\n${completionText}View this document's status:\n${vars.statusPageLink}`
       ),
       from: `notifications@${vars.operatorDomain}`,
       replyTo: `info@${vars.operatorDomain}`,
@@ -662,15 +662,15 @@ export const templates = {
       html: wrap(`Delivery Problem`, `
         <p style="margin:0 0 15px;">Hi ${vars.senderName},</p>
         <p style="margin:0 0 15px;">We couldn&rsquo;t deliver the signing request for <strong>&ldquo;${vars.documentName}&rdquo;</strong> to <strong>${vars.signerEmail}</strong>. The address bounced.</p>
-        <p style="margin:0 0 18px;font-size:13px;color:#444;">Double-check the address. On the envelope page you can fix it: remove this signer and add them back at the corrected address, or remove them if they&rsquo;re no longer needed.</p>
+        <p style="margin:0 0 18px;font-size:13px;color:#444;">Double-check the address. On the document&rsquo;s page you can fix it: remove this signer and add them back at the corrected address, or remove them if they&rsquo;re no longer needed.</p>
         <table cellpadding="0" cellspacing="0" style="margin:0 0 8px;">
         <tr><td style="border:1px solid #1a1a2e;border-radius:6px;padding:10px 22px;">
-        <a href="${vars.dashboardLink}" style="color:#1a1a2e;text-decoration:none;font-weight:600;font-size:14px;">Manage this envelope</a>
+        <a href="${vars.dashboardLink}" style="color:#1a1a2e;text-decoration:none;font-weight:600;font-size:14px;">Manage this document</a>
         </td></tr>
         </table>
       `),
       text: textWrap(
-        `Hi ${vars.senderName},\n\nWe couldn't deliver the signing request for "${vars.documentName}" to ${vars.signerEmail}. The address bounced.\n\nDouble-check the address. On the envelope page you can fix it: remove this signer and add them back at the corrected address, or remove them if they're no longer needed.\n\nManage this envelope: ${vars.dashboardLink}`
+        `Hi ${vars.senderName},\n\nWe couldn't deliver the signing request for "${vars.documentName}" to ${vars.signerEmail}. The address bounced.\n\nDouble-check the address. On the document's page you can fix it: remove this signer and add them back at the corrected address, or remove them if they're no longer needed.\n\nManage this document: ${vars.dashboardLink}`
       ),
       from: `notifications@${vars.operatorDomain}`,
       replyTo: `info@${vars.operatorDomain}`,

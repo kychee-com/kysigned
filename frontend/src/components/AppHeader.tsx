@@ -83,9 +83,12 @@ export function AppHeader() {
             to="/dashboard/create"
             data-testid="header-create-link"
             data-telemetry="cta_create:header"
+            // F-39.7 v2 (AC-234): the compact header action says "Send" — the
+            // document vocabulary of F-2.2; route + testid + telemetry name are
+            // internal and unchanged.
             className="inline-flex items-center min-h-[36px] px-3 py-1.5 rounded-md bg-[#1a1b2f] text-white font-medium hover:bg-[#2a2b42] whitespace-nowrap"
           >
-            Create
+            Send
           </Link>
           {/* GH#103 — Pricing is operator-specific; shown only when the operator
               config enables it (a fresh fork has no pricing surface). */}
@@ -209,7 +212,7 @@ export function AppHeader() {
               className="absolute right-0 top-full mt-2 w-56 rounded-md border border-gray-200 bg-white shadow-lg py-1 z-50 text-sm"
             >
               {/* Nav links — keep in sync with the desktop <nav> above. */}
-              <Link to="/dashboard/create" role="menuitem" data-testid="header-create-mobile" className="block mx-2 my-1 px-3 py-2 rounded-md bg-[#1a1b2f] text-white font-medium text-center" onClick={closeMobile}>Create</Link>
+              <Link to="/dashboard/create" role="menuitem" data-testid="header-create-mobile" className="block mx-2 my-1 px-3 py-2 rounded-md bg-[#1a1b2f] text-white font-medium text-center" onClick={closeMobile}>Send</Link>
               {showPricing && <a href="/pricing" role="menuitem" className={mobileItem} onClick={closeMobile}>Pricing</a>}
               <a href="/how-it-works" role="menuitem" className={mobileItem} onClick={closeMobile}>How it works</a>
               <a href="/faq" role="menuitem" className={mobileItem} onClick={closeMobile}>FAQ</a>

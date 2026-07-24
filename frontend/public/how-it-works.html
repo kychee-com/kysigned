@@ -48,7 +48,7 @@
         <li><strong>The creator sends a PDF.</strong> Kysigned records the document hash, signers, and signing instructions.</li>
         <li><strong>Each signer forwards the request email.</strong> The first line states the signing intent, and the original PDF stays attached.</li>
         <li><strong>The signer email provider signs the forward.</strong> DKIM proves the message came from that domain's mail system and has not been changed.</li>
-        <li><strong>Kysigned checks the evidence.</strong> It verifies the DKIM signature, signer address, signing phrase, attachment bytes, timestamps, and envelope state.</li>
+        <li><strong>Kysigned checks the evidence.</strong> It verifies the DKIM signature, signer address, signing phrase, attachment bytes, timestamps, and the document&rsquo;s signing state.</li>
         <li><strong>Everyone receives a bundle.</strong> The final PDF carries the original document plus enough evidence for later offline verification.</li>
       </ol>
 

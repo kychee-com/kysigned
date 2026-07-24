@@ -125,7 +125,7 @@ describe('CreateEnvelopePage — post-gate outcomes (F-39.4 / AC-226)', () => {
     authHolder.current = { ...authHolder.current, user: { email: 'broke@example.com' } };
     apiGetMock.mockResolvedValue(NO_BALANCE);
     renderPage();
-    expect(await screen.findByText(/add credits to send an envelope/i)).toBeTruthy();
+    expect(await screen.findByText(/add credits to send your document/i)).toBeTruthy();
     expect(screen.queryByRole('button', { name: /send for signing/i })).toBeNull();
   });
 
@@ -141,7 +141,7 @@ describe('CreateEnvelopePage — post-gate outcomes (F-39.4 / AC-226)', () => {
 
     // The draft must survive: form + inline strip, never the replacing card.
     await screen.findByTestId('topup-inline');
-    expect(screen.queryByText(/add credits to send an envelope/i)).toBeNull();
+    expect(screen.queryByText(/add credits to send your document/i)).toBeNull();
     expect((screen.getByPlaceholderText('e.g., NDA for Acme Corp') as HTMLInputElement).value).toBe('contract');
   });
 });

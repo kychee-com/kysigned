@@ -186,12 +186,12 @@ export function DashboardPage() {
               {balance.sufficient_for_envelope ? (
                 <>
                   ≈ {envelopesAffordable(balance)}{' '}
-                  {envelopesAffordable(balance) === 1 ? 'envelope' : 'envelopes'} left
+                  {envelopesAffordable(balance) === 1 ? 'document' : 'documents'} left
                   <span className="text-gray-600"> · {formatUsd(balance.envelope_cost_usd_micros)} each</span>
                 </>
               ) : (
                 <span className="text-amber-700">
-                  Not enough to send — an envelope costs {formatUsd(balance.envelope_cost_usd_micros)}.
+                  Not enough to send: sending a document costs {formatUsd(balance.envelope_cost_usd_micros)}.
                 </span>
               )}
             </p>
@@ -220,14 +220,14 @@ export function DashboardPage() {
             aria-disabled="true"
             tabIndex={-1}
             className="inline-flex items-center justify-center min-h-[44px] px-4 py-2 bg-gray-200 text-gray-500 rounded-lg text-sm font-medium cursor-not-allowed"
-            title="Insufficient balance: add credits above to create an envelope"
+            title="Insufficient balance: add credits above to send a document"
           >
-            New Envelope
+            Send a document
           </button>
         ) : (
           <Link to="/dashboard/create"
                 className="inline-flex items-center justify-center min-h-[44px] px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800">
-            New Envelope
+            Send a document
           </Link>
         )}
       </div>
@@ -246,14 +246,14 @@ export function DashboardPage() {
             <>
               <p className="text-gray-700 font-medium">
                 You have {envelopesAffordable(balance)}{' '}
-                {envelopesAffordable(balance) === 1 ? 'envelope' : 'envelopes'} ready to send. No credit card needed.
+                {envelopesAffordable(balance) === 1 ? 'document' : 'documents'} ready to send. No credit card needed.
               </p>
-              <p className="text-sm text-gray-600 mt-2">Click <strong>New Envelope</strong> to send your first one.</p>
+              <p className="text-sm text-gray-600 mt-2">Click <strong>Send a document</strong> to send your first one.</p>
             </>
           ) : (
             <>
               <p className="text-gray-500">No documents yet.</p>
-              <p className="text-sm text-gray-600 mt-2">Click <strong>New Envelope</strong> to send your first one.</p>
+              <p className="text-sm text-gray-600 mt-2">Click <strong>Send a document</strong> to send your first one.</p>
             </>
           )}
         </div>

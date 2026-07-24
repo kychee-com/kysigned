@@ -52,11 +52,11 @@ describe('SignInScreen — the gate explains itself (F-39.6 / AC-228)', () => {
     expect(screen.getByTestId('signin-screen').textContent).toMatch(/new here\?.*account is created/is);
   });
 
-  it('renders the why-explainer below the email input: envelopes live in the account + the trial terms', () => {
+  it('renders the why-explainer below the email input: documents live in the account + the trial terms', () => {
     renderScreen();
     const why = screen.getByTestId('signin-why');
     expect(why.textContent).toMatch(/why do i need to sign in\?/i);
-    expect(why.textContent).toMatch(/where your sent envelopes live/i);
+    expect(why.textContent).toMatch(/where your sent documents live/i);
     expect(why.textContent).toMatch(/first 4 .*free/i);
     expect(why.textContent).toMatch(/no credit card/i);
   });

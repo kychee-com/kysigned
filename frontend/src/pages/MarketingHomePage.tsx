@@ -149,7 +149,7 @@ export function MarketingHomePage() {
           <p dangerouslySetInnerHTML={{ __html: hero.bodyHtml }} />
           <div className="hero-ctas">
             <Link to="/dashboard/create" data-telemetry="cta_create:hero" className="btn-primary">
-              Create an envelope
+              Send a document for signing
             </Link>
             {/* Explainer video, beside the primary CTA. Operator-specific (it's
                 the operator's own video), so a fork renders nothing here. The
@@ -179,10 +179,10 @@ export function MarketingHomePage() {
               </a>
             ) : null}
           </div>
-          {/* Operator note under the CTA — F-39.7 (AC-229): a FIRST-CLASS hero
+          {/* Operator note under the CTA — F-39.7 v2 (AC-234): a FIRST-CLASS hero
               line at body-copy size (18px = .hero p), never a footnote. It
-              carries the envelope-teaching + trial copy (F-14.8), so its
-              prominence IS the requirement. KEEP IN SYNC with
+              carries the trial copy in document vocabulary (F-2.2/F-14.8), so
+              its prominence IS the requirement. KEEP IN SYNC with
               build-home-page.ts's heroSection note. */}
           {hero.note ? (
             <p style={{ marginTop: 14, fontSize: 18, fontWeight: 600, color: '#666' }}>{hero.note}</p>
@@ -238,7 +238,7 @@ export function MarketingHomePage() {
             <div className="step-card">
               <div className="step-number">3</div>
               <h3>You keep the proof</h3>
-              <p>Every signed envelope becomes one signing record for you and your signers. Each of you can verify it independently, any time, even offline.</p>
+              <p>Every signed document becomes one signing record for you and your signers. Each of you can verify it independently, any time, even offline.</p>
             </div>
           </div>
           <p style={{ textAlign: 'center', marginTop: 28, fontSize: 14, color: '#666' }}>

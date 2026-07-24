@@ -75,7 +75,7 @@ export function EnvelopeDetailPage() {
   }
 
   const handleVoid = async () => {
-    if (!window.confirm('Cancel this whole envelope? Every pending signing request is voided. To fix one signer instead, edit or remove just that signer below.')) return
+    if (!window.confirm('Cancel this document? Every pending signing request is voided. To fix one signer instead, edit or remove just that signer below.')) return
     try {
       await apiPost(`/v1/envelope/${id}/void`, {})
       await refetch()
@@ -86,7 +86,7 @@ export function EnvelopeDetailPage() {
 
   // F-24.2 — manual "Seal & send": assemble + distribute the bundle now and freeze.
   const handleSeal = async () => {
-    if (!window.confirm('Seal this envelope and send the signing record to everyone? This cannot be undone.')) return
+    if (!window.confirm('Seal this document and send the signing record to everyone? This cannot be undone.')) return
     setBusy(true)
     try {
       await apiPost(`/v1/envelope/${id}/seal`, {})
@@ -202,12 +202,12 @@ export function EnvelopeDetailPage() {
       {justSent && deliveryProblems.length === 0 && (
         <div className="mb-4 px-4 py-3 rounded-lg border border-green-300 bg-green-50 text-green-800 text-sm font-medium flex items-center gap-2">
           <span aria-hidden>&#10003;</span>
-          Envelope sent successfully. Signing requests are on their way to your signers.
+          Document sent successfully. Signing requests are on their way to your signers.
         </div>
       )}
       {justSent && deliveryProblems.length > 0 && (
         <div className="mb-4 px-4 py-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 text-sm">
-          <strong>Envelope created</strong>, but we couldn&rsquo;t deliver the signing request to{' '}
+          <strong>Document created</strong>, but we couldn&rsquo;t deliver the signing request to{' '}
           <strong>{deliveryProblems.join(', ')}</strong>. Double-check the address: fix it below
           (remove the signer and add them back at the corrected address) to retry.
         </div>
@@ -392,7 +392,7 @@ export function EnvelopeDetailPage() {
         {canSeal && (
           <button onClick={handleSeal} disabled={busy}
                   className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-800 disabled:opacity-40">
-            {busy ? 'Sealing…' : 'Seal & send signed envelope'}
+            {busy ? 'Sealing…' : 'Seal & send signed document'}
           </button>
         )}
         {editable && !allSigned && (
@@ -407,9 +407,9 @@ export function EnvelopeDetailPage() {
             signer's own cover), so there is no single "what signers see" file. */}
         {open && (
           <button onClick={handleVoid} disabled={completePending}
-                  title={completePending ? 'Everyone has signed, the completed signing record is on its way, so this envelope can no longer be cancelled.' : undefined}
+                  title={completePending ? 'Everyone has signed, the completed signing record is on its way, so this document can no longer be cancelled.' : undefined}
                   className={`px-4 py-2 text-sm border rounded-lg ${completePending ? 'border-gray-200 text-gray-300 cursor-not-allowed' : 'border-red-200 text-red-600 hover:bg-red-50'}`}>
-            Cancel Envelope
+            Cancel document
           </button>
         )}
       </div>

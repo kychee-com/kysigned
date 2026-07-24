@@ -84,12 +84,12 @@ describe('DashboardPage — list display (AC-30)', () => {
 });
 
 describe('DashboardPage — prominent balance (Barry QA 2026-06-17)', () => {
-  it('shows the balance up top in dollars, with how many envelopes it covers', async () => {
+  it('shows the balance up top in dollars, with how many documents it covers', async () => {
     renderPage();
     expect(await screen.findByText('Your balance')).toBeInTheDocument();
     expect(screen.getByText('$5.00')).toBeInTheDocument(); // dollar balance, not raw micros
-    // $5.00 / $0.25 = 20 envelopes
-    expect(screen.getByText(/≈ 20 envelopes left/)).toBeInTheDocument();
+    // $5.00 / $0.25 = 20 documents
+    expect(screen.getByText(/≈ 20 documents left/)).toBeInTheDocument();
   });
 
   it('a balance too small for one envelope reads as "Not enough to send"', async () => {
@@ -122,11 +122,11 @@ describe('DashboardPage — new-account trial offer (F-14.8 / AC-98)', () => {
         : Promise.resolve({ balance_usd_micros: 1_000_000, envelope_cost_usd_micros: 250_000, sufficient_for_envelope: true }),
     );
     renderPage();
-    // $1.00 / $0.25 = 4 envelopes — surfaced in both the empty-state offer and the balance pill.
+    // $1.00 / $0.25 = 4 documents — surfaced in both the empty-state offer and the balance pill.
     expect(await screen.findByText(/No credit card needed/)).toBeInTheDocument();
-    expect(screen.getByText(/≈ 4 envelopes left/)).toBeInTheDocument();
-    // The New Envelope CTA is a live link (not the disabled top-up button).
-    expect(screen.getByRole('link', { name: /new envelope/i })).toBeInTheDocument();
+    expect(screen.getByText(/≈ 4 documents left/)).toBeInTheDocument();
+    // The Send-a-document CTA is a live link (not the disabled top-up button).
+    expect(screen.getByRole('link', { name: /send a document/i })).toBeInTheDocument();
   });
 
   it('falls back to the plain empty state when the account has no credit', async () => {
@@ -149,8 +149,8 @@ describe('DashboardPage — visual QA: tap targets + contrast (UX-015..018)', ()
     renderPage();
     const addCredits = await screen.findByRole('button', { name: /add credits/i });
     expect(addCredits.className).toMatch(/min-h-\[44px\]/); // UX-016
-    const newEnvelope = screen.getByRole('link', { name: /new envelope/i });
-    expect(newEnvelope.className).toMatch(/min-h-\[44px\]/); // UX-015 (live link)
+    const sendDocument = screen.getByRole('link', { name: /send a document/i });
+    expect(sendDocument.className).toMatch(/min-h-\[44px\]/); // UX-015 (live link)
   });
 
   it('reserves the >=44px target even on the disabled New-Envelope button (UX-015)', async () => {
@@ -160,7 +160,7 @@ describe('DashboardPage — visual QA: tap targets + contrast (UX-015..018)', ()
         : Promise.resolve({ balance_usd_micros: 0, envelope_cost_usd_micros: 250_000, sufficient_for_envelope: false }),
     );
     renderPage();
-    const disabled = await screen.findByRole('button', { name: /new envelope/i });
+    const disabled = await screen.findByRole('button', { name: /send a document/i });
     expect(disabled.className).toMatch(/min-h-\[44px\]/);
   });
 
@@ -190,27 +190,27 @@ describe('DashboardPage — insufficient balance New-Envelope is genuinely disab
 
   it('exposes the control as truly disabled (real disabled attr + aria-disabled, out of tab order)', async () => {
     renderPage();
-    const btn = await screen.findByRole('button', { name: /new envelope/i });
+    const btn = await screen.findByRole('button', { name: /send a document/i });
     // Real disabled control ⇒ WCAG-exempt ⇒ axe color-contrast no longer applies.
     expect(btn).toBeDisabled();
     expect(btn).toHaveAttribute('aria-disabled', 'true');
     expect(btn).toHaveAttribute('tabindex', '-1'); // removed from the tab order (not focusable)
     // In this state it must be the disabled button, never a live navigable link.
-    expect(screen.queryByRole('link', { name: /new envelope/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /send a document/i })).not.toBeInTheDocument();
   });
 
   it('does not navigate or act when activated (click is blocked)', async () => {
     renderPage();
-    const btn = await screen.findByRole('button', { name: /new envelope/i });
+    const btn = await screen.findByRole('button', { name: /send a document/i });
     fireEvent.click(btn); // a genuinely disabled button fires no handler
     // No create-route link appears and no error banner is raised by the click.
-    expect(screen.queryByRole('link', { name: /new envelope/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /send a document/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/You need credits/i)).not.toBeInTheDocument();
   });
 
   it('carries no em-dash in its tooltip copy (outbound-writing rule)', async () => {
     renderPage();
-    const btn = await screen.findByRole('button', { name: /new envelope/i });
+    const btn = await screen.findByRole('button', { name: /send a document/i });
     const title = btn.getAttribute('title') ?? '';
     expect(title).not.toMatch(/[—–]/);
   });
@@ -230,7 +230,7 @@ describe('DashboardPage — fork default: billing/balance hidden (GH#108)', () =
     expect(screen.queryByRole('button', { name: /add credits/i })).not.toBeInTheDocument();
     // The credit endpoint is never touched.
     expect(apiGetMock.mock.calls.every(([u]) => !String(u).startsWith('/v1/credits'))).toBe(true);
-    // New Envelope stays a live link (no credit gate on a fork).
-    expect(screen.getByRole('link', { name: /new envelope/i })).toBeInTheDocument();
+    // Send-a-document stays a live link (no credit gate on a fork).
+    expect(screen.getByRole('link', { name: /send a document/i })).toBeInTheDocument();
   });
 });
