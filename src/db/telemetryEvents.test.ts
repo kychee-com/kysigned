@@ -37,6 +37,7 @@ const row = (over: Partial<TelemetryEventRow> = {}): TelemetryEventRow => ({
   country: 'unknown',
   source: 'direct',
   campaign: 'none',
+  device: 'unknown',
   pageSeq: 1,
   ...over,
 });
@@ -51,9 +52,10 @@ describe('telemetryEvents — insert (F-38.1 identifier-free shape lock)', () =>
     const colsMatch = sql.match(/INSERT INTO telemetry_events\s*\(([^)]*)\)/i);
     assert.ok(colsMatch, `insert must target telemetry_events with an explicit column list: ${sql}`);
     const cols = colsMatch[1].split(',').map((c) => c.trim()).sort();
-    // Spec 0.60.0: the exhaustive record shape is the EIGHT F-38.1 fields —
-    // the campaign label (an operator cohort tag) joined in 67.13.
-    assert.deepEqual(cols, ['campaign', 'country', 'element', 'event', 'occurred_at', 'page', 'page_seq', 'source']);
+    // Spec 0.62.0: the exhaustive record shape is the NINE F-38.1/F-38.9 fields —
+    // the campaign label (67.13) and the coarse device class (69.2) joined; still
+    // no identifier of any kind.
+    assert.deepEqual(cols, ['campaign', 'country', 'device', 'element', 'event', 'occurred_at', 'page', 'page_seq', 'source']);
   });
 
   it('an extra property smuggled onto a row object never reaches the SQL params', async () => {
@@ -120,6 +122,7 @@ describe('telemetryEvents — operator funnel summary (F-38.6 / AC-219)', () => 
     country: 'IL',
     source: 'paid',
     campaign: 'summer_launch',
+    device: 'desktop',
     page_seq: 1,
     ...over,
   });
@@ -127,9 +130,9 @@ describe('telemetryEvents — operator funnel summary (F-38.6 / AC-219)', () => 
   it('returns every funnel step in order — landing through session-created incl. the F-39.5 editor steps — split by source and country, plus home per-element clicks (AC-219 0.61.0)', async () => {
     const { pool } = seededPool([
       r('page_view'),
-      r('page_view', { country: 'US', source: 'organic', campaign: 'spring_promo' }),
+      r('page_view', { country: 'US', source: 'organic', campaign: 'spring_promo', device: 'mobile' }),
       r('click', { element: 'cta_create:hero' }),
-      r('click', { element: 'cta_create:header', country: 'US', source: 'organic', campaign: 'spring_promo' }),
+      r('click', { element: 'cta_create:header', country: 'US', source: 'organic', campaign: 'spring_promo', device: 'mobile' }),
       r('click', { element: 'other:faq' }), // home click, NOT a create click
       // F-39.5 — the editor steps. The create-page landing counts BOTH as a
       // generic landing and as editor_reached (page-scoped page_view).
@@ -171,6 +174,12 @@ describe('telemetryEvents — operator funnel summary (F-38.6 / AC-219)', () => 
     assert.equal(s.by_campaign.summer_launch[0], 2);
     assert.deepEqual(s.by_campaign.spring_promo, [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     assert.deepEqual(s.home_clicks, { 'cta_create:hero': 1, 'cta_create:header': 1, 'other:faq': 1 });
+    // AC-233 (0.62.0): the device split, and the source×device cross that isolates
+    // e.g. paid×mobile. Two rows here are mobile (organic/US); everything else desktop.
+    assert.deepEqual(s.by_device.mobile, [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert.equal(s.by_device.desktop[0], 2); // two desktop landings in-window (home + create page_view)
+    assert.deepEqual(s.by_source_device['organic|mobile'], [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert.equal(s.by_source_device['paid|desktop'][0], 2);
   });
 
   it('an empty window returns zeroed steps, empty splits', async () => {
@@ -180,6 +189,8 @@ describe('telemetryEvents — operator funnel summary (F-38.6 / AC-219)', () => 
     assert.ok(s.steps.every((x) => x.count === 0));
     assert.deepEqual(s.by_source, {});
     assert.deepEqual(s.by_campaign, {});
+    assert.deepEqual(s.by_device, {});
+    assert.deepEqual(s.by_source_device, {});
     assert.deepEqual(s.home_clicks, {});
   });
 });

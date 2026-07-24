@@ -31,6 +31,12 @@ export interface TelemetryEventRow {
    * campaign brings, never a per-visitor value. 'none' when absent.
    */
   campaign: string;
+  /**
+   * F-38.9 — coarse device class (mobile | desktop | tablet | unknown),
+   * classified server-side from the request User-Agent at ingestion. The class
+   * only — the raw UA is never stored (identifier-free, like country).
+   */
+  device: string;
   /** Per-page-load sequence id — orders records within ONE page view only. */
   pageSeq: number;
 }
@@ -47,11 +53,13 @@ export async function insertTelemetryEvents(pool: DbPool, rows: TelemetryEventRo
   const tuples: string[] = [];
   for (const r of rows) {
     const base = values.length;
-    values.push(r.occurredAt, r.event, r.page, r.element, r.country, r.source, r.campaign, r.pageSeq);
-    tuples.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8})`);
+    values.push(r.occurredAt, r.event, r.page, r.element, r.country, r.source, r.campaign, r.device, r.pageSeq);
+    tuples.push(
+      `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9})`,
+    );
   }
   await pool.query(
-    `INSERT INTO telemetry_events (occurred_at, event, page, element, country, source, campaign, page_seq)
+    `INSERT INTO telemetry_events (occurred_at, event, page, element, country, source, campaign, device, page_seq)
      VALUES ${tuples.join(', ')}`,
     values,
   );
@@ -95,6 +103,13 @@ export interface TelemetryFunnelSummary {
   by_country: Record<string, number[]>;
   /** Per-campaign eight-step counts (AC-219 0.60.0 — the cohort read). */
   by_campaign: Record<string, number[]>;
+  /** Per-device-class counts (AC-233 0.62.0 — mobile/desktop/tablet/unknown). */
+  by_device: Record<string, number[]>;
+  /**
+   * Source × device cross counts, keyed `source|device` (AC-233 0.62.0) — the
+   * split that isolates e.g. `paid|mobile`, the funnel this feature exists for.
+   */
+  by_source_device: Record<string, number[]>;
   /** Home-page per-element click counts (F-38.2's named + catch-all buckets). */
   home_clicks: Record<string, number>;
 }
@@ -106,6 +121,7 @@ interface SummaryRow {
   country: string;
   source: string;
   campaign: string;
+  device: string;
 }
 
 /** True when a row lands the given funnel step. */
@@ -131,7 +147,7 @@ export async function summarizeTelemetry(
   const now = opts.now ?? new Date();
   const since = new Date(now.getTime() - opts.windowDays * 24 * 60 * 60 * 1000);
   const res = await pool.query(
-    `SELECT event, page, element, country, source, campaign FROM telemetry_events WHERE occurred_at >= $1`,
+    `SELECT event, page, element, country, source, campaign, device FROM telemetry_events WHERE occurred_at >= $1`,
     [since],
   );
   const rows = (res.rows ?? []) as SummaryRow[];
@@ -140,6 +156,8 @@ export async function summarizeTelemetry(
   const bySource: Record<string, number[]> = {};
   const byCountry: Record<string, number[]> = {};
   const byCampaign: Record<string, number[]> = {};
+  const byDevice: Record<string, number[]> = {};
+  const bySourceDevice: Record<string, number[]> = {};
   const homeClicks: Record<string, number> = {};
 
   const bump = (map: Record<string, number[]>, key: string, stepIndex: number) => {
@@ -148,12 +166,15 @@ export async function summarizeTelemetry(
   };
 
   for (const row of rows) {
+    const device = row.device ?? 'unknown';
     for (let i = 0; i < TELEMETRY_FUNNEL_STEPS.length; i++) {
       if (!isStep(row, i)) continue;
       stepCounts[i] += 1;
       bump(bySource, row.source, i);
       bump(byCountry, row.country, i);
       bump(byCampaign, row.campaign ?? 'none', i);
+      bump(byDevice, device, i);
+      bump(bySourceDevice, `${row.source}|${device}`, i);
     }
     if (row.event === 'click' && row.page === 'home' && row.element) {
       homeClicks[row.element] = (homeClicks[row.element] ?? 0) + 1;
@@ -166,6 +187,8 @@ export async function summarizeTelemetry(
     by_source: bySource,
     by_country: byCountry,
     by_campaign: byCampaign,
+    by_device: byDevice,
+    by_source_device: bySourceDevice,
     home_clicks: homeClicks,
   };
 }

@@ -202,15 +202,18 @@ describe('handleRequest — routing + auth gate', () => {
     assert.deepEqual(body.steps, []);
   });
 
-  it('the auth anchors thread the platform-provided country onto server-recorded steps (F-38.4/AC-218)', async () => {
-    const steps: Array<[string, { country?: string } | undefined]> = [];
+  it('the auth anchors thread the platform-provided country AND device onto server-recorded steps (F-38.4/F-38.9, AC-218/AC-232)', async () => {
+    const steps: Array<[string, { country?: string; device?: string } | undefined]> = [];
     const okSend = async (url: string) =>
       ({ status: 200, ok: true, json: async () => ({}) }) as never;
     const { pool } = makePool();
     const res = await handleRequest(
       req('POST', '/v1/auth/magic-link', {
         body: JSON.stringify({ email: 'a@x.com' }),
-        headers: { 'cf-ipcountry': 'IL' },
+        headers: {
+          'cf-ipcountry': 'IL',
+          'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1',
+        },
       }),
       makeDeps({
         authCtx: () =>
@@ -218,7 +221,7 @@ describe('handleRequest — routing + auth gate', () => {
             pool,
             appBaseUrl: 'https://kysigned.com',
             session: { projectAnonKey: 'anon', fetchImpl: okSend },
-            telemetryStep: async (event: string, opts?: { country?: string }) => {
+            telemetryStep: async (event: string, opts?: { country?: string; device?: string }) => {
               steps.push([event, opts]);
             },
           }) as never,
@@ -228,6 +231,7 @@ describe('handleRequest — routing + auth gate', () => {
     assert.equal(steps.length, 1);
     assert.equal(steps[0][0], 'send_ok');
     assert.equal(steps[0][1]?.country, 'IL');
+    assert.equal(steps[0][1]?.device, 'mobile');
   });
 
   it('dispatches a public route (health) with no auth', async () => {

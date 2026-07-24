@@ -16,7 +16,7 @@
  */
 import type { DbPool } from '../db/pool.js';
 import { insertTelemetryEvents, type TelemetryEventRow } from '../db/telemetryEvents.js';
-import { deriveCountry, deriveSourceBucket } from './telemetryDerive.js';
+import { deriveCountry, deriveDevice, deriveSourceBucket } from './telemetryDerive.js';
 
 // ── vocabulary ──────────────────────────────────────────────────────────────
 
@@ -253,6 +253,10 @@ export async function handleTelemetryCollect(
     const gclidPresent = b.gclid === true;
     const source = deriveSourceBucket({ referrer, gclidPresent, ownHost: ctx.ownHost });
     const country = deriveCountry(req.headers);
+    // F-38.9 (0.62.0) — the device class: derived from the request User-Agent
+    // (already on the POST) once per batch, then the raw UA is discarded — only
+    // the coarse class is stored, never the string (DD-54).
+    const device = deriveDevice(req.headers);
     // F-38.5 (0.60.0) — the campaign rider: normalized then stored; the raw
     // query value is discarded with the other riders.
     const campaign = normalizeCampaign(b.utm);
@@ -267,7 +271,7 @@ export async function handleTelemetryCollect(
       if (element === undefined) continue;
       const seq = typeof r.seq === 'number' && Number.isInteger(r.seq) && r.seq >= 0 && r.seq <= TELEMETRY_MAX_PAGE_SEQ ? r.seq : null;
       if (seq === null) continue;
-      rows.push({ occurredAt: now, event: r.event, page, element, country, source, campaign, pageSeq: seq });
+      rows.push({ occurredAt: now, event: r.event, page, element, country, source, campaign, device, pageSeq: seq });
     }
     if (rows.length === 0) return;
     await insertTelemetryEvents(ctx.pool, rows);

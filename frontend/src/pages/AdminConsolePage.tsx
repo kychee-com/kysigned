@@ -562,6 +562,8 @@ interface FunnelSummary {
   by_source: Record<string, number[]>;
   by_country: Record<string, number[]>;
   by_campaign: Record<string, number[]>;
+  by_device: Record<string, number[]>;
+  by_source_device: Record<string, number[]>;
   home_clicks: Record<string, number>;
 }
 
@@ -647,6 +649,8 @@ function FunnelTab({ window }: { window: WindowKey }) {
       <FunnelSplitTable title="By traffic source" testId="admin-funnel-sources" split={data.by_source} steps={data.steps} />
       <FunnelSplitTable title="By campaign" testId="admin-funnel-campaigns" split={data.by_campaign ?? {}} steps={data.steps} />
       <FunnelSplitTable title="By country" testId="admin-funnel-countries" split={data.by_country} steps={data.steps} />
+      <FunnelSplitTable title="By device" testId="admin-funnel-devices" split={data.by_device ?? {}} steps={data.steps} />
+      <FunnelSplitTable title="By source × device" testId="admin-funnel-source-devices" split={data.by_source_device ?? {}} steps={data.steps} />
       {Object.keys(data.home_clicks).length > 0 && (
         <div className="mb-6" data-testid="admin-funnel-home-clicks">
           <h3 className="text-sm font-medium mb-2">Home page clicks</h3>

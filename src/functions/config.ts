@@ -595,7 +595,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
   const telemetryStep = telemetryEnabled
     ? async (
         event: 'send_ok' | 'send_failed' | 'link_opened' | 'session_created',
-        opts?: { paid?: boolean; country?: string },
+        opts?: { paid?: boolean; country?: string; device?: string },
       ) => {
         try {
           await insertTelemetryEvents(pool, [
@@ -608,6 +608,9 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
               source: opts?.paid === true ? 'paid' : 'unknown',
               // Server steps have no page URL in reach — explicit none (F-38.5).
               campaign: 'none',
+              // F-38.9 — the class of the device making THIS auth request
+              // (bound in api.ts from its User-Agent); unknown otherwise.
+              device: opts?.device ?? 'unknown',
               pageSeq: 0,
             },
           ]);

@@ -160,14 +160,19 @@ describe('handleTelemetryCollect — fork default + config gate (AC-221/AC-214)'
     assert.equal(calls.length, 0);
   });
 
-  it('enabled: a valid batch inserts rows with normalized page, derived bucket/country, server time', async () => {
+  it('enabled: a valid batch inserts rows with normalized page, derived bucket/country/device, server time', async () => {
     const { pool, calls } = capturePool();
-    await collect(ctx(pool), batch(), { headers: new Headers({ 'cf-ipcountry': 'IL' }) });
+    await collect(ctx(pool), batch(), {
+      headers: new Headers({
+        'cf-ipcountry': 'IL',
+        'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1',
+      }),
+    });
     assert.equal(calls.length, 1);
     const v = calls[0].values;
-    // Two records, EIGHT params each (0.60.0): occurred_at, event, page,
-    // element, country, source, campaign, page_seq
-    assert.equal(v.length, 16);
+    // Two records, NINE params each (0.62.0): occurred_at, event, page,
+    // element, country, source, campaign, device, page_seq
+    assert.equal(v.length, 18);
     assert.ok(v[0] instanceof Date);
     assert.equal(v[1], 'page_view');
     assert.equal(v[2], 'pricing');
@@ -175,9 +180,28 @@ describe('handleTelemetryCollect — fork default + config gate (AC-221/AC-214)'
     assert.equal(v[4], 'IL');
     assert.equal(v[5], 'referral');
     assert.equal(v[6], 'none');
-    assert.equal(v[7], 1);
-    assert.equal(v[9], 'click');
-    assert.equal(v[11], 'cta_create:hero');
+    assert.equal(v[7], 'mobile'); // device from the iPhone UA
+    assert.equal(v[8], 1);
+    assert.equal(v[10], 'click');
+    assert.equal(v[12], 'cta_create:hero');
+    assert.equal(v[16], 'mobile'); // every record of the load carries it
+  });
+
+  it('the device class is derived from the User-Agent and stored; the raw UA never appears (AC-232)', async () => {
+    const { pool, calls } = capturePool();
+    const ua = 'Mozilla/5.0 (Linux; Android 13; SM-X710) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+    await collect(ctx(pool), batch({ records: [{ event: 'page_view', seq: 1 }] }), {
+      headers: new Headers({ 'user-agent': ua }),
+    });
+    assert.equal(calls[0].values[7], 'tablet'); // Android without "Mobile" → tablet
+    const flat = JSON.stringify(calls[0].values);
+    assert.ok(!flat.includes('SM-X710') && !flat.includes('AppleWebKit') && !flat.includes('Android'), 'raw UA leaked into a stored value');
+  });
+
+  it('no User-Agent → device unknown (never a guess)', async () => {
+    const { pool, calls } = capturePool();
+    await collect(ctx(pool), batch({ records: [{ event: 'page_view', seq: 1 }] }));
+    assert.equal(calls[0].values[7], 'unknown');
   });
 
   it('the derivation riders are DISCARDED — no referrer URL or click-id trace in any param (AC-218)', async () => {
@@ -193,9 +217,9 @@ describe('handleTelemetryCollect — fork default + config gate (AC-221/AC-214)'
   it('the utm rider records the NORMALIZED campaign label on every record of the load (AC-218 0.60.0)', async () => {
     const { pool, calls } = capturePool();
     await collect(ctx(pool), batch({ utm: 'Summer_Launch' }));
-    // 8 params/record now: occurred_at, event, page, element, country, source, campaign, page_seq
+    // 9 params/record (0.62.0): occurred_at, event, page, element, country, source, campaign, device, page_seq
     assert.equal(calls[0].values[6], 'summer_launch');
-    assert.equal(calls[0].values[14], 'summer_launch');
+    assert.equal(calls[0].values[15], 'summer_launch');
     const { pool: p2, calls: c2 } = capturePool();
     await collect(ctx(p2), batch()); // no utm rider
     assert.equal(c2[0].values[6], 'none');
@@ -237,7 +261,7 @@ describe('handleTelemetryCollect — the validation door (AC-220)', () => {
       }),
     );
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].values.length, 8); // only page_view survived
+    assert.equal(calls[0].values.length, 9); // only page_view survived (9 params/record, 0.62.0)
     assert.equal(calls[0].values[1], 'page_view');
   });
 
@@ -261,8 +285,8 @@ describe('handleTelemetryCollect — the validation door (AC-220)', () => {
       }),
     );
     const v = calls[0].values;
-    const elements = [v[3], v[11], v[19], v[27], v[35]];
-    assert.equal(v.length, 40); // 5 surviving records × 8
+    const elements = [v[3], v[12], v[21], v[30], v[39]];
+    assert.equal(v.length, 45); // 5 surviving records × 9 (0.62.0)
     assert.deepEqual(elements, ['cta_create:hero', 'other:faq', 'other:external', '50', 'redirect']);
   });
 
@@ -270,7 +294,7 @@ describe('handleTelemetryCollect — the validation door (AC-220)', () => {
     const { pool, calls } = capturePool();
     const many = Array.from({ length: 80 }, (_, i) => ({ event: 'page_view', seq: i + 1 }));
     await collect(ctx(pool), batch({ records: many }));
-    assert.equal(calls[0].values.length / 8 <= TELEMETRY_MAX_RECORDS_PER_POST, true);
+    assert.equal(calls[0].values.length / 9 <= TELEMETRY_MAX_RECORDS_PER_POST, true);
     const { pool: p2, calls: c2 } = capturePool();
     await collect(ctx(p2), batch({ records: [{ event: 'page_view', seq: 5000 }] }));
     assert.equal(c2.length, 0, 'a seq past the per-page-load cap must drop');

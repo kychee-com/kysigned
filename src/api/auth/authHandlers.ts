@@ -70,7 +70,7 @@ export interface AuthHandlerCtx {
    */
   telemetryStep?: (
     event: 'send_ok' | 'send_failed' | 'link_opened' | 'session_created',
-    opts?: { paid?: boolean; country?: string },
+    opts?: { paid?: boolean; country?: string; device?: string },
   ) => Promise<void>;
 }
 

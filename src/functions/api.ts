@@ -35,7 +35,7 @@
 import { matchRoute } from '../integrations/run402Router.js';
 import { handleTelemetryCollect } from '../api/telemetry.js';
 import { summarizeTelemetry } from '../db/telemetryEvents.js';
-import { deriveCountry } from '../api/telemetryDerive.js';
+import { deriveCountry, deriveDevice } from '../api/telemetryDerive.js';
 import { csrfOk, resolveSession } from '../api/auth/session.js';
 import { resolveApiKey } from '../api/auth/apiKeyAuth.js';
 import { extractBearerKey } from '../api/auth/apiKeyAuth.js';
@@ -144,17 +144,19 @@ async function readJsonBody(req: Request): Promise<Record<string, unknown>> {
 }
 
 /**
- * F-38.4 — bind the platform-provided country (the canonical x-run402-country,
- * else its cf-ipcountry compat alias, else the explicit unknown) onto the auth
- * ctx's telemetryStep so server-recorded funnel steps carry it (AC-218). A
- * no-op when the rail is off (no telemetryStep on the ctx).
+ * F-38.4 / F-38.9 — bind the platform-provided country (the canonical
+ * x-run402-country, else its cf-ipcountry compat alias, else unknown) AND the
+ * request's device class (from its User-Agent) onto the auth ctx's
+ * telemetryStep, so server-recorded funnel steps carry both (AC-218 / AC-232).
+ * A no-op when the rail is off (no telemetryStep on the ctx).
  */
 function telemetryBoundAuthCtx(deps: RequestDeps, req: Request): ReturnType<RequestDeps['authCtx']> {
   const ctx = deps.authCtx();
   const orig = ctx.telemetryStep;
   if (!orig) return ctx;
   const country = deriveCountry(req.headers);
-  return { ...ctx, telemetryStep: (event, opts) => orig(event, { ...opts, country }) };
+  const device = deriveDevice(req.headers);
+  return { ...ctx, telemetryStep: (event, opts) => orig(event, { ...opts, country, device }) };
 }
 
 /** Build the passkey-proxy ctx from the request deps (run402 anon key + base
@@ -578,7 +580,10 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
       // Rail disabled (fork default): no data and no telemetry reads — the
       // summary answers with the explicit empty shape (AC-221).
       if (!deps.telemetry) {
-        return json({ enabled: false, window_days: 0, steps: [], by_source: {}, by_country: {}, home_clicks: {} }, 200);
+        return json(
+          { enabled: false, window_days: 0, steps: [], by_source: {}, by_country: {}, by_campaign: {}, by_device: {}, by_source_device: {}, home_clicks: {} },
+          200,
+        );
       }
       const daysRaw = Number(url.searchParams.get('days') ?? '7');
       const days = Number.isFinite(daysRaw) ? Math.min(90, Math.max(1, Math.trunc(daysRaw))) : 7;

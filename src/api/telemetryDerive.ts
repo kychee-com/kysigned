@@ -86,3 +86,60 @@ export function deriveCountry(headers: Headers): string {
   if (code === 'XX' || code === 'T1') return 'unknown';
   return code;
 }
+
+export type TelemetryDevice = 'mobile' | 'desktop' | 'tablet' | 'unknown';
+
+/**
+ * F-38.9 (DD-54) — the visitor's coarse device class from the request
+ * User-Agent, or the explicit 'unknown'. Only the CLASS is returned; the raw UA
+ * is read here and never leaves this function (no OS / browser / version /
+ * client-hint entropy) — the same identifier-free rule as country. A small
+ * heuristic, not a UA-parsing library: novel or unrecognized agents fall to
+ * 'unknown' (never a wrong guess).
+ *
+ * Order matters: TABLETS are matched before phones because an iPad's UA carries
+ * the `Mobile` token and an Android tablet is "Android without `Mobile`", so a
+ * mobile-first test would misclassify both.
+ */
+export function deriveDevice(headers: Headers): TelemetryDevice {
+  const ua = (headers.get('user-agent') ?? '').toLowerCase();
+  if (ua === '') return 'unknown';
+  const isAndroid = ua.includes('android');
+  const hasMobileToken = ua.includes('mobi'); // matches both "Mobi" and "Mobile"
+  // Tablets first (iPad/Silk/Kindle UAs otherwise read as mobile; Android
+  // tablets are Android with no `Mobile` token).
+  if (
+    ua.includes('ipad') ||
+    ua.includes('tablet') ||
+    ua.includes('playbook') ||
+    ua.includes('kindle') ||
+    ua.includes('silk') ||
+    (isAndroid && !hasMobileToken)
+  ) {
+    return 'tablet';
+  }
+  if (
+    ua.includes('iphone') ||
+    ua.includes('ipod') ||
+    ua.includes('windows phone') ||
+    ua.includes('blackberry') ||
+    ua.includes('bb10') ||
+    hasMobileToken ||
+    isAndroid
+  ) {
+    return 'mobile';
+  }
+  // Desktop OS signals — checked last so a mobile OS on a desktop-ish token
+  // (e.g. "Windows Phone" carrying "Windows") never falls through to desktop.
+  if (
+    ua.includes('windows') ||
+    ua.includes('macintosh') ||
+    ua.includes('mac os x') ||
+    ua.includes('x11') ||
+    ua.includes('linux') ||
+    ua.includes('cros')
+  ) {
+    return 'desktop';
+  }
+  return 'unknown';
+}
