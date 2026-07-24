@@ -13,7 +13,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, Link } from 'react-router-dom';
-import { hasUnsentDraft, CreateEnvelopePage } from './CreateEnvelopePage';
+import { CreateEnvelopePage } from './CreateEnvelopePage';
+import { hasUnsentDraft } from './createEnvelopeDraft';
 
 const { apiPostMock, apiGetMock, authHolder } = vi.hoisted(() => ({
   apiPostMock: vi.fn(),
