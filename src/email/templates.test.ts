@@ -67,6 +67,27 @@ describe('email templates', () => {
     assert.equal(result.replyTo, 'forward-to-sign@kysigned.com');
   });
 
+  // F-3.2 / F-021 disposition (Cycle 19, Barry 2026-07-23): `message` is a
+  // published create-API + MCP field (llms.txt example carries it) — kept per
+  // the coded-AND-tested rule. This is the rendering lock that was missing.
+  it('signingRequest renders the creator message as a quoted block — and omits the block without one', () => {
+    const base = {
+      signerName: 'Alice',
+      signerEmail: 'alice@example.com',
+      senderName: 'Bob',
+      documentName: 'NDA',
+      envelopeId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+      reviewLink: 'https://kysigned.com/review/env-001/token123',
+      howItWorksLink: 'https://kysigned.com/how-it-works',
+      operatorDomain: 'kysigned.com',
+    };
+    const withMsg = templates.signingRequest({ ...base, message: 'Please sign before Friday — thanks!' });
+    assert.ok(withMsg.html.includes('Please sign before Friday'), 'the message text reaches the signer');
+    assert.match(withMsg.html, /border-left:3px solid[^>]*>Please sign before Friday/, 'rendered as the styled quote block');
+    const without = templates.signingRequest(base);
+    assert.ok(!without.html.includes('border-left:3px solid'), 'no empty quote block when no message was given');
+  });
+
   it('signingRequest uses an explicit generated signing mailbox address when provided', () => {
     const result = templates.signingRequest({
       signerName: 'Alice',
