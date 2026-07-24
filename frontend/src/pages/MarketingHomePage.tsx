@@ -225,20 +225,20 @@ export function MarketingHomePage() {
             <div className="step-card">
               <div className="step-number">1</div>
               <h3>Send a PDF</h3>
-              <p>Add signers and send. Share the signing link any way you like.</p>
+              <p>Upload a PDF, add your signers&rsquo; emails, send.</p>
             </div>
             <div className="step-card">
               <div className="step-number">2</div>
               <h3>Signers forward</h3>
               <p>
-                Each signer forwards the email back with &ldquo;I sign this document&rdquo;. Their provider&rsquo;s
-                DKIM signature on that email <em>is</em> the signature, no account, no app.
+                Each signer forwards the email back with &ldquo;I sign this document&rdquo;. Their own email
+                provider signs that reply, and that signature is the proof. No account, no app.
               </p>
             </div>
             <div className="step-card">
               <div className="step-number">3</div>
-              <h3>Everyone gets the proof</h3>
-              <p>One signing record, verifiable by anyone, offline, forever, even if we shut down.</p>
+              <h3>You keep the proof</h3>
+              <p>Every signed envelope becomes one signing record for you and your signers. Each of you can verify it independently, any time, even offline.</p>
             </div>
           </div>
           <p style={{ textAlign: 'center', marginTop: 28, fontSize: 14, color: '#666' }}>
