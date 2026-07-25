@@ -40,6 +40,16 @@ export const SIGNIN_LINK_STALE =
 export const SIGNIN_SEND_FAILED =
   "Couldn't send the sign-in email. Please try again in a moment.";
 
+/**
+ * Shown at the send gate when a 401 sent the creator there (2026-07-25): the
+ * server-side session died between page load and Send, or the SPA optimistically
+ * took the signed-in path while auth was still hydrating. It is a NOTICE, not an
+ * error: the draft is held, and signing in again dispatches it by itself. The raw
+ * server string ("Authentication required") must never reach the creator.
+ */
+export const SESSION_EXPIRED =
+  'Your sign-in expired before we could send. Sign in again and your document sends automatically. Nothing was lost.';
+
 /** Map a thrown token-exchange failure to actionable sign-in copy. */
 export function friendlySignInError(e: unknown): string {
   if (e instanceof ApiError) {

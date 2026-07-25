@@ -4,6 +4,8 @@ import {
   friendlySignInError,
   GENERIC_ERROR,
   SIGNIN_LINK_STALE,
+  SESSION_EXPIRED,
+  SIGNIN_SEND_FAILED,
 } from './friendlyError';
 import { ApiError } from './api';
 
@@ -58,8 +60,18 @@ describe('friendlySignInError', () => {
   });
 
   it('no user-facing copy in this module uses a dash-as-pause (outbound style rule)', () => {
-    for (const s of [GENERIC_ERROR, SIGNIN_LINK_STALE]) {
+    for (const s of [GENERIC_ERROR, SIGNIN_LINK_STALE, SIGNIN_SEND_FAILED, SESSION_EXPIRED]) {
       expect(s).not.toMatch(/—|–| - /);
     }
+  });
+
+  // 2026-07-25: a 401 at Send used to print the raw server string
+  // ("Authentication required") on a filled form with no way to sign in. The
+  // replacement notice must read as a next step, not as a fault, and must never
+  // name the status or the transport.
+  it('the session-expired notice states the recovery and leaks no transport detail', () => {
+    expect(SESSION_EXPIRED).toMatch(/sign in again/i);
+    expect(SESSION_EXPIRED).toMatch(/nothing was lost/i);
+    expect(SESSION_EXPIRED).not.toMatch(/401|run402|authentication required|session token/i);
   });
 });

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ApiError, apiGet, apiPost, formatUsd, type CreditBalance } from '../lib/api'
-import { friendlyCreateError } from '../lib/friendlyError'
+import { friendlyCreateError, SESSION_EXPIRED } from '../lib/friendlyError'
 import { isPdfTooLarge, pdfTooLargeMessage } from '../lib/pdfSize'
 import { useAuth } from '../auth/auth-core'
 import { SignInScreen } from '../auth/SignInScreen'
@@ -29,11 +29,19 @@ const emptySigner = (email = '', name = ''): SignerInput => ({ email, name, onBe
 
 export function CreateEnvelopePage() {
   const navigate = useNavigate()
-  const { user } = useAuth()
+  const { user, loading: authLoading, refresh: refreshAuth } = useAuth()
   // F-39.1 — the editor is open to guests; the sign-in moment is the SEND
   // (F-39.3), not the way in. Guest mode hides the self-sign row (its values
   // belong to a signed-in creator, F-39.2) and shows the trial line instead.
-  const isGuest = !user
+  //
+  // 2026-07-25 — `loading` is NOT `guest`. AuthContext starts loading=true with
+  // user=null, and this is the ONE route without a RequireAuth wrap, so nothing
+  // else covers the hydration window: reading `user` alone rendered the guest UI
+  // to a signed-in creator and, on Send, pushed them into the sign-in gate they
+  // had already passed. We claim no identity until auth settles; the submit path
+  // stays optimistic (signed-in) because a wrong guess now lands on the 401 route
+  // in dispatchEnvelope, which keeps the draft and offers sign-in.
+  const isGuest = !authLoading && !user
   const [docName, setDocName] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [signers, setSigners] = useState<SignerInput[]>([emptySigner()])
@@ -51,6 +59,14 @@ export function CreateEnvelopePage() {
   const [gatePhase, setGatePhase] = useState<'form' | 'gate' | 'sending'>('form')
   const heldPayloadRef = useRef<Record<string, unknown> | null>(null)
   const gateSentOnceRef = useRef(false)
+  // Why the gate is showing, when it isn't the ordinary guest one (the 401
+  // recovery below). Kept OUT of `error` so leaving the gate doesn't strand a
+  // sign-in notice on the form.
+  const [gateNotice, setGateNotice] = useState('')
+  // One 401 recovery per Send. If the retry after sign-in 401s again, the
+  // session is not the problem: fall back to the form rather than ping-pong
+  // between the gate and a create that keeps failing.
+  const authRetryRef = useRef(false)
   // Which mandatory field failed validation — drives the per-field red highlight.
   // (Scroll-to-section was replaced by scroll-to-top so the error banner is always
   // seen even when several fields are wrong — Barry QA 2026-06-19.)
@@ -71,10 +87,12 @@ export function CreateEnvelopePage() {
   const { showBilling } = getOperatorConfig()
   useEffect(() => {
     // Guests have no balance to read (F-39.1) — the credit outcome surfaces
-    // AFTER the send-gate sign-in (F-39.4), not before.
-    if (!showBilling || isGuest) return
+    // AFTER the send-gate sign-in (F-39.4), not before. `authLoading` is neither
+    // case yet: waiting for the settle keeps a guest page load from firing one
+    // doomed balance request on the way past.
+    if (authLoading || !showBilling || isGuest) return
     apiGet<CreditBalance>('/v1/credits/balance').then(setBalance).catch(() => setBalance(null))
-  }, [showBilling, isGuest])
+  }, [authLoading, showBilling, isGuest])
   const insufficientCredit = balance != null && !balance.sufficient_for_envelope
 
   // F-025 — guard the held draft against EVERY exit vector, not just the gate's
@@ -244,13 +262,37 @@ export function CreateEnvelopePage() {
         state: { justSent: true, ...(deliveryProblems.length ? { deliveryProblems } : {}) },
       })
     } catch (e) {
+      const status = e instanceof ApiError ? e.status : undefined
+      // 2026-07-25 — a 401 is not an error to READ, it is a sign-in to DO. The
+      // session can die between page load and Send, and the hydration window
+      // makes the SPA guess signed-in optimistically. Either way the answer is
+      // the SAME gate the guest flow uses: hold the draft, offer sign-in, and
+      // let the held send fire by itself. Correct the SPA's stale belief FIRST
+      // (refresh re-reads /v1/auth/user) so the gate renders its form instead of
+      // instantly re-firing onSignedIn against a session that is already gone.
+      if (status === 401 && !authRetryRef.current) {
+        authRetryRef.current = true
+        // Never let the belief-correction itself break the recovery: a refresh
+        // that throws (or a provider that returns no promise) still lands the
+        // creator on a gate that can sign them back in.
+        try { await refreshAuth() } catch { /* stale belief stays; the gate still works */ }
+        heldPayloadRef.current = payload
+        gateSentOnceRef.current = false
+        setError('')
+        setFirstError(null)
+        setGateNotice(SESSION_EXPIRED)
+        setGatePhase('gate')
+        scrollToTop()
+        return
+      }
       // Don't leak an opaque server fault (run402's "Internal function error") —
       // show a calm fallback for 5xx/opaque, keep helpful 4xx validation messages
       // (2026-06-21). scroll-to-top so the banner is seen. A held-send failure
       // (e.g. the F-39.4 insufficient-credit outcome) returns to the FORM with
       // the draft intact — never a dead end.
-      setError(friendlyCreateError(e instanceof ApiError ? e.status : undefined, e instanceof Error ? e.message : undefined))
+      setError(friendlyCreateError(status, e instanceof Error ? e.message : undefined))
       setFirstError(null)
+      setGateNotice('')
       setGatePhase('form')
       scrollToTop()
     } finally {
@@ -294,6 +336,9 @@ export function CreateEnvelopePage() {
     // F-39.5 — every Send PRESS is a funnel fact (valid or not, guest or
     // signed in): the click measures intent; validation outcomes follow.
     telemetryEvent('send_clicked')
+    // A fresh Send press is a fresh attempt: the one-shot 401 recovery re-arms.
+    authRetryRef.current = false
+    setGateNotice('')
     if (!file) { setError('Please upload a PDF'); setFirstError('file'); scrollToTop(); return }
     // Reject oversize PDFs here, with a clear message — otherwise the base64 upload
     // inflates past the 6 MiB Lambda invoke cap and the gateway returns an opaque 502.
@@ -343,11 +388,21 @@ export function CreateEnvelopePage() {
         <button
           type="button"
           data-testid="gate-back"
-          onClick={() => setGatePhase('form')}
+          onClick={() => { setGateNotice(''); setGatePhase('form') }}
           className="inline-flex items-center gap-1 min-h-[44px] text-sm text-gray-500 hover:text-gray-900 mb-3 cursor-pointer"
         >
           <span aria-hidden>←</span> Back to your document
         </button>
+        {/* Why this gate is showing, when it isn't the ordinary guest one: the
+            401 recovery. A notice, not an error, so it reads as the next step. */}
+        {gateNotice && (
+          <p
+            data-testid="gate-notice"
+            className="text-sm text-gray-700 bg-amber-50 border border-amber-100 rounded-lg px-4 py-3 mb-4"
+          >
+            {gateNotice}
+          </p>
+        )}
         <SignInScreen title="Sign in to send your document" telemetryTrigger="send" onSignedIn={handleGateSignedIn} />
       </div>
     )
