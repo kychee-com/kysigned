@@ -348,3 +348,66 @@ describe('the composing tab gets an ending (AC-239)', () => {
     }
   });
 });
+
+// ── Cycle 23 red-team findings ───────────────────────────────────────────────
+describe('F-029 — the restore view\'s own Send button must work (AC-241)', () => {
+  beforeEach(() => {
+    searchHolder.current = `?draft=${HANDLE}&signin_failed=1`;
+  });
+
+  // The restore view renders the full compose form, Send button included. That
+  // button ran the ordinary guest path, which reads the picked File and hands it
+  // to FileReader — but a restored draft's document lives on the SERVICE and was
+  // never picked locally, so it crashed with a raw
+  // "readAsDataURL: parameter 1 is not of type 'Blob'" on the page, and nothing
+  // was ever submitted. F-40.4's own words: a form the visitor cannot act on is
+  // a lie.
+  it('saves the edit and asks for a fresh link instead of crashing on the absent file', async () => {
+    renderPage();
+    const emailField = (await screen.findAllByPlaceholderText('jane.smith@example.com'))[0] as HTMLInputElement;
+    fireEvent.change(emailField, { target: { value: 'corrected@example.com' } });
+    send();
+
+    await waitFor(() => expect(apiPatchMock).toHaveBeenCalledWith(`/v1/pending-send/${HANDLE}`, expect.anything()));
+    const patch = apiPatchMock.mock.calls[0]![1] as { signers: Array<{ email: string }>; pdf_base64?: string };
+    expect(patch.signers[0]!.email).toBe('corrected@example.com');
+    expect(patch.pdf_base64).toBeUndefined();
+    // It lands on the gate for a fresh link, and never on a raw browser error.
+    expect(await screen.findByTestId('signin-screen')).toBeTruthy();
+    expect(screen.queryByText(/readAsDataURL|Blob|FileReader/i)).toBeNull();
+  });
+
+  it('a SIGNED-IN visitor on a restored draft claims it rather than re-uploading', async () => {
+    authHolder.current = { ...authHolder.current, user: { email: 'creator@example.com' } };
+    renderPage();
+    await screen.findByTestId('restored-draft-file');
+    send();
+    await waitFor(() => expect(callsTo(`/v1/pending-send/${HANDLE}/claim`)).toHaveLength(1));
+    expect(callsTo('/v1/envelope')).toHaveLength(0);
+    expect(callsTo('/v1/pending-send')).toHaveLength(0);
+  });
+});
+
+describe('F-030-obs — an ALREADY-SENT draft says so, rather than showing an empty form', () => {
+  it('renders the sent state with a way to the envelope, not a blank restore form', async () => {
+    // A claimed pending send is scrubbed to a receipt by the F-028 fix, so there
+    // is nothing left to prefill — and falling through to the generic restore
+    // form showed the visitor empty fields for a document that WAS sent.
+    searchHolder.current = `?draft=${HANDLE}&signin_failed=1`;
+    apiGetMock.mockResolvedValue({
+      email: '',
+      document_name: '',
+      byte_count: 0,
+      signers: [],
+      auto_close: true,
+      claimed: true,
+      envelope_id: 'env_already',
+      expires_at: '2026-08-01T10:00:00.000Z',
+    });
+    renderPage();
+    const sent = await screen.findByTestId('gate-sent-elsewhere');
+    expect(sent.textContent).toMatch(/sent/i);
+    expect(screen.queryByPlaceholderText('e.g., NDA for Acme Corp')).toBeNull();
+    expect(screen.queryByTestId('restore-resend')).toBeNull();
+  });
+});

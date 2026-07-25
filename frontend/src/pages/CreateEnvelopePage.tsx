@@ -441,8 +441,17 @@ export function CreateEnvelopePage() {
     }
   }
 
-  /** Build the create body from the draft (shared by preflight + dispatch). */
+  /**
+   * Build the create body from the draft (shared by preflight + dispatch).
+   *
+   * F-029 — this reads the LOCAL file, so it is only ever valid for a draft
+   * composed in this browser. A restored draft has no local file (its document
+   * lives on the service) and must never reach here; the guard is explicit
+   * rather than a `file!` assertion, because the assertion is exactly what let
+   * a raw FileReader crash reach a visitor's screen.
+   */
   const buildPayload = async (): Promise<Record<string, unknown>> => {
+    if (!file) throw new Error('buildPayload called without a locally selected document')
     const base64 = await new Promise<string>((resolve) => {
       const reader = new FileReader()
       reader.onload = () => resolve((reader.result as string).split(',')[1])
@@ -490,16 +499,35 @@ export function CreateEnvelopePage() {
     if (signers.some((s) => !s.email || !s.name)) { setError('All signers need name and email'); setFirstError('signers'); scrollToTop(); return }
     setFirstError(null)
 
+    // F-029 (red team cycle 23) — a RESTORED draft is neither of the two cases
+    // below, and it must be handled BEFORE them. Its document lives on the
+    // service and was never picked in this browser, so every path that reads the
+    // local `file` is wrong here: the guest branch used to run anyway and crash
+    // in FileReader with a raw "parameter 1 is not of type 'Blob'" on the page,
+    // submitting nothing. F-40.4's own principle is that a form the visitor
+    // cannot act on is a lie, and this was the most prominent button on it.
+    //
+    // Signed in → claim and send. Not signed in (the usual case here, since this
+    // view exists BECAUSE sign-in failed) → save the edit and ask for a fresh
+    // link, which is what the visitor came back to do.
+    if (isRestored && draftHandle) {
+      setSubmitting(true)
+      try {
+        await saveRestoredEdits()
+        if (user) await claimRestored()
+        else setGatePhase('gate')
+      } catch (e) {
+        setError(friendlyCreateError(e instanceof ApiError ? e.status : undefined, e instanceof Error ? e.message : undefined))
+        scrollToTop()
+      } finally {
+        setSubmitting(false)
+      }
+      return
+    }
+
     if (!isGuest) {
       // Signed-in Send: unchanged — immediate dispatch, no gate, and no pending
-      // send is ever written for it (AC-236). A RESTORED draft is the exception:
-      // its document lives on the service already, so it claims rather than
-      // re-uploading.
-      if (isRestored && draftHandle) {
-        await saveRestoredEdits()
-        await claimRestored()
-        return
-      }
+      // send is ever written for it (AC-236).
       const payload = await buildPayload()
       await dispatchEnvelope(payload)
       return
@@ -590,10 +618,13 @@ export function CreateEnvelopePage() {
   // F-39.3 — the gate view: the draft is HELD (state + heldPayloadRef live on;
   // the form is merely unmounted) while the one SignInScreen runs in-flow. The
   // back link abandons nothing — it just re-renders the form.
-  if (gatePhase === 'gate') {
-    // F-40.2 (AC-239) — the ending this tab used to lack: another browser
-    // claimed the draft and sent it, so stop waiting and say so.
-    if (sentElsewhere) {
+  // F-40.2 (AC-239) + F-030-obs (red team cycle 23) — the document IS sent, so
+  // say that, whichever view this tab happens to be in. It used to render only
+  // while waiting at the gate, so a visitor who opened an already-used link fell
+  // through to the generic restore form and saw EMPTY fields: the claim scrubs
+  // the draft to a receipt (F-028), leaving nothing to prefill. Empty boxes for a
+  // document that was successfully sent is the worst of both readings.
+  if (sentElsewhere) {
       return (
         <div className="max-w-2xl mx-auto px-4 py-8 text-center" data-testid="gate-sent-elsewhere">
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-green-50 mb-5">
@@ -611,10 +642,12 @@ export function CreateEnvelopePage() {
             className="inline-flex items-center justify-center min-h-[44px] px-6 py-3 bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-700"
           >
             Track who has signed
-          </Link>
-        </div>
-      )
-    }
+        </Link>
+      </div>
+    )
+  }
+
+  if (gatePhase === 'gate') {
     return (
       <div className="max-w-2xl mx-auto px-4 py-8">
         <button
