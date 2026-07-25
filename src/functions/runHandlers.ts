@@ -22,6 +22,7 @@ import { deliverEnvelopeWebhook } from '../api/webhookDeliver.js';
 import { shouldDeletePdf } from '../pdf/retention.js';
 import { sweepRetention } from '../pdf/sweep.js';
 import { pruneTelemetryEvents } from '../db/telemetryEvents.js';
+import { deleteFinishedPendingSends } from '../db/pendingSends.js';
 import { purgeEnvelopeBlobs } from '../pdf/blobPurge.js';
 import { handleCompletionDelivered, handleCompletionBounced } from '../api/emailWebhook.js';
 import { scheduleCompletionRetention, RETENTION_RETRY_DELAY, RETENTION_MAX_FAST_ATTEMPTS } from '../api/retentionSchedule.js';
@@ -359,7 +360,17 @@ export function buildRunHandlers(
       } catch (err) {
         console.error('telemetry prune failed (retention_sweep continues):', err);
       }
-      return { ...swept, telemetry_pruned: telemetryPruned };
+      // F-40.6 (AC-243): a pending send is held no longer than the job needs —
+      // gone once it produced an envelope, gone when it expires unclaimed. Rides
+      // this same schedule (no new cron, the AC-121 posture) and fails open like
+      // the prune above: housekeeping never breaks document retention.
+      let pendingSendsSwept = 0;
+      try {
+        pendingSendsSwept = await deleteFinishedPendingSends(deps.pool, new Date());
+      } catch (err) {
+        console.error('pending-send sweep failed (retention_sweep continues):', err);
+      }
+      return { ...swept, telemetry_pruned: telemetryPruned, pending_sends_swept: pendingSendsSwept };
     },
 
     /**

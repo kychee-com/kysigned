@@ -45,6 +45,23 @@ import { handleMintApiKey, handleListApiKeys, handleRevokeApiKey } from '../api/
 import { withCreateIdempotency } from '../api/idempotentCreate.js';
 import { handleX402CreateEnvelope, defaultX402Seams } from '../api/x402Create.js';
 import { handleCreatePreflight } from '../api/createPreflight.js';
+import {
+  handleCreatePendingSend,
+  handleGetPendingSend,
+  handlePatchPendingSend,
+  handleClaimPendingSend,
+  type PendingSendCtx,
+} from '../api/pendingSend.js';
+import {
+  createPendingSend,
+  getPendingSend,
+  updatePendingSendDraft,
+  claimPendingSend,
+  countLivePendingSends,
+  recordClaimedEnvelope,
+  releasePendingSendClaim,
+} from '../db/pendingSends.js';
+import { storePdfBlob } from '../db/pdfBlobs.js';
 import { buildHostedSenderGate } from '../api/billingGate.js';
 import { handleHealth, handleDeepHealth } from '../api/health.js';
 import {
@@ -163,6 +180,35 @@ function telemetryBoundAuthCtx(deps: RequestDeps, req: Request): ReturnType<Requ
  *  live in sessionConfig; baseUrl is the Origin fallback for the upstream call). */
 function passkeyCtx(deps: RequestDeps): PasskeyHandlerCtx {
   return { pool: deps.pool, session: deps.sessionConfig, fallbackOrigin: deps.baseUrl };
+}
+
+/**
+ * Build the F-40 pending-send ctx. The store is the DAO bound to this request's
+ * pool; `createEnvelope` is the ORDINARY authenticated create invoked on the
+ * claimant's behalf, so the claim path cannot drift from the create every other
+ * caller uses — the credit gate, the allowlist and delivery all behave exactly as
+ * they would for a signed-in Send (F-39.4).
+ */
+function pendingSendCtx(deps: RequestDeps): PendingSendCtx {
+  const pool = deps.pool;
+  return {
+    pool,
+    store: {
+      create: (boundEmail, draft) => createPendingSend(pool, boundEmail, draft),
+      get: (id) => getPendingSend(pool, id),
+      update: (id, patch) => updatePendingSendDraft(pool, id, patch),
+      claim: (id, sessionEmail) => claimPendingSend(pool, id, sessionEmail),
+      countLive: (boundEmail) => countLivePendingSends(pool, boundEmail),
+      recordEnvelope: (id, envelopeId) => recordClaimedEnvelope(pool, id, envelopeId),
+      release: (id) => releasePendingSendClaim(pool, id),
+      putBlob: (storageKey, bytes) => storePdfBlob(pool, storageKey, bytes),
+      getBlob: (storageKey) => getPdfBlob(pool, storageKey),
+    },
+    createEnvelope: async (actorEmail, request) => {
+      const inner = await handleCreateEnvelope(deps.apiContext(actorEmail), request as never);
+      return { status: inner.status, body: inner.body };
+    },
+  };
 }
 
 /** Build the recipient-editing ctx (F-23) from the request deps — the create-flow
@@ -419,6 +465,28 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
     case 'createPreflight': {
       const body = await readJsonBody(req);
       const r = await handleCreatePreflight(body as Record<string, unknown>, deps.pool);
+      return json(r.body, r.status);
+    }
+
+    // ── F-40 — the pending send: the draft that outlives the composing tab ──
+    // The first three are reachable without a session by design (the visitor
+    // holding a draft does not have one yet); every bound is inside the handler.
+    case 'createPendingSend': {
+      const body = await readJsonBody(req);
+      const r = await handleCreatePendingSend(pendingSendCtx(deps), body as Record<string, unknown>);
+      return json(r.body, r.status);
+    }
+    case 'getPendingSend': {
+      const r = await handleGetPendingSend(pendingSendCtx(deps), params.id!);
+      return json(r.body, r.status);
+    }
+    case 'patchPendingSend': {
+      const body = await readJsonBody(req);
+      const r = await handlePatchPendingSend(pendingSendCtx(deps), params.id!, body as Record<string, unknown>);
+      return json(r.body, r.status);
+    }
+    case 'claimPendingSend': {
+      const r = await handleClaimPendingSend(pendingSendCtx(deps), params.id!, actorEmail!);
       return json(r.body, r.status);
     }
 

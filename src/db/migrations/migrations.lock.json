@@ -17,6 +17,7 @@
     "014_operator_config.sql": "sha256:cbaa97e4ed51efb8520790ca48a169b2a7831ededeb63c9aa8a6a9e4a93d46a1",
     "015_telemetry.sql": "sha256:7da51dc3bc12faca86e25c0be79d134e999a7756c91f8c8a4267cc5cc5f6c525",
     "016_telemetry_campaign.sql": "sha256:4bc1a09edbe40ae9cfa460d45e9517191db2ae8f7048d5d82f0a18be62cb6ae2",
-    "017_telemetry_device.sql": "sha256:af18ec10b50146c9c7f24fb2b1eb1155100aace27b1e43477a0437fe2fef795c"
+    "017_telemetry_device.sql": "sha256:af18ec10b50146c9c7f24fb2b1eb1155100aace27b1e43477a0437fe2fef795c",
+    "018_pending_sends.sql": "sha256:bdbe0edc936e2954a4cf8f5672620ea3525bf5118bde2b2cbc0927359cab3158"
   }
 }

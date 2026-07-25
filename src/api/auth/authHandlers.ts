@@ -123,13 +123,30 @@ async function recordStep(
  */
 export const MAGIC_LINK_LANDING_PATH = '/dashboard';
 
-function magicLinkLandingUrl(appBaseUrl: string): string {
-  return new URL(MAGIC_LINK_LANDING_PATH, appBaseUrl).toString();
+/**
+ * F-40 / DD-57 — the pending-send handle rides the redirect URL as well as
+ * `client_state`, because only the URL copy survives a FAILED exchange (an
+ * expired token verifies to nothing, so run402 returns no state), and the
+ * failure path is precisely where the visitor's filled-in form must come back.
+ * Safe to append: run402 joins its own `token=` with `&` when the redirect
+ * already carries a query (`routes/auth.ts:1204`, read at 414cc643).
+ */
+const DRAFT_HANDLE_RE = /^ps_[0-9a-f-]{36}$/;
+
+function magicLinkLandingUrl(appBaseUrl: string, draftId?: string): string {
+  const url = new URL(MAGIC_LINK_LANDING_PATH, appBaseUrl);
+  if (draftId) url.searchParams.set('draft', draftId);
+  return url.toString();
+}
+
+/** A handle that is not one of ours is dropped rather than built into a link. */
+function readDraftHandle(value: unknown): string | undefined {
+  return typeof value === 'string' && DRAFT_HANDLE_RE.test(value) ? value : undefined;
 }
 
 export async function handleAuthMagicLink(
   ctx: AuthHandlerCtx,
-  body: { email?: unknown; attribution?: unknown },
+  body: { email?: unknown; attribution?: unknown; draft_id?: unknown },
 ): Promise<AuthResult> {
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
   if (!email || !EMAIL_RE.test(email)) {
@@ -138,14 +155,16 @@ export async function handleAuthMagicLink(
   // F-38.4 — the send outcome is a funnel fact (accepted vs rejected); the
   // paid mark comes ONLY from the attribution rider on this same request
   // (DD-50.6 — no email-join, the rail stays identifier-free end to end).
+  const draftId = readDraftHandle(body.draft_id);
   let sendOk = false;
   try {
     const sendResult = await requestMagicLink({
       email,
-      redirectUrl: magicLinkLandingUrl(ctx.appBaseUrl),
+      redirectUrl: magicLinkLandingUrl(ctx.appBaseUrl, draftId),
       projectAnonKey: ctx.session.projectAnonKey,
       run402BaseUrl: ctx.session.run402BaseUrl,
       fetchImpl: ctx.session.fetchImpl,
+      ...(draftId ? { clientState: JSON.stringify({ draft_id: draftId }) } : {}),
     });
     sendOk = sendResult.ok;
   } catch (err) {
@@ -249,7 +268,21 @@ export async function handleAuthTokenExchange(ctx: AuthHandlerCtx, body: { token
     );
   }
 
-  return { status: 200, body: { ok: true, email }, setCookies: [cookie] };
+  // F-40 / DD-57 — hand the bound copy of the handle back so the landing tab can
+  // claim the draft without trusting its own URL. Never allowed to break sign-in:
+  // a malformed state is dropped, because the session is the point and the handle
+  // is a convenience (the URL copy is still there).
+  let draftId: string | undefined;
+  if (r.clientState) {
+    try {
+      const parsed = JSON.parse(r.clientState) as { draft_id?: unknown };
+      draftId = readDraftHandle(parsed.draft_id);
+    } catch {
+      draftId = undefined;
+    }
+  }
+
+  return { status: 200, body: { ok: true, email, ...(draftId ? { draft_id: draftId } : {}) }, setCookies: [cookie] };
 }
 
 export async function handleAuthUser(ctx: AuthHandlerCtx, actor: SessionActor): Promise<AuthResult> {

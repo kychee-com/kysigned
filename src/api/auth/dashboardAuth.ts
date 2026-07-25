@@ -37,6 +37,14 @@ function defaultFetch(impl?: FetchLike): FetchLike {
 export interface RequestMagicLinkOpts extends BaseRun402AuthOpts {
   email: string;
   redirectUrl: string;
+  /**
+   * F-40 / DD-57 — run402's own carry-context field (≤2048 bytes). It is stored
+   * with the token and returned on a VERIFIED exchange as
+   * `magic_link.client_state`, so it is the bound, non-URL copy of whatever the
+   * caller needs back. Omitted entirely when absent, so an ordinary sign-in
+   * request is byte-identical to what it was before F-40.
+   */
+  clientState?: string;
 }
 
 export interface RequestMagicLinkResult {
@@ -54,7 +62,11 @@ export async function requestMagicLink(
       'Content-Type': 'application/json',
       apikey: opts.projectAnonKey,
     },
-    body: JSON.stringify({ email: opts.email, redirect_url: opts.redirectUrl }),
+    body: JSON.stringify({
+      email: opts.email,
+      redirect_url: opts.redirectUrl,
+      ...(opts.clientState ? { client_state: opts.clientState } : {}),
+    }),
   });
   if (res.status < 200 || res.status >= 300) {
     let reason = `run402 returned status ${res.status}`;
@@ -79,6 +91,14 @@ export interface ExchangeMagicLinkResult {
   refreshToken?: string;
   email?: string;
   reason?: string;
+  /**
+   * F-40 / DD-57 — whatever `clientState` rode the request, handed back verbatim
+   * by run402 (`magic_link.client_state`). Present only on a VERIFIED exchange:
+   * an expired or already-used token verifies to nothing, so a failure carries no
+   * state at all. That asymmetry is exactly why the handle also rides the
+   * redirect URL.
+   */
+  clientState?: string;
 }
 
 export async function exchangeMagicLinkToken(
@@ -110,12 +130,15 @@ export async function exchangeMagicLinkToken(
     access_token?: string;
     refresh_token?: string;
     user?: { email?: string };
+    magic_link?: { client_state?: unknown };
   };
+  const clientState = body.magic_link?.client_state;
   return {
     ok: true,
     accessToken: body.access_token,
     refreshToken: body.refresh_token,
     email: body.user?.email,
+    ...(typeof clientState === 'string' && clientState ? { clientState } : {}),
   };
 }
 

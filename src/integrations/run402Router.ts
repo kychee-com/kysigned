@@ -86,6 +86,18 @@ export const API_ROUTES: RouteDef[] = [
   { method: 'GET', pattern: '/v1/envelope/:id/pdf', name: 'ownerPdf', auth: 'session' },
   { method: 'GET', pattern: '/v1/documents', name: 'listDocuments', auth: 'session' },
 
+  // ── F-40 pending send (spec 0.65.0, DD-56) ───────────────────────────────
+  // The first three are PUBLIC because the visitor holding a draft has no
+  // session yet — that is the whole point of the handover. Every bound lives in
+  // the handler (preflight at the door, a per-address cap on live drafts, and
+  // no byte-returning read path). The claim is the only route that reads the
+  // document, and it is session-authed: possession of the handle authorizes
+  // nothing; the SESSION's address must match the draft's binding.
+  { method: 'POST', pattern: '/v1/pending-send', name: 'createPendingSend', auth: 'public' },
+  { method: 'GET', pattern: '/v1/pending-send/:id', name: 'getPendingSend', auth: 'public' },
+  { method: 'PATCH', pattern: '/v1/pending-send/:id', name: 'patchPendingSend', auth: 'public' },
+  { method: 'POST', pattern: '/v1/pending-send/:id/claim', name: 'claimPendingSend', auth: 'session' },
+
   // ── F-30.2 — the dedicated always-priced x402 create (spec 0.39.0) ────────
   // PUBLIC at the router: the gateway settles the payment BEFORE invoking the
   // fn and the settled context IS the authorization (no session/key/CSRF). On
