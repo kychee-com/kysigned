@@ -5,6 +5,9 @@
  * the only path when PublicKeyCredential is undefined.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+const { hardNavigateMock } = vi.hoisted(() => ({ hardNavigateMock: vi.fn() }));
+vi.mock('../lib/hardNavigate', () => ({ hardNavigate: hardNavigateMock }));
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from './AuthContext';
@@ -15,6 +18,7 @@ describe('SignInScreen — passkey-first behavior', () => {
   const orig = (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential;
 
   beforeEach(() => {
+    hardNavigateMock.mockReset();
     vi.stubGlobal('fetch', vi.fn(() =>
       Promise.resolve(new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401 })),
     ));
@@ -135,7 +139,13 @@ describe('SignInScreen — passkey-first behavior', () => {
     expect(screen.getByTestId('signin-send-link')).toHaveTextContent(/send sign-in link/i);
   });
 
-  it('shows the redesigned success card (countdown + close + dashboard) after a magic-link exchange', async () => {
+  // F-40 (AC-239) — the landing tab is the DESTINATION, not a waiting room. It
+  // used to render a "Sign in successful / this tab is no longer needed / close
+  // this page" card with a 5s auto-close, which is what forced the return trip
+  // Barry reported ("very inconvenient and a killer on mobile"). It now simply
+  // continues: to the dashboard, or to the editor that claims and sends a held
+  // draft. `console.run402.com` behaves the same way and always has.
+  it('CONTINUES after a magic-link exchange instead of asking the visitor to close the tab', async () => {
     (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential = function () {};
     window.history.replaceState({}, '', '/?token=magic-abc');
     const fetchSpy = vi.fn((url: string) => {
@@ -157,14 +167,58 @@ describe('SignInScreen — passkey-first behavior', () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText(/sign in successful/i)).toBeInTheDocument();
-    expect(screen.getByTestId('confirm-close')).toBeInTheDocument();
-    // The passkey nudge moved to the dashboard — it's NOT on this closing page.
-    expect(screen.queryByTestId('confirm-create-passkey')).not.toBeInTheDocument();
-    expect(screen.getByTestId('confirm-dashboard')).toBeInTheDocument(); // robust dashboard fallback
-    expect(screen.getByTestId('confirm-countdown')).toHaveTextContent(/close in 5s/i);
+    await waitFor(() => expect(hardNavigateMock).toHaveBeenCalledWith('/dashboard'));
+    expect(screen.queryByText(/close this page|no longer needed/i)).not.toBeInTheDocument();
 
+    vi.restoreAllMocks();
     window.history.replaceState({}, '', '/');
+  });
+
+  it('carries a held draft to the editor, which claims and sends it (AC-239)', async () => {
+    (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential = undefined;
+    const handle = 'ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34';
+    window.history.replaceState({}, '', `/?token=magic-abc&draft=${handle}`);
+    vi.stubGlobal('fetch', vi.fn((url: string) =>
+      String(url).endsWith('/v1/auth/token')
+        ? Promise.resolve(new Response(JSON.stringify({ ok: true, email: 'a@b.co', draft_id: handle }), { status: 200 }))
+        : Promise.resolve(new Response(JSON.stringify({ email: 'a@b.co' }), { status: 200 })),
+    ));
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <SignInScreen />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(hardNavigateMock).toHaveBeenCalledWith(`/dashboard/create?draft=${handle}&claim=1`));
+    vi.restoreAllMocks();
+  });
+
+  it('a FAILED exchange with a held draft returns the visitor to their document (AC-240)', async () => {
+    (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential = undefined;
+    const handle = 'ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34';
+    window.history.replaceState({}, '', `/?token=stale&draft=${handle}`);
+    vi.stubGlobal('fetch', vi.fn((url: string) =>
+      String(url).endsWith('/v1/auth/token')
+        ? Promise.resolve(new Response(JSON.stringify({ error: 'Sign-in failed', code: 'auth_signin_failed' }), { status: 401 }))
+        : Promise.resolve(new Response('{}', { status: 401 })),
+    ));
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <SignInScreen />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    // The URL rail is what survives a failed exchange (DD-57) — this is it working.
+    await waitFor(() =>
+      expect(hardNavigateMock).toHaveBeenCalledWith(`/dashboard/create?draft=${handle}&signin_failed=1`),
+    );
+    vi.restoreAllMocks();
   });
 
   // GH#20 follow-up: a stale magic-link click (older thread email; run402
@@ -244,7 +298,7 @@ describe('SignInScreen — passkey-first behavior', () => {
     window.history.replaceState({}, '', '/');
   });
 
-  it('clicking "Close this page" calls window.close and shows the close hint', async () => {
+  it('NEVER tries to close the visitor\'s tab (the dead end F-40 removed)', async () => {
     (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential = undefined; // hide the passkey nudge
     window.history.replaceState({}, '', '/?token=magic-abc');
     vi.stubGlobal('fetch', vi.fn((url: string) =>
@@ -262,10 +316,12 @@ describe('SignInScreen — passkey-first behavior', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(await screen.findByTestId('confirm-close'));
-    expect(closeSpy).toHaveBeenCalled();
-    expect(screen.getByTestId('confirm-close-hint')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId('signin-screen')).toBeInTheDocument());
+    expect(closeSpy).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('confirm-close')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('confirm-countdown')).not.toBeInTheDocument();
 
+    vi.restoreAllMocks();
     window.history.replaceState({}, '', '/');
   });
 

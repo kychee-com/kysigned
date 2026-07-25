@@ -47,6 +47,23 @@ export const SIGNIN_SEND_FAILED =
  * error: the draft is held, and signing in again dispatches it by itself. The raw
  * server string ("Authentication required") must never reach the creator.
  */
+/**
+ * F-40 / AC-240 — the landing tab's failure copy. A dead sign-in link is not an
+ * error page: the visitor's document is still here, and the next step is one
+ * button. Names no status code, no vendor and no transport detail.
+ */
+export const RESTORE_LINK_FAILED =
+  'That sign-in link has expired or was already used. Your document is still here. Send yourself a fresh link and it goes out.';
+
+export const RESTORE_DRAFT_GONE =
+  'This document is no longer available. Drafts are kept for 7 days, and this one has been removed. Please start a new one.';
+
+/** A restore failure → copy. Anything that is not a clean "gone" reads as a stale link. */
+export function friendlyRestoreError(e: unknown): string {
+  if (e instanceof ApiError && (e.status === 404 || e.code === 'not_found')) return RESTORE_DRAFT_GONE;
+  return GENERIC_ERROR;
+}
+
 export const SESSION_EXPIRED =
   'Your sign-in expired before we could send. Sign in again and your document sends automatically. Nothing was lost.';
 

@@ -18,6 +18,7 @@ import { apiPost } from '../lib/api';
 import { friendlySignInError, GENERIC_ERROR, SIGNIN_SEND_FAILED } from '../lib/friendlyError';
 import { readAttributionForSubmit } from '../lib/attribution';
 import { isValidEmail } from '../lib/validateEmail';
+import { hardNavigate } from '../lib/hardNavigate';
 import { broadcastAuthEvent, useAuth } from './auth-core';
 import {
   passkeysSupported,
@@ -26,7 +27,6 @@ import {
   startConditionalPasskeyLogin,
 } from './passkey';
 
-const CONFIRM_COUNTDOWN_SECONDS = 5;
 
 interface SignInScreenProps {
   /** Optional override for the rendered title (defaults to "Sign in"). */
@@ -46,18 +46,49 @@ interface SignInScreenProps {
    * happens next (the held send). Absent → the classic navigate-to-dashboard.
    */
   onSignedIn?: () => void;
+  /**
+   * F-40 — the pending-send handle this sign-in belongs to. Sent with the
+   * magic-link request so the emailed link carries it (DD-57), which is what
+   * lets ANY browser that opens the link finish the send.
+   */
+  draftId?: string;
+  /**
+   * F-40.1 — called with the address the visitor just typed, immediately BEFORE
+   * the magic-link request, and its result becomes the link's `draft_id`. The
+   * draft's binding IS its security model, so it cannot be stored before the
+   * address is known; and it must be stored before the link is sent, or the link
+   * could arrive pointing at nothing. Throwing here sends no link and leaves the
+   * visitor on the gate with a message: fail closed.
+   */
+  prepareDraft?: (email: string) => Promise<string>;
+  /** F-40 — prefill for a resend on a restored draft (AC-240): the address is
+   *  already known, so nobody retypes what they already gave. */
+  initialEmail?: string;
 }
 
-export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct', onSignedIn }: SignInScreenProps) {
+/** F-40 — where a landing tab goes once the token has been exchanged. */
+function landingDestination(draftId: string | null): string {
+  return draftId
+    ? `/dashboard/create?draft=${encodeURIComponent(draftId)}&claim=1`
+    : '/dashboard';
+}
+
+export function SignInScreen({
+  title = 'Sign in',
+  telemetryTrigger = 'direct',
+  onSignedIn,
+  draftId,
+  prepareDraft,
+  initialEmail,
+}: SignInScreenProps) {
   const { user, refresh } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  const [emailInput, setEmailInput] = useState('');
+  const [emailInput, setEmailInput] = useState(initialEmail ?? '');
   const [magicLinkSent, setMagicLinkSent] = useState(false);
   const [tokenInput, setTokenInput] = useState('');
   const [error, setError] = useState('');
   const [exchanging, setExchanging] = useState(false);
-  const [signedInConfirmation, setSignedInConfirmation] = useState(false);
   // null = probing; true = the browser offers passkey AUTOFILL (so no explicit
   // passkey button is needed); false = no autofill → show the manual passkey link.
   const [autofillAvailable, setAutofillAvailable] = useState<boolean | null>(null);
@@ -70,28 +101,18 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct', o
     telemetryEventOnce('signin_prompt', telemetryTrigger);
   }, [telemetryTrigger]);
 
-  // Magic-link confirmation card: counts down then tries to close the tab. A tab
-  // opened from an email link usually CAN'T be closed by script (browser
-  // security), so when the attempt no-ops we fall back to "you can close this".
-  const [countdown, setCountdown] = useState(CONFIRM_COUNTDOWN_SECONDS);
-  const [autoCloseActive, setAutoCloseActive] = useState(true);
-  const [closeAttempted, setCloseAttempted] = useState(false);
-
   // Cross-tab pivot: when AuthContext picks up a signed-in user (via the
   // BroadcastChannel from another tab that completed the magic-link exchange,
   // or via visibilitychange re-fetching /v1/auth/user when the user focuses
   // this tab), navigate away from the sign-in screen. The `?next=` query
   // preserved by AppHeader's Sign-in link tells us where to go; default to
-  // /dashboard. We DO NOT navigate while showing the post-token-exchange
-  // confirmation card — that tab opened from the magic-link click and the
-  // user explicitly chooses Continue/Close themselves.
+  // /dashboard.
   // F-39.3 — embedded (send-gate) mode: the embedding page owns the moment a
   // session appears. Ref-guarded so re-renders and fresh user identities can
   // never re-fire the held send (AC-225's exactly-once).
   const signedInFired = useRef(false);
   useEffect(() => {
     if (!user) return;
-    if (signedInConfirmation) return;
     if (onSignedIn) {
       if (signedInFired.current) return;
       signedInFired.current = true;
@@ -106,36 +127,57 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct', o
     // back to marketing.
     const dest = next && next.startsWith('/') && next !== '/' ? next : '/dashboard';
     navigate(dest, { replace: true });
-  }, [user, signedInConfirmation, location.search, navigate, onSignedIn]);
+  }, [user, location.search, navigate, onSignedIn]);
 
-  // Magic-link forwarder: if the URL contains ?token=<...>, treat THIS render
-  // as a post-magic-link landing and auto-exchange the token. Replaces the
-  // copy of this logic that used to live in DashboardPage.tsx (AUTH4 era).
+  // Magic-link landing: the URL carries ?token=<...>, so THIS tab is the one the
+  // mail client opened. F-40 — it is the destination, not a waiting room. On
+  // success it goes wherever the journey continues (a held draft → the editor,
+  // which claims and sends; otherwise the dashboard), and on FAILURE it carries
+  // the draft handle to the editor so the visitor gets their filled-in document
+  // back instead of an apology with nothing behind it (AC-240).
+  //
+  // Both destinations are full-page navigations, so the SPA re-hydrates auth from
+  // the freshly-set session cookie rather than racing in-memory state.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     const tokenFromUrl = params.get('token');
     if (!tokenFromUrl) return;
+    // The handle rides the URL precisely BECAUSE it survives a failed exchange
+    // (DD-57) — read it before anything can go wrong.
+    const draftFromUrl = params.get('draft');
     // Strip the token from the URL bar so a refresh/copy-paste doesn't re-use it.
     const clean = new URL(window.location.href);
     clean.searchParams.delete('token');
     window.history.replaceState({}, '', clean.toString());
 
     setExchanging(true);
-    apiPost<{ ok?: boolean; email?: string; error?: string }>('/v1/auth/token', { token: tokenFromUrl })
+    apiPost<{ ok?: boolean; email?: string; draft_id?: string; error?: string }>('/v1/auth/token', { token: tokenFromUrl })
       .then((result) => {
         if (!result.ok || !result.email) {
           // A 200 without an email is a server-contract violation, not a stale
           // link — the stale/expired case throws (401) and is mapped below.
           setError(GENERIC_ERROR);
+          setExchanging(false);
           return;
         }
         broadcastAuthEvent({ type: 'signed-in', email: result.email });
-        void refresh();
-        setSignedInConfirmation(true);
+        // Prefer the SERVER's copy of the handle (bound to the token) over the
+        // URL's, falling back to the URL when the link predates client_state.
+        hardNavigate(landingDestination(result.draft_id ?? draftFromUrl));
       })
-      .catch((e) => setError(friendlySignInError(e)))
-      .finally(() => setExchanging(false));
+      .catch((e) => {
+        // A dead link with a draft behind it is not an error page: it is the
+        // visitor's own document, plus an explanation and a way to try again.
+        if (draftFromUrl) {
+          hardNavigate(
+            `/dashboard/create?draft=${encodeURIComponent(draftFromUrl)}&signin_failed=1`,
+          );
+          return;
+        }
+        setError(friendlySignInError(e));
+        setExchanging(false);
+      });
   }, [refresh]);
 
   // Passkey autofill (conditional UI, "option 1"): on a browser that supports it,
@@ -169,21 +211,6 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct', o
     };
   }, [refresh]);
 
-  // Confirmation-card auto-close countdown. Decrements once a second; at zero it
-  // attempts window.close() and (since that's usually blocked for tabs opened
-  // from an email link) flips to the "you can close this tab" message.
-  useEffect(() => {
-    if (!signedInConfirmation || !autoCloseActive) return;
-    if (countdown <= 0) {
-      window.close();
-      setCloseAttempted(true);
-      setAutoCloseActive(false);
-      return;
-    }
-    const t = setTimeout(() => setCountdown((c) => c - 1), 1000);
-    return () => clearTimeout(t);
-  }, [signedInConfirmation, autoCloseActive, countdown]);
-
   // "Check your email" → auto-advance. While this tab waits, poll the session:
   // clicking the magic link in ANOTHER tab sets the session cookie, which is
   // shared across same-origin tabs, so the next /v1/auth/user check here sees the
@@ -191,12 +218,12 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct', o
   // when the cross-tab broadcast is missed (the bug where the original tab stayed
   // stuck on "check your email").
   useEffect(() => {
-    if (!magicLinkSent || user || signedInConfirmation) return;
+    if (!magicLinkSent || user) return;
     const id = setInterval(() => {
       void refresh();
     }, 2500);
     return () => clearInterval(id);
-  }, [magicLinkSent, user, signedInConfirmation, refresh]);
+  }, [magicLinkSent, user, refresh]);
 
   const attemptPasskey = async () => {
     setError('');
@@ -218,6 +245,17 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct', o
     // telemetry — the identifier-free rail).
     telemetryEvent('signin_submit');
     setError('');
+    // F-40.1 — the draft is stored FIRST, with the address now known, so the
+    // link can never arrive pointing at nothing. A failure here sends no link.
+    let handle = draftId;
+    if (!handle && prepareDraft) {
+      try {
+        handle = await prepareDraft(emailInput.trim());
+      } catch {
+        setError(SIGNIN_SEND_FAILED);
+        return;
+      }
+    }
     try {
       // F-37 — the attribution rider: the email submit runs in the browser
       // that holds the gclid capture (the link may be opened on another
@@ -227,6 +265,9 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct', o
       await apiPost('/v1/auth/magic-link', {
         email: emailInput.trim(),
         ...(attribution ? { attribution } : {}),
+        // F-40 / DD-57 - the emailed link carries the draft handle, which is what
+        // lets ANY browser that opens it finish the send.
+        ...(handle ? { draft_id: handle } : {}),
       });
       setMagicLinkSent(true);
     } catch {
@@ -260,17 +301,11 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct', o
     }
   };
 
-  const closeThisPage = () => {
-    setAutoCloseActive(false);
-    window.close();
-    setCloseAttempted(true);
-  };
-
   // Full-page load (not client-side nav) so the dashboard re-hydrates auth from
   // the freshly-set session cookie — robust against any in-memory state race
   // (the bug where "Continue to dashboard" bounced back to the sign-in form).
   const goToDashboard = () => {
-    window.location.assign('/dashboard');
+    hardNavigate('/dashboard');
   };
 
   if (exchanging) {
@@ -278,55 +313,6 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct', o
       <div data-testid="signin-screen" className="max-w-lg mx-auto px-4 py-20 text-center">
         <div className="animate-spin h-6 w-6 border-4 border-gray-300 border-t-gray-900 rounded-full mx-auto" />
         <p className="text-sm text-gray-500 mt-4">Signing you in…</p>
-      </div>
-    );
-  }
-
-  // Post-magic-link success card. The original tab (if separate) is already
-  // signed-in via BroadcastChannel; THIS tab offers "Continue" to /dashboard
-  // or "Close this tab" so the user returns to the tab they started in.
-  if (signedInConfirmation) {
-    return (
-      <div data-testid="signin-screen" className="max-w-lg mx-auto px-4 py-20 text-center">
-        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-50 mb-6">
-          <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-          </svg>
-        </div>
-        <h1 className="text-2xl font-semibold mb-3">Sign in successful</h1>
-        <p className="text-gray-600 mb-6">
-          You're signed in. This tab is no longer needed — your original tab is moving to your dashboard.
-        </p>
-
-        <div className="space-y-3">
-          {!closeAttempted ? (
-            <>
-              <button
-                onClick={closeThisPage}
-                data-testid="confirm-close"
-                className="w-full px-6 py-3 bg-gray-900 text-white rounded-lg font-medium transition-colors duration-150 hover:bg-gray-700 active:bg-gray-950 cursor-pointer"
-              >
-                Close this page
-              </button>
-              {autoCloseActive && (
-                <p className="text-xs text-gray-500" data-testid="confirm-countdown">
-                  This page will close in {countdown}s.
-                </p>
-              )}
-            </>
-          ) : (
-            <p className="text-sm text-gray-500" data-testid="confirm-close-hint">
-              You can close this tab — you're signed in.
-            </p>
-          )}
-          <button
-            onClick={goToDashboard}
-            data-testid="confirm-dashboard"
-            className="w-full text-sm text-gray-500 hover:text-gray-900 underline underline-offset-2 cursor-pointer"
-          >
-            or go to your dashboard
-          </button>
-        </div>
       </div>
     );
   }
@@ -445,24 +431,21 @@ export function SignInScreen({ title = 'Sign in', telemetryTrigger = 'direct', o
             Check your email at <span className="font-medium">{emailInput}</span>. Click the sign-in link.
           </p>
           {telemetryTrigger === 'send' ? (
-            // F-39.6 / AC-228 — the send gate holds a draft that lives ONLY in
-            // this browser (sessions are per-browser), so a link opened on the
-            // phone would sign the phone in and strand the draft here. Shout
-            // the device instruction, emphasized by SIZE + WEIGHT (never color
-            // alone — AC-231).
-            <p className="text-base font-semibold text-gray-900 mb-4" data-testid="gate-device-note">
-              Open the email and click the link{' '}
-              <span className="text-lg font-extrabold" data-testid="gate-device-phrase">ON THIS DEVICE</span>{' '}
-              to send your document.
+            // F-40 / AC-237 — the draft now lives on the service, so the link
+            // works from anywhere. This used to shout ON THIS DEVICE, which was
+            // true of the old tab-only draft and is false now: a phone-side
+            // click FINISHES the send rather than stranding a desktop draft.
+            <p className="text-base font-semibold text-gray-900 mb-4" data-testid="gate-any-device-note">
+              Open it on any device. Your document is saved, so whichever one you use will send it.
             </p>
           ) : (
             <p className="text-xs text-gray-500 mb-4">
-              This tab continues automatically once you click the link — or use the button below.
+              This tab continues automatically once you click the link.
             </p>
           )}
           {telemetryTrigger !== 'send' && (
             // Hidden at the send gate: this is a FULL navigation to /dashboard,
-            // which would destroy the held draft (F-39.3). The session poll +
+            // which would leave the held draft behind. The session poll +
             // onSignedIn fire the held send by themselves.
             <button
               onClick={goToDashboard}

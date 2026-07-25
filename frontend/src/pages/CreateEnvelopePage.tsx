@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { ApiError, apiGet, apiPost, formatUsd, type CreditBalance } from '../lib/api'
-import { friendlyCreateError, SESSION_EXPIRED } from '../lib/friendlyError'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { ApiError, apiGet, apiPatch, apiPost, formatUsd, type CreditBalance } from '../lib/api'
+import { friendlyCreateError, friendlyRestoreError, RESTORE_LINK_FAILED, SESSION_EXPIRED } from '../lib/friendlyError'
 import { isPdfTooLarge, pdfTooLargeMessage } from '../lib/pdfSize'
 import { useAuth } from '../auth/auth-core'
 import { SignInScreen } from '../auth/SignInScreen'
@@ -27,9 +27,41 @@ interface SignerInput {
 
 const emptySigner = (email = '', name = ''): SignerInput => ({ email, name, onBehalf: false, onBehalfOf: '' })
 
+/**
+ * F-40 — what `GET /v1/pending-send/:id` returns: the draft's IDENTITY, never
+ * its contents. The document is described (name, size) and reachable only by the
+ * claim, so no unauthenticated caller can read the bytes back (AC-243).
+ */
+interface PendingSendView {
+  email: string
+  document_name: string
+  byte_count: number
+  signers: Array<{ email: string; name: string; on_behalf_of?: string }>
+  auto_close: boolean
+  claimed: boolean
+  envelope_id?: string
+  expires_at: string
+}
+
+/** F-40 — what the landing tab was asked to do, read once from the URL. */
+function readHandover(search: string) {
+  const params = new URLSearchParams(search)
+  const draft = params.get('draft')
+  return {
+    draftId: draft && /^ps_[0-9a-f-]{36}$/.test(draft) ? draft : null,
+    claim: params.get('claim') === '1',
+    signInFailed: params.get('signin_failed') === '1',
+  }
+}
+
 export function CreateEnvelopePage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { user, loading: authLoading, refresh: refreshAuth } = useAuth()
+  // F-40 — this render may BE the magic-link landing. Read once: the URL is the
+  // rail that survives a failed exchange (DD-57), so it is what tells us there
+  // is a document to bring back even when sign-in produced nothing.
+  const [handover] = useState(() => readHandover(location.search))
   // F-39.1 — the editor is open to guests; the sign-in moment is the SEND
   // (F-39.3), not the way in. Guest mode hides the self-sign row (its values
   // belong to a signed-in creator, F-39.2) and shows the trial line instead.
@@ -67,6 +99,24 @@ export function CreateEnvelopePage() {
   // session is not the problem: fall back to the form rather than ping-pong
   // between the gate and a create that keeps failing.
   const authRetryRef = useRef(false)
+
+  // ── F-40: the pending send ────────────────────────────────────────────────
+  // The handle of the draft this page is working on. Set when the gate stores a
+  // guest draft, or read from the URL when this tab IS the magic-link landing.
+  const [draftHandle, setDraftHandle] = useState<string | null>(handover.draftId)
+  // A restored draft's document: the file is immutable for the life of the
+  // pending send, so we carry its IDENTITY (name, size) and never its bytes.
+  const [restoredFile, setRestoredFile] = useState<{ name: string; size: number } | null>(null)
+  // The bound address, so a resend prefills what the visitor already gave.
+  const [restoredEmail, setRestoredEmail] = useState('')
+  // Why this page is showing a restored document rather than an empty editor.
+  const [restoreNotice, setRestoreNotice] = useState(handover.signInFailed ? RESTORE_LINK_FAILED : '')
+  // The composing tab's ending: another browser claimed the draft and sent it.
+  const [sentElsewhere, setSentElsewhere] = useState<string | null>(null)
+  const claimFiredRef = useRef(false)
+  const restoreFiredRef = useRef(false)
+  const isRestored = restoredFile !== null
+
   // Which mandatory field failed validation — drives the per-field red highlight.
   // (Scroll-to-section was replaced by scroll-to-top so the error banner is always
   // seen even when several fields are wrong — Barry QA 2026-06-19.)
@@ -215,6 +265,96 @@ export function CreateEnvelopePage() {
   // still flags which inputs need fixing. (Barry QA 2026-06-19.)
   const scrollToTop = () => window.scrollTo({ top: 0, behavior: 'smooth' })
 
+  /** F-40 — pull a stored draft back into the editor's own fields. */
+  const applyRestored = (d: PendingSendView) => {
+    setDocName(d.document_name)
+    setRestoredFile({ name: `${d.document_name}.pdf`, size: d.byte_count })
+    setRestoredEmail(d.email)
+    setAutoClose(d.auto_close)
+    setSigners(
+      d.signers.length > 0
+        ? d.signers.map((s) => ({
+            email: s.email,
+            name: s.name,
+            onBehalf: !!s.on_behalf_of,
+            onBehalfOf: s.on_behalf_of ?? '',
+          }))
+        : [emptySigner()],
+    )
+  }
+
+  // F-40.3 (AC-240) — this tab landed from the sign-in email with a draft handle.
+  // Bring the document back BEFORE deciding what to do with it, so both outcomes
+  // (claim and send, or explain and offer a fresh link) have something to show.
+  useEffect(() => {
+    if (!handover.draftId || restoreFiredRef.current) return
+    restoreFiredRef.current = true
+    let cancelled = false
+    void (async () => {
+      try {
+        const d = await apiGet<PendingSendView>(`/v1/pending-send/${handover.draftId}`)
+        if (cancelled) return
+        applyRestored(d)
+        // Someone else already sent it — say so instead of offering to send it again.
+        if (d.claimed && d.envelope_id) setSentElsewhere(d.envelope_id)
+      } catch (e) {
+        if (cancelled) return
+        // A draft we cannot fetch is one we cannot restore: say which, plainly.
+        setRestoreNotice(friendlyRestoreError(e))
+        setDraftHandle(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [handover.draftId])
+
+  // F-40.2 (AC-239) — the tab that landed FINISHES the job: claim the draft and
+  // send it, then land on that envelope. Exactly once, guarded by a ref so no
+  // re-render can produce a second envelope or a second charge.
+  useEffect(() => {
+    if (!handover.claim || !handover.draftId || !user || claimFiredRef.current) return
+    claimFiredRef.current = true
+    setGatePhase('sending')
+    void (async () => {
+      try {
+        const result = await apiPost<{ envelope_id: string; already_sent?: boolean }>(
+          `/v1/pending-send/${handover.draftId}/claim`,
+          {},
+        )
+        allowNavRef.current = true
+        navigate(`/dashboard/envelope/${result.envelope_id}`, { state: { justSent: true } })
+      } catch (e) {
+        // A refusal (no credit, allowlist, a create-time rule) is retryable after
+        // the creator fixes it — the server released the claim, so the restored
+        // form below is a live draft, not a corpse (F-39.4 through the handover).
+        setError(friendlyCreateError(e instanceof ApiError ? e.status : undefined, e instanceof Error ? e.message : undefined))
+        setGatePhase('form')
+        scrollToTop()
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handover.claim, handover.draftId, user])
+
+  // F-40.2 (AC-239) — the composing tab gets an ENDING. Before F-40 a tab whose
+  // link was opened in a separate storage context (Gmail iOS, Outlook) waited on
+  // a session cookie it would never see, forever. Now it watches its own draft:
+  // once another browser claims it, this tab says the document was sent.
+  useEffect(() => {
+    if (gatePhase !== 'gate' || !draftHandle || sentElsewhere) return
+    const id = setInterval(() => {
+      void apiGet<PendingSendView>(`/v1/pending-send/${draftHandle}`)
+        .then((d) => {
+          if (d.claimed && d.envelope_id) setSentElsewhere(d.envelope_id)
+        })
+        .catch(() => {
+          /* a transient read failure just means we look again next tick */
+        })
+    }, 3000)
+    return () => clearInterval(id)
+  }, [gatePhase, draftHandle, sentElsewhere])
+
+
   /**
    * The actual create POST + success routing — one path for both the classic
    * signed-in Send and the F-39.3 held send after the gate.
@@ -339,26 +479,37 @@ export function CreateEnvelopePage() {
     // A fresh Send press is a fresh attempt: the one-shot 401 recovery re-arms.
     authRetryRef.current = false
     setGateNotice('')
-    if (!file) { setError('Please upload a PDF'); setFirstError('file'); scrollToTop(); return }
+    // A RESTORED draft already has its document on the service, so "no file
+    // picked" is not a defect there — the picker is deliberately absent.
+    if (!file && !isRestored) { setError('Please upload a PDF'); setFirstError('file'); scrollToTop(); return }
     // Reject oversize PDFs here, with a clear message — otherwise the base64 upload
     // inflates past the 6 MiB Lambda invoke cap and the gateway returns an opaque 502.
-    if (isPdfTooLarge(file.size)) { setError(pdfTooLargeMessage(file.size)); setFirstError('file'); scrollToTop(); return }
+    if (file && isPdfTooLarge(file.size)) { setError(pdfTooLargeMessage(file.size)); setFirstError('file'); scrollToTop(); return }
     if (!docName.trim()) { setError('Please enter a document name'); setFirstError('docName'); scrollToTop(); return }
     if (signers.some((s) => !s.email || !s.name)) { setError('All signers need name and email'); setFirstError('signers'); scrollToTop(); return }
     setFirstError(null)
 
     if (!isGuest) {
-      // Signed-in Send: unchanged — immediate dispatch, no gate (AC-225).
+      // Signed-in Send: unchanged — immediate dispatch, no gate, and no pending
+      // send is ever written for it (AC-236). A RESTORED draft is the exception:
+      // its document lives on the service already, so it claims rather than
+      // re-uploading.
+      if (isRestored && draftHandle) {
+        await saveRestoredEdits()
+        await claimRestored()
+        return
+      }
       const payload = await buildPayload()
       await dispatchEnvelope(payload)
       return
     }
 
-    // Guest Send (F-39.3): validate FIRST — the free public preflight runs the
-    // same server-side rejections a signed-in create would hit (F-3.2a address
-    // rules, size guards), so nobody signs in just to learn the form is
-    // invalid. Preflight is STATELESS: nothing is stored server-side. Only a
-    // draft that passes opens the gate.
+    // Guest Send (F-39.3 + F-40.1): validate FIRST — the free public preflight
+    // runs the same server-side rejections a signed-in create would hit (F-3.2a
+    // address rules, size guards), so nobody signs in just to learn the form is
+    // invalid. Only a draft that passes is stored, and only a stored draft opens
+    // the gate: the store is what lets the tab the visitor LANDS in finish the
+    // send, so a gate without one would be the old dead end again.
     setSubmitting(true)
     setError('')
     try {
@@ -375,6 +526,62 @@ export function CreateEnvelopePage() {
     }
   }
 
+  /**
+   * F-40.1 — store the held draft, at the moment the visitor's address is known
+   * and BEFORE the sign-in email goes out. The binding is the draft's whole
+   * security model (only a session for this address may claim it), so it cannot
+   * be written earlier than the address. Throwing here means no link is sent and
+   * the gate stays put: fail closed, never a gate holding nothing.
+   */
+  const storeDraftForLink = async (email: string): Promise<string> => {
+    if (draftHandle) return draftHandle // a restored draft is already stored
+    const payload = heldPayloadRef.current ?? (await buildPayload())
+    const { draft_id } = await apiPost<{ draft_id: string }>('/v1/pending-send', { email, ...payload })
+    setDraftHandle(draft_id)
+    return draft_id
+  }
+
+  /** F-40.4 — save a restored draft's edits before anything acts on it. */
+  const saveRestoredEdits = async (): Promise<void> => {
+    if (!draftHandle || !isRestored) return
+    await apiPatch(`/v1/pending-send/${draftHandle}`, {
+      document_name: docName,
+      signers: signers.map((s) => ({
+        email: s.email,
+        name: s.name,
+        on_behalf_of: s.onBehalf && s.onBehalfOf.trim() ? s.onBehalfOf.trim() : undefined,
+      })),
+      auto_close: autoClose,
+    })
+  }
+
+  /** Claim + send a restored draft (the signed-in path onto an existing draft). */
+  const claimRestored = async (): Promise<void> => {
+    if (!draftHandle) return
+    setGatePhase('sending')
+    try {
+      const result = await apiPost<{ envelope_id: string }>(`/v1/pending-send/${draftHandle}/claim`, {})
+      allowNavRef.current = true
+      navigate(`/dashboard/envelope/${result.envelope_id}`, { state: { justSent: true } })
+    } catch (e) {
+      setError(friendlyCreateError(e instanceof ApiError ? e.status : undefined, e instanceof Error ? e.message : undefined))
+      setGatePhase('form')
+      scrollToTop()
+    }
+  }
+
+  /** F-40.3 — the restored form's "send me a fresh link", edits saved first. */
+  const resendFromRestore = async () => {
+    setError('')
+    try {
+      await saveRestoredEdits()
+      setGatePhase('gate')
+    } catch (e) {
+      setError(friendlyCreateError(e instanceof ApiError ? e.status : undefined, e instanceof Error ? e.message : undefined))
+      scrollToTop()
+    }
+  }
+
   // F16.10 suggestion-prompt render branch removed in v0.18.x — see note in
   // handleSubmit. Future fix will reinstate with correct filter logic and
   // a sensible message template.
@@ -383,6 +590,30 @@ export function CreateEnvelopePage() {
   // the form is merely unmounted) while the one SignInScreen runs in-flow. The
   // back link abandons nothing — it just re-renders the form.
   if (gatePhase === 'gate') {
+    // F-40.2 (AC-239) — the ending this tab used to lack: another browser
+    // claimed the draft and sent it, so stop waiting and say so.
+    if (sentElsewhere) {
+      return (
+        <div className="max-w-2xl mx-auto px-4 py-8 text-center" data-testid="gate-sent-elsewhere">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-green-50 mb-5">
+            <svg className="w-7 h-7 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <h1 className="text-2xl font-semibold mb-3">Your document was sent</h1>
+          <p className="text-gray-600 mb-6">
+            You finished signing in somewhere else, and your document went out from there.
+          </p>
+          <Link
+            to={`/dashboard/envelope/${sentElsewhere}`}
+            onClick={() => { allowNavRef.current = true }}
+            className="inline-flex items-center justify-center min-h-[44px] px-6 py-3 bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-700"
+          >
+            Track who has signed
+          </Link>
+        </div>
+      )
+    }
     return (
       <div className="max-w-2xl mx-auto px-4 py-8">
         <button
@@ -403,7 +634,14 @@ export function CreateEnvelopePage() {
             {gateNotice}
           </p>
         )}
-        <SignInScreen title="Sign in to send your document" telemetryTrigger="send" onSignedIn={handleGateSignedIn} />
+        <SignInScreen
+          title="Sign in to send your document"
+          telemetryTrigger="send"
+          onSignedIn={handleGateSignedIn}
+          prepareDraft={storeDraftForLink}
+          {...(draftHandle ? { draftId: draftHandle } : {})}
+          {...(restoredEmail ? { initialEmail: restoredEmail } : {})}
+        />
       </div>
     )
   }
@@ -430,10 +668,32 @@ export function CreateEnvelopePage() {
       {/* F-39.1 — the cost question answered before the gate ever appears: the
           F-39.7 v2 trial line (document vocabulary, F-2.2), guest-only (a
           signed-in creator has the credit pill). */}
-      {isGuest && (
+      {isGuest && !isRestored && !restoreNotice && (
         <p className="text-sm text-gray-600 -mt-4 mb-6" data-testid="guest-trial-line">
           Your first 4 documents are free. No credit card needed.
         </p>
+      )}
+
+      {/* F-40.3 (AC-240) — the landing tab's failure surface. Not an error page:
+          the visitor's own document is right below this, and the next step is
+          one button. No status code, no vendor, no transport detail. */}
+      {restoreNotice && (
+        <div
+          data-testid="restore-notice"
+          className="mb-6 text-sm text-gray-800 bg-amber-50 border border-amber-100 rounded-xl px-4 py-4"
+        >
+          <p>{restoreNotice}</p>
+          {isRestored && (
+            <button
+              type="button"
+              data-testid="restore-resend"
+              onClick={() => void resendFromRestore()}
+              className="mt-3 inline-flex items-center justify-center min-h-[44px] px-5 py-2.5 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-700 cursor-pointer"
+            >
+              Send me a fresh link
+            </button>
+          )}
+        </div>
       )}
 
       {/* The replacing credit card serves its ORIGINAL purpose only — stopping
@@ -519,6 +779,24 @@ export function CreateEnvelopePage() {
           className={`bg-white border rounded-xl p-6 space-y-4 ${firstError === 'file' || firstError === 'docName' ? 'border-red-300 ring-1 ring-red-300' : 'border-gray-200'}`}
         >
           <h2 className="text-sm font-medium">Document</h2>
+          {isRestored ? (
+            /* F-40.4 (AC-241) — the file is IMMUTABLE for the life of a pending
+               send: it is content-addressed and already stored, so there is no
+               picker here at all. Swapping the document means starting a new
+               draft. Everything else on this form stays editable. */
+            <div data-testid="restored-draft-file">
+              <span className="block text-sm text-gray-600 mb-1">PDF file</span>
+              <div className="flex items-center gap-3 min-h-[44px] border border-gray-200 bg-gray-50 rounded-lg px-3 py-2">
+                <span className="text-sm text-gray-900 font-medium truncate">{restoredFile!.name}</span>
+                <span className="text-xs text-gray-500 shrink-0">
+                  {(restoredFile!.size / 1024).toFixed(0)} KB
+                </span>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Your document is saved and ready. To use a different one, start a new document.
+              </p>
+            </div>
+          ) : (
           <div>
             {/* F-023 (AC-231) — the label is BOUND so the file input has an
                 accessible name (it was the sweep's unlabeled-control finding). */}
@@ -547,6 +825,7 @@ export function CreateEnvelopePage() {
             />
             <p className="text-xs text-gray-500 mt-1">Max 3 MB per PDF.</p>
           </div>
+          )}
           <div>
             <label className="block text-sm text-gray-600 mb-1">Display name</label>
             <input

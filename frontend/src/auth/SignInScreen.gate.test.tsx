@@ -111,19 +111,24 @@ describe('SignInScreen — send-gate mode (F-39.3/.6)', () => {
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/dashboard', { replace: true }));
   });
 
-  it('the send-gate waiting state shouts ON THIS DEVICE (AC-228)', async () => {
+  // F-40 / AC-237 — this used to shout ON THIS DEVICE, which was TRUE of the old
+  // tab-only draft and is false now: the draft lives on the service, so a
+  // phone-side click FINISHES the send rather than stranding a desktop draft.
+  // The instruction was the single most user-hostile line in the flow.
+  it('the send-gate waiting state says the link works from ANY device (AC-237)', async () => {
     renderGate();
     fireEvent.change(screen.getByTestId('signin-email'), { target: { value: 'guest@example.com' } });
     fireEvent.click(screen.getByTestId('signin-send-link'));
-    const note = await screen.findByTestId('gate-device-note');
-    expect(note.textContent).toMatch(/open the email and click the link/i);
-    expect(note.textContent).toMatch(/on this device/i);
-    expect(note.textContent).toMatch(/send your document/i);
-    // Emphasis by typography: the device phrase sits in its own emphasized element.
-    expect(note.querySelector('[data-testid="gate-device-phrase"]')).toBeTruthy();
+    const note = await screen.findByTestId('gate-any-device-note');
+    expect(note.textContent).toMatch(/any device/i);
+    expect(note.textContent).toMatch(/saved/i);
+    expect(note.textContent).not.toMatch(/on this device/i);
+    // The retired instruction is gone from the DOM entirely, not merely reworded.
+    expect(screen.queryByTestId('gate-device-note')).toBeNull();
+    expect(screen.queryByTestId('gate-device-phrase')).toBeNull();
   });
 
-  it('the ordinary (non-gate) waiting state carries NO device note', async () => {
+  it('the ordinary (non-gate) waiting state carries NO device note at all', async () => {
     render(
       <MemoryRouter>
         <SignInScreen />
@@ -132,6 +137,7 @@ describe('SignInScreen — send-gate mode (F-39.3/.6)', () => {
     fireEvent.change(screen.getByTestId('signin-email'), { target: { value: 'x@example.com' } });
     fireEvent.click(screen.getByTestId('signin-send-link'));
     await screen.findByTestId('signin-check-email');
+    expect(screen.queryByTestId('gate-any-device-note')).toBeNull();
     expect(screen.queryByTestId('gate-device-note')).toBeNull();
   });
 });

@@ -3,10 +3,18 @@
   "info": {
     "title": "kysigned API",
     "description": "Self-verifying e-signatures: create an envelope from a PDF plus signers; each human signer signs by forwarding one email (their provider DKIM-signs it); every party receives an offline-verifiable evidence bundle. This document describes the public /v1 surface of a kysigned instance. Machine-readable errors: every error response is `{ \"error\": string, \"code\": string }` where `code` is a stable taxonomy value (`auth_*`, `csrf_*`, `payment_*`, `validation_*`, `state_*`, `not_found`, `rate_size_*`, `idempotency_*`, `internal_*`). Completion webhooks: pass `callback_url` at create; deliveries are signed with `X-Kysigned-Signature: t=<unix>,v1=<hex hmac-sha256(callback_secret, \"<t>.<rawBody>\")>` — verify by recomputing the HMAC over `t + \".\" + rawBody` with the `callback_secret` returned once in the create response, comparing constant-time, and rejecting timestamps outside your tolerance window.",
-    "version": "0.64.0",
-    "license": { "name": "Apache-2.0", "identifier": "Apache-2.0" }
+    "version": "0.65.0",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    }
   },
-  "servers": [{ "url": "/", "description": "This kysigned instance (origin-relative)" }],
+  "servers": [
+    {
+      "url": "/",
+      "description": "This kysigned instance (origin-relative)"
+    }
+  ],
   "components": {
     "securitySchemes": {
       "apiKey": {
@@ -29,41 +37,94 @@
     "schemas": {
       "Error": {
         "type": "object",
-        "required": ["error", "code"],
+        "required": [
+          "error",
+          "code"
+        ],
         "properties": {
-          "error": { "type": "string", "description": "Human-readable message" },
-          "code": { "type": "string", "description": "Stable machine-readable taxonomy code (auth_*, csrf_*, payment_*, validation_*, state_*, not_found, rate_size_*, idempotency_*, internal_*)" }
+          "error": {
+            "type": "string",
+            "description": "Human-readable message"
+          },
+          "code": {
+            "type": "string",
+            "description": "Stable machine-readable taxonomy code (auth_*, csrf_*, payment_*, validation_*, state_*, not_found, rate_size_*, idempotency_*, internal_*)"
+          }
         }
       },
       "Signer": {
         "type": "object",
-        "required": ["email"],
+        "required": [
+          "email"
+        ],
         "properties": {
-          "email": { "type": "string", "format": "email" },
-          "name": { "type": "string", "description": "Display name; blank falls back to the email" },
-          "on_behalf_of": { "type": "string", "description": "Organisation this signer signs on behalf of" }
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name; blank falls back to the email"
+          },
+          "on_behalf_of": {
+            "type": "string",
+            "description": "Organisation this signer signs on behalf of"
+          }
         }
       },
       "CreateEnvelopeRequest": {
         "type": "object",
-        "required": ["document_name", "signers"],
+        "required": [
+          "document_name",
+          "signers"
+        ],
         "properties": {
-          "document_name": { "type": "string" },
-          "pdf_base64": { "type": "string", "description": "Base64 PDF, ≤ ~3 MB raw (synchronous-invoke payload cap). Use pdf_url for larger documents." },
-          "pdf_url": { "type": "string", "format": "uri", "description": "Server-side-fetched source PDF (the large-document escape)" },
-          "signers": { "type": "array", "maxItems": 20, "items": { "$ref": "#/components/schemas/Signer" } },
-          "message": { "type": "string" },
-          "expiry_days": { "type": "number" },
-          "callback_url": { "type": "string", "format": "uri", "description": "https-only completion-webhook URL. The 201 response returns callback_secret (once) for verifying the X-Kysigned-Signature header on deliveries." },
-          "auto_close": { "type": "boolean", "description": "false = manual seal (POST /v1/envelope/{id}/seal) after all signers sign" }
+          "document_name": {
+            "type": "string"
+          },
+          "pdf_base64": {
+            "type": "string",
+            "description": "Base64 PDF, ≤ ~3 MB raw (synchronous-invoke payload cap). Use pdf_url for larger documents."
+          },
+          "pdf_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Server-side-fetched source PDF (the large-document escape)"
+          },
+          "signers": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/Signer"
+            }
+          },
+          "message": {
+            "type": "string"
+          },
+          "expiry_days": {
+            "type": "number"
+          },
+          "callback_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "https-only completion-webhook URL. The 201 response returns callback_secret (once) for verifying the X-Kysigned-Signature header on deliveries."
+          },
+          "auto_close": {
+            "type": "boolean",
+            "description": "false = manual seal (POST /v1/envelope/{id}/seal) after all signers sign"
+          }
         }
       },
       "X402CreateEnvelopeRequest": {
         "allOf": [
-          { "$ref": "#/components/schemas/CreateEnvelopeRequest" },
+          {
+            "$ref": "#/components/schemas/CreateEnvelopeRequest"
+          },
           {
             "type": "object",
-            "required": ["creator_email"],
+            "required": [
+              "creator_email"
+            ],
             "properties": {
               "creator_email": {
                 "type": "string",
@@ -77,31 +138,65 @@
       "CreateEnvelopeResponse": {
         "type": "object",
         "properties": {
-          "envelope_id": { "type": "string", "format": "uuid" },
-          "status": { "type": "string" },
-          "document_hash": { "type": "string", "description": "SHA-256 of the shared document" },
-          "status_url": { "type": "string" },
-          "verify_url": { "type": "string" },
+          "envelope_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
+          },
+          "document_hash": {
+            "type": "string",
+            "description": "SHA-256 of the shared document"
+          },
+          "status_url": {
+            "type": "string"
+          },
+          "verify_url": {
+            "type": "string"
+          },
           "signing_links": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
-                "email": { "type": "string" },
-                "name": { "type": "string" },
-                "link": { "type": "string", "description": "Programmatic signer-token API base (404s in a browser by design)" },
-                "review_link": { "type": "string", "description": "Human, browser-openable review page (same URL the invite email embeds)" }
+                "email": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "link": {
+                  "type": "string",
+                  "description": "Programmatic signer-token API base (404s in a browser by design)"
+                },
+                "review_link": {
+                  "type": "string",
+                  "description": "Human, browser-openable review page (same URL the invite email embeds)"
+                }
               }
             }
           },
-          "callback_secret": { "type": "string", "description": "whs_… webhook signing secret — returned EXACTLY ONCE, only when callback_url was supplied" },
-          "delivery": { "type": "object", "description": "Per-envelope send outcome (sent / undeliverable / failed) - sent means run402 accepted the email; confirmed delivery is the per-signer delivery_status" },
+          "callback_secret": {
+            "type": "string",
+            "description": "whs_… webhook signing secret — returned EXACTLY ONCE, only when callback_url was supplied"
+          },
+          "delivery": {
+            "type": "object",
+            "description": "Per-envelope send outcome (sent / undeliverable / failed) - sent means run402 accepted the email; confirmed delivery is the per-signer delivery_status"
+          },
           "tracking": {
             "type": "object",
             "description": "The envelope-observer handle (returned on EVERY create). `token` (ktt_…) is an envelope-scoped READ-ONLY credential: present it as the Authorization on GET /v1/envelope/{id} to poll status (full signer roster + delivery) with no account, API key, or session. It reads exactly this one envelope — any other id answers 404, and every mutation/list/download refuses it (403 auth_tracking_scope). Lost after a restart? The free POST /v1/envelope/preflight spending-intent replay (creator_email + your idempotency_key) returns this same create body, token included. Valid while the envelope exists (completion and void stay readable); dies with retention expiry or account deletion.",
             "properties": {
-              "token": { "type": "string", "description": "ktt_… envelope-scoped read-only tracking token" },
-              "poll": { "type": "string", "description": "Runnable poll instruction for the token" }
+              "token": {
+                "type": "string",
+                "description": "ktt_… envelope-scoped read-only tracking token"
+              },
+              "poll": {
+                "type": "string",
+                "description": "Runnable poll instruction for the token"
+              }
             }
           }
         }
@@ -109,20 +204,48 @@
       "EnvelopeStatus": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "document_name": { "type": "string" },
-          "status": { "type": "string", "description": "active | awaiting_seal | completed | voided | expired" },
-          "completed_at": { "type": ["string", "null"], "format": "date-time" },
+          "id": {
+            "type": "string"
+          },
+          "document_name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "active | awaiting_seal | completed | voided | expired"
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
           "signers": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
-                "email": { "type": "string" },
-                "name": { "type": "string" },
-                "status": { "type": "string", "description": "pending | signed | superseded | declined" },
-                "signed_at": { "type": ["string", "null"] },
-                "delivery_status": { "type": "string", "description": "pending | delivered | undeliverable — whether the signing-request email reached the signer (distinct from signing status)" }
+                "email": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "pending | signed | superseded | declined"
+                },
+                "signed_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "delivery_status": {
+                  "type": "string",
+                  "description": "pending | delivered | undeliverable — whether the signing-request email reached the signer (distinct from signing status)"
+                }
               }
             }
           }
@@ -131,46 +254,149 @@
       "ApiKey": {
         "type": "object",
         "properties": {
-          "id": { "type": "string", "format": "uuid" },
-          "label": { "type": ["string", "null"] },
-          "created_at": { "type": "string", "format": "date-time" },
-          "last_used_at": { "type": ["string", "null"], "format": "date-time" },
-          "revoked_at": { "type": ["string", "null"], "format": "date-time" }
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
         }
       }
     },
     "responses": {
       "Error": {
         "description": "Error with a machine-readable code",
-        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
       }
     }
   },
   "paths": {
     "/v1/health": {
-      "get": { "summary": "Liveness check", "security": [], "responses": { "200": { "description": "ok" } } }
+      "get": {
+        "summary": "Liveness check",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "ok"
+          }
+        }
+      }
     },
     "/v1/auth/magic-link": {
-      "post": { "summary": "Email the creator a one-time sign-in link", "security": [], "responses": { "200": { "description": "sent" }, "400": { "$ref": "#/components/responses/Error" } } }
+      "post": {
+        "summary": "Email the creator a one-time sign-in link",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "sent"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
     "/v1/auth/token": {
-      "post": { "summary": "Exchange a magic-link token for a creator session cookie", "security": [], "responses": { "200": { "description": "session issued" }, "400": { "$ref": "#/components/responses/Error" } } }
+      "post": {
+        "summary": "Exchange a magic-link token for a creator session cookie",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "session issued"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
     "/v1/envelope": {
       "post": {
         "summary": "Create an envelope (PDF + signers); emails each signing request",
-        "security": [{ "apiKey": [] }, { "session": [] }],
-        "parameters": [
-          { "name": "Idempotency-Key", "in": "header", "required": false, "schema": { "type": "string", "maxLength": 200 }, "description": "Retry-safe create: the same key replays the original 201 (one envelope, one debit). Same key + different payload → 409 idempotency_key_reuse." }
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "session": []
+          }
         ],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateEnvelopeRequest" } } } },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Retry-safe create: the same key replays the original 201 (one envelope, one debit). Same key + different payload → 409 idempotency_key_reuse."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateEnvelopeRequest"
+              }
+            }
+          }
+        },
         "responses": {
-          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateEnvelopeResponse" } } } },
-          "400": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" },
-          "402": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" },
-          "413": { "$ref": "#/components/responses/Error" }
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateEnvelopeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "402": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -180,17 +406,63 @@
         "description": "Operator-dependent (enabled on kysigned.com; a fork without x402 config answers 404 payment_x402_not_enabled). An UNPAID call is challenged by the platform with a standard x402 402 (payment requirements: the per-envelope price, the operator's payout wallet, mainnet networks) — that challenge is the x402 protocol shape, not this API's error envelope. An x402-capable client pays and retries; the platform verifies and settles BEFORE this endpoint runs. The settled payment credits the creator's ledger exactly once (keyed on the stable payment id) and the create debits it, so a same-proof retry replays the SAME 201 — one payment, one envelope. The body is the standard create body PLUS the required creator_email. Optional Idempotency-Key header: send your own spending-intent key so a retry with the same key replays the same envelope (else dedupe is keyed on the settled payment id). Discovery: an unfunded POST /v1/envelope names this route and price in its 402 body (x402_route, x402_price_usd_micros).",
         "security": [],
         "parameters": [
-          { "name": "Idempotency-Key", "in": "header", "required": false, "schema": { "type": "string", "maxLength": 256 }, "description": "Optional caller spending-intent key; a retry with the same key replays the same envelope (create dedupe). Absent → dedupe keys on the settled payment id." }
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "description": "Optional caller spending-intent key; a retry with the same key replays the same envelope (create dedupe). Absent → dedupe keys on the settled payment id."
+          }
         ],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/X402CreateEnvelopeRequest" } } } },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/X402CreateEnvelopeRequest"
+              }
+            }
+          }
+        },
         "responses": {
-          "201": { "description": "Created. Identical to POST /v1/envelope PLUS a `payment` receipt (payment_id, network, amount_usd_micros, asset, pay_to, settlement_reference, settled_at) and a merged `tracking` block LED by the ktt_ tracking token — a wallet-only creator polls GET /v1/envelope/{id} with it, no account needed (status_url_auth: creator_or_tracking_token); creator_email sign-in stays available for the full dashboard. Reconcile the spend via `payment.payment_id` / `settlement_reference`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateEnvelopeResponse" } } } },
-          "400": { "description": "Deterministic validation failed (plus-alias signer, bad email, unparseable/oversize PDF, …). If the payment already settled, the response carries `payment_banked: true` + `credit_email` + `next_actions` — the money became recoverable account credit for creator_email, not a loss. Call POST /v1/envelope/preflight (free) BEFORE paying to avoid this.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
-          "402": { "description": "x402 payment challenge for an unpaid call — emitted by the platform (x402 protocol payment-requirements shape, not the {error, code} envelope). Pay per the challenge and retry. A paid retry from a wallet with insufficient USDC on Base mainnet returns 402 payment_insufficient_funds with a fund_wallet next_action (network, asset, minimum_amount_usd_micros) — fund the wallet and retry." },
-          "404": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" },
-          "413": { "$ref": "#/components/responses/Error" },
-          "503": { "$ref": "#/components/responses/Error" }
+          "201": {
+            "description": "Created. Identical to POST /v1/envelope PLUS a `payment` receipt (payment_id, network, amount_usd_micros, asset, pay_to, settlement_reference, settled_at) and a merged `tracking` block LED by the ktt_ tracking token — a wallet-only creator polls GET /v1/envelope/{id} with it, no account needed (status_url_auth: creator_or_tracking_token); creator_email sign-in stays available for the full dashboard. Reconcile the spend via `payment.payment_id` / `settlement_reference`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateEnvelopeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Deterministic validation failed (plus-alias signer, bad email, unparseable/oversize PDF, …). If the payment already settled, the response carries `payment_banked: true` + `credit_email` + `next_actions` — the money became recoverable account credit for creator_email, not a loss. Call POST /v1/envelope/preflight (free) BEFORE paying to avoid this.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "x402 payment challenge for an unpaid call — emitted by the platform (x402 protocol payment-requirements shape, not the {error, code} envelope). Pay per the challenge and retry. A paid retry from a wallet with insufficient USDC on Base mainnet returns 402 payment_insufficient_funds with a fund_wallet next_action (network, asset, minimum_amount_usd_micros) — fund the wallet and retry."
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -199,10 +471,23 @@
         "summary": "Validate a create body for FREE (no charge, no create) — check inputs and replay-check a spending intent before paying the x402 create",
         "description": "Runs the same deterministic create validations (creator_email shape, signer addresses incl. the plus-alias rule, document_name, PDF presence/size/parseability for pdf_base64) without creating or charging. Use it before POST /v1/x402/envelope so a request that would be rejected does not consume the on-chain payment (run402 settles before the app validates). A PASS means these checks won't reject the paid create. creator_email is optional (omit it for a keyed/session create). pdf_url is not fetched here. Spending-intent replay check: include creator_email + the idempotency_key you will send on the paid call — if that intent already produced an envelope, the 200 returns { ok: true, already_created: true, envelope: <the stored create result> } and you MUST NOT pay again (the route is always-priced, so re-sending a completed intent settles a second payment; the money would be banked as credit, not lost, but the right move is to not pay). With a key and no prior envelope the 200 carries already_created: false.",
         "security": [],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/X402CreateEnvelopeRequest" } } } },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/X402CreateEnvelopeRequest"
+              }
+            }
+          }
+        },
         "responses": {
-          "200": { "description": "Inputs pass deterministic validation: { \"ok\": true }" },
-          "400": { "$ref": "#/components/responses/Error" }
+          "200": {
+            "description": "Inputs pass deterministic validation: { \"ok\": true }"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
@@ -210,46 +495,455 @@
       "get": {
         "summary": "Envelope status: per-signer signing state, signed times, delivery_status",
         "description": "Three accepted authorities: creator session, creator API key (ksk_…), or the envelope's OWN tracking token (ktt_…, from the create response's `tracking.token`) sent as the Authorization header. The tracking token is the read-only observer path (F-30.7): no account needed, full signer roster returned, exactly this envelope readable — any other envelope id answers the same 404 a stranger gets, and the token is refused (403 auth_tracking_scope) by every mutating or listing route.",
-        "security": [{ "apiKey": [] }, { "session": [] }, { "trackingToken": [] }],
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "200": { "description": "Status", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EnvelopeStatus" } } } }, "404": { "$ref": "#/components/responses/Error" } }
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "session": []
+          },
+          {
+            "trackingToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeStatus"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/v1/envelope/{id}/remind": {
-      "post": { "summary": "Remind all pending signers", "security": [{ "apiKey": [] }, { "session": [] }], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Reminded" }, "404": { "$ref": "#/components/responses/Error" } } }
+      "post": {
+        "summary": "Remind all pending signers",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Reminded"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
     "/v1/envelope/{id}/void": {
-      "post": { "summary": "Void an active envelope and notify signers", "security": [{ "apiKey": [] }, { "session": [] }], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Voided" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+      "post": {
+        "summary": "Void an active envelope and notify signers",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Voided"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
     "/v1/envelope/{id}/signers": {
-      "post": { "summary": "Add a recipient (until sealed)", "security": [{ "apiKey": [] }, { "session": [] }], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Added" }, "409": { "$ref": "#/components/responses/Error" } } },
-      "patch": { "summary": "Edit a recipient (?email=), until sealed", "security": [{ "apiKey": [] }, { "session": [] }], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "email", "in": "query", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Edited" }, "409": { "$ref": "#/components/responses/Error" } } },
-      "delete": { "summary": "Remove a recipient (?email=), until sealed", "security": [{ "apiKey": [] }, { "session": [] }], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "email", "in": "query", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Removed" }, "409": { "$ref": "#/components/responses/Error" } } }
+      "post": {
+        "summary": "Add a recipient (until sealed)",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Added"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Edit a recipient (?email=), until sealed",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "email",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Edited"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove a recipient (?email=), until sealed",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "email",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Removed"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
     "/v1/envelope/{id}/seal": {
-      "post": { "summary": "Manually seal + distribute (auto_close=false envelopes)", "security": [{ "apiKey": [] }, { "session": [] }], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Sealed" }, "409": { "$ref": "#/components/responses/Error" } } }
+      "post": {
+        "summary": "Manually seal + distribute (auto_close=false envelopes)",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sealed"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
     "/v1/envelope/{id}/pdf": {
-      "get": { "summary": "Download the creator's copy of the document", "security": [{ "apiKey": [] }, { "session": [] }], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "PDF" }, "404": { "$ref": "#/components/responses/Error" }, "410": { "$ref": "#/components/responses/Error" } } }
+      "get": {
+        "summary": "Download the creator's copy of the document",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PDF"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
     "/v1/envelopes": {
-      "get": { "summary": "List the authenticated creator's envelopes", "security": [{ "apiKey": [] }, { "session": [] }], "responses": { "200": { "description": "Envelope list" } } }
+      "get": {
+        "summary": "List the authenticated creator's envelopes",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Envelope list"
+          }
+        }
+      }
     },
     "/v1/documents": {
-      "get": { "summary": "List the creator's uploaded documents (grouped by hash)", "security": [{ "apiKey": [] }, { "session": [] }], "responses": { "200": { "description": "Documents" } } }
+      "get": {
+        "summary": "List the creator's uploaded documents (grouped by hash)",
+        "security": [
+          {
+            "apiKey": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Documents"
+          }
+        }
+      }
     },
     "/v1/sign/{id}/{token}/info": {
-      "get": { "summary": "Signer review-page data (per-signer token from the invite email; no account)", "security": [], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "token", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Info" }, "404": { "$ref": "#/components/responses/Error" } } }
+      "get": {
+        "summary": "Signer review-page data (per-signer token from the invite email; no account)",
+        "security": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Info"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
     "/v1/envelope/{id}/{token}/pdf": {
-      "get": { "summary": "Signer downloads their copy of the document (per-signer token)", "security": [], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "token", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "PDF" }, "404": { "$ref": "#/components/responses/Error" }, "410": { "$ref": "#/components/responses/Error" } } }
+      "get": {
+        "summary": "Signer downloads their copy of the document (per-signer token)",
+        "security": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PDF"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
     "/v1/api-keys": {
-      "post": { "summary": "Mint a creator API key (the ksk_ value is returned EXACTLY once). Session-only: keys cannot manage keys.", "security": [{ "session": [] }], "responses": { "201": { "description": "Key minted (includes the raw key, once)" }, "400": { "$ref": "#/components/responses/Error" } } },
-      "get": { "summary": "List the creator's API keys (metadata only — never the key value)", "security": [{ "session": [] }], "responses": { "200": { "description": "Keys", "content": { "application/json": { "schema": { "type": "object", "properties": { "keys": { "type": "array", "items": { "$ref": "#/components/schemas/ApiKey" } } } } } } } } }
+      "post": {
+        "summary": "Mint a creator API key (the ksk_ value is returned EXACTLY once). Session-only: keys cannot manage keys.",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Key minted (includes the raw key, once)"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "get": {
+        "summary": "List the creator's API keys (metadata only — never the key value)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Keys",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "keys": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ApiKey"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "/v1/api-keys/{id}": {
-      "delete": { "summary": "Revoke an API key (takes effect on its next use)", "security": [{ "session": [] }], "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Revoked" }, "404": { "$ref": "#/components/responses/Error" } } }
+      "delete": {
+        "summary": "Revoke an API key (takes effect on its next use)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Revoked"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     }
   }
 }
