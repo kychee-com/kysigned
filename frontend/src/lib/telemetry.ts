@@ -9,17 +9,20 @@
  * threshold, and everything batches to `POST /v1/telemetry` via sendBeacon so
  * a record survives the visitor leaving the page.
  *
- * Identifier-free by construction: NO cookie, NO local/session storage read
- * or write, no click-id value (presence only), and the per-page-load seq
- * lives only in module memory — a new page (or SPA soft-nav) is a new
- * sequence, never joinable to the last. Every failure is silent; collection
- * never blocks or alters navigation.
+ * Identifier-free by construction: NO cookie, NO browser-storage WRITE of any
+ * kind, no click-id value (presence only), and the per-page-load seq lives
+ * only in module memory — a new page (or SPA soft-nav) is a new sequence,
+ * never joinable to the last. The rail makes exactly ONE storage read (spec
+ * 0.64.0, F-38.1/F-38.5): it asks the F-37 first-party ad-click record whether
+ * this VISIT arrived from an ad, and keeps only that yes/no — see `paidVisit`.
+ * Every failure is silent; collection never blocks or alters navigation.
  *
  * Static pages run the same rail via /telemetry.mjs (frontend/public/) — a
  * standalone vanilla mirror; the interop tests in telemetry.test.ts hold the
  * two implementations to the same wire shape.
  */
 import { getOperatorConfig } from '../config/operator';
+import { readStoredAttribution } from './attribution';
 
 export const TELEMETRY_ENDPOINT = '/v1/telemetry';
 /** Per-page-load record cap — mirrors the server's TELEMETRY_MAX_PAGE_SEQ. */
@@ -109,6 +112,8 @@ interface PageState {
   queue: TelemetryRecord[];
   scrollFired: Set<string>;
   emittedOnce: Set<string>;
+  /** This page load's paid answer (F-38.5) — see `paidVisit`. */
+  gclid: boolean;
 }
 
 function defaultSend(endpoint: string, batch: TelemetryBatch): boolean {
@@ -133,7 +138,7 @@ export function createTelemetryRail(opts: TelemetryRailOptions = {}) {
   const referrer = opts.referrer ?? (typeof document !== 'undefined' ? document.referrer : '');
   const search = opts.search ?? (typeof window !== 'undefined' ? window.location.search : '');
   const ownHost = opts.ownHost ?? (typeof window !== 'undefined' ? window.location.hostname : '');
-  const gclid = /[?&]gclid=/.test(search);
+  const urlGclid = /[?&]gclid=/.test(search);
   // 0.60.0 — the landing load's campaign tag, kept in module memory for the
   // life of this page load (soft-navs included). Never stored anywhere.
   let utm: string | null = null;
@@ -146,6 +151,22 @@ export function createTelemetryRail(opts: TelemetryRailOptions = {}) {
   let state: PageState | null = null;
   let attached = false;
 
+  /**
+   * 0.64.0 (F-38.5) — paid is a property of the VISIT, not of one page load:
+   * only an ad visit's LANDING url ever carries the click id, so every later
+   * page asks the F-37 first-party record (`attribution.ts`) whether this
+   * visitor arrived from an ad and is still inside that record's window.
+   *
+   * PRESENCE ONLY: the click-id value is never read into the batch, never
+   * sent, and never stored — the wire stays the same yes/no fact. This is the
+   * rail's ONE browser-storage read; it still writes nothing (F-38.1), and it
+   * happens only when the rail is enabled (a fresh fork reads nothing).
+   */
+  function paidVisit(): boolean {
+    if (urlGclid) return true;
+    return readStoredAttribution() !== null;
+  }
+
   function flush(): void {
     if (!enabled || !state || state.queue.length === 0) return;
     const records = state.queue.splice(0, state.queue.length);
@@ -154,7 +175,7 @@ export function createTelemetryRail(opts: TelemetryRailOptions = {}) {
         send({
           page: state.page,
           ref: referrer,
-          gclid,
+          gclid: state.gclid,
           ...(utm ? { utm } : {}),
           records: records.slice(i, i + BATCH_CAP),
         });
@@ -176,7 +197,7 @@ export function createTelemetryRail(opts: TelemetryRailOptions = {}) {
   function pageView(page: string): void {
     if (!enabled) return;
     if (state) flush(); // close out the previous page's sequence (SPA soft-nav)
-    state = { page, seq: 0, queue: [], scrollFired: new Set(), emittedOnce: new Set() };
+    state = { page, seq: 0, queue: [], scrollFired: new Set(), emittedOnce: new Set(), gclid: paidVisit() };
     push('page_view');
   }
 

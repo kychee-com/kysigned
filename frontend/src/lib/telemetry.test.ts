@@ -5,7 +5,9 @@
  * landing event, named clicks with location, catch-all with normalized
  * destination, home scroll depth once per threshold, per-page-load seq,
  * batched delivery that survives leaving the page, silent on every failure,
- * config-gated (fresh fork sends nothing), and ZERO browser-storage use.
+ * config-gated (fresh fork sends nothing), ZERO browser-storage WRITES, and
+ * the single sanctioned read: the F-37 record that keeps a paid visit tagged
+ * paid after its landing page (AC-235).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createTelemetryRail, normalizeDestination, type TelemetryBatch } from './telemetry';
@@ -132,6 +134,100 @@ describe('page views, seq, and batching', () => {
   });
 });
 
+describe('paid visits stay paid past the landing page (AC-235)', () => {
+  // The F-37 first-party record (frontend/src/lib/attribution.ts) — the ONLY
+  // browser-storage key the rail reads, and only for presence + freshness.
+  const ATTRIBUTION_KEY = 'kysigned.attribution';
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  function storeCapture(gclid: string, ageMs = 0): void {
+    window.localStorage.setItem(
+      ATTRIBUTION_KEY,
+      JSON.stringify({ gclid, capturedAt: new Date(Date.now() - ageMs).toISOString() }),
+    );
+  }
+
+  it('a load with NO gclid in its URL still reports paid when the F-37 record holds one', () => {
+    storeCapture('Cj0KCQjw_ad_click');
+    const { rail, sent } = harness({ search: '' });
+    rail.pageView('/dashboard/create');
+    rail.flush();
+    expect(sent[0].gclid).toBe(true);
+  });
+
+  it('every page of the visit stays paid — the flag is re-read per page view', () => {
+    // A deep entry into the SPA: the landing page (and its gclid) is a page
+    // load ago, so this rail's URL carries nothing — only the record does.
+    storeCapture('Cj0KCQjw_ad_click');
+    const { rail, sent } = harness({ search: '' });
+    rail.pageView('/dashboard');
+    rail.flush();
+    rail.pageView('/dashboard/create'); // soft-nav
+    rail.flush();
+    rail.pageView('/pricing');
+    rail.flush();
+    expect(sent.map((b) => b.gclid)).toEqual([true, true, true]);
+  });
+
+  it('an expired capture (past the 90-day window) does not make a visit paid', () => {
+    storeCapture('Cj0KCQjw_ad_click', 91 * DAY_MS);
+    const { rail, sent } = harness({ search: '' });
+    rail.pageView('/pricing');
+    rail.flush();
+    expect(sent[0].gclid).toBe(false);
+  });
+
+  it('a malformed record never makes a visit paid', () => {
+    window.localStorage.setItem(ATTRIBUTION_KEY, '{not json');
+    const { rail, sent } = harness({ search: '' });
+    rail.pageView('/pricing');
+    rail.flush();
+    expect(sent[0].gclid).toBe(false);
+    window.localStorage.setItem(ATTRIBUTION_KEY, JSON.stringify({ gclid: 'has spaces', capturedAt: new Date().toISOString() }));
+    rail.pageView('/faq');
+    rail.flush();
+    expect(sent[1].gclid).toBe(false);
+  });
+
+  it('no URL gclid and no record → not paid (direct/organic/referral unchanged)', () => {
+    const { rail, sent } = harness({ search: '' });
+    rail.pageView('/pricing');
+    rail.flush();
+    expect(sent[0].gclid).toBe(false);
+  });
+
+  it('a URL gclid still reports paid with no record stored at all', () => {
+    const { rail, sent } = harness({ search: '?gclid=Cj0KCQjw_ad_click' });
+    rail.pageView('/');
+    rail.flush();
+    expect(sent[0].gclid).toBe(true);
+    expect(window.localStorage.length).toBe(0); // the rail did not capture it either
+  });
+
+  it('reading the record writes nothing — the record is untouched and no key is added (AC-214)', () => {
+    storeCapture('Cj0KCQjw_ad_click');
+    const before = window.localStorage.getItem(ATTRIBUTION_KEY);
+    const { rail } = harness({ search: '' });
+    rail.pageView('/');
+    rail.event('click', 'cta_create:hero');
+    rail.flush();
+    expect(window.localStorage.length).toBe(1);
+    expect(window.localStorage.getItem(ATTRIBUTION_KEY)).toBe(before);
+    expect(window.sessionStorage.length).toBe(0);
+    expect(document.cookie).toBe('');
+  });
+
+  it('the disabled (fresh-fork) rail never reads browser storage at all', () => {
+    storeCapture('Cj0KCQjw_ad_click');
+    const spy = vi.spyOn(Storage.prototype, 'getItem');
+    const rail = createTelemetryRail({ enabled: false, send: () => true, search: '' });
+    rail.pageView('/');
+    rail.flush();
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+});
+
 describe('delegated clicks — registry + catch-all (AC-215)', () => {
   it('a data-telemetry element records its name:location; adding the attribute to a NEW element records with no other change', () => {
     const { rail, sent } = harness();
@@ -242,5 +338,46 @@ describe('static-page mirror (telemetry.mjs) — interop with the SPA rail', () 
     expect(anonPrevented).toBe(false);
     expect(window.localStorage.length).toBe(0);
     expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it('reports the SAME paid answer as the SPA rail for every state of the F-37 record (AC-235)', () => {
+    const ATTRIBUTION_KEY = 'kysigned.attribution';
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const fresh = JSON.stringify({ gclid: 'Cj0KCQjw_ad_click', capturedAt: new Date().toISOString() });
+    const expired = JSON.stringify({
+      gclid: 'Cj0KCQjw_ad_click',
+      capturedAt: new Date(Date.now() - 91 * DAY_MS).toISOString(),
+    });
+    const cases: Array<{ name: string; record: string | null; expected: boolean }> = [
+      { name: 'fresh capture', record: fresh, expected: true },
+      { name: 'expired capture', record: expired, expected: false },
+      { name: 'malformed record', record: '{not json', expected: false },
+      { name: 'no record at all', record: null, expected: false },
+    ];
+    for (const c of cases) {
+      window.localStorage.clear();
+      if (c.record !== null) window.localStorage.setItem(ATTRIBUTION_KEY, c.record);
+
+      const spaSent: TelemetryBatch[] = [];
+      const spa = createTelemetryRail({ enabled: true, send: (b) => (spaSent.push(b), true), search: '', referrer: '' });
+      spa.pageView('/pricing.html');
+      spa.flush();
+
+      const staticSent: TelemetryBatch[] = [];
+      initStaticTelemetry({
+        send: (b: TelemetryBatch) => (staticSent.push(b), true),
+        path: '/pricing.html',
+        referrer: '',
+        search: '',
+        doc: document,
+      });
+      window.dispatchEvent(new Event('pagehide'));
+
+      expect(spaSent[0].gclid, `SPA rail — ${c.name}`).toBe(c.expected);
+      expect(staticSent[0].gclid, `static mirror — ${c.name}`).toBe(c.expected);
+      // Neither implementation ever writes: only the F-37 record is present.
+      expect(window.localStorage.length).toBe(c.record === null ? 0 : 1);
+      expect(window.sessionStorage.length).toBe(0);
+    }
   });
 });

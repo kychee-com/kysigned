@@ -12,13 +12,48 @@
  * delegated click listener over the `data-telemetry="name:location"` registry
  * with a normalized-destination catch-all for unnamed links, home-only scroll
  * depth once per threshold, per-page-load seq, batched sendBeacon delivery.
- * Identifier-free: NO cookie, NO local/session storage, no click-id value
- * (presence only), silent on every failure, never blocks navigation.
+ * Identifier-free: NO cookie, NO browser-storage WRITE, no click-id value
+ * (presence only), silent on every failure, never blocks navigation. Its ONE
+ * storage read is the F-37 ad-click record, reduced to the paid yes/no
+ * (spec 0.64.0, F-38.5) — see `storedGclidPresent`.
  */
 
 const ENDPOINT = '/v1/telemetry';
 const PAGE_CAP = 60;
 const BATCH_CAP = 25;
+
+// F-37 first-party ad-click record — the ONE key this rail reads (presence and
+// freshness only). Mirrors attribution-capture.mjs; deliberately INLINED
+// rather than imported so /telemetry.mjs stays a standalone drop-in that a
+// deployment without the attribution module cannot break.
+const ATTRIBUTION_KEY = 'kysigned.attribution';
+const ATTRIBUTION_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+const GCLID_RE = /^[A-Za-z0-9_-]{1,512}$/;
+
+/**
+ * Did this VISIT arrive from an ad? (spec 0.64.0, F-38.5.) Only an ad visit's
+ * LANDING url carries the click id, so every later page asks the stored
+ * record instead. Presence + freshness ONLY — the value is never read into the
+ * batch, never sent, never stored — and every failure answers false.
+ */
+function storedGclidPresent(nowMs) {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return false;
+    const raw = window.localStorage.getItem(ATTRIBUTION_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    const at = Date.parse(parsed && parsed.capturedAt);
+    return (
+      !!parsed &&
+      typeof parsed.gclid === 'string' &&
+      GCLID_RE.test(parsed.gclid) &&
+      Number.isFinite(at) &&
+      nowMs - at <= ATTRIBUTION_WINDOW_MS
+    );
+  } catch {
+    return false;
+  }
+}
 
 const SEGMENT_TO_PAGE = {
   '': 'home',
@@ -76,7 +111,9 @@ export function initStaticTelemetry(opts) {
   const search = o.search !== undefined ? o.search : location.search;
   const ownHost = o.ownHost !== undefined ? o.ownHost : location.hostname;
   const endpoint = o.endpoint || ENDPOINT;
-  const gclid = /[?&]gclid=/.test(search);
+  // F-38.5 — paid is a property of the VISIT: this url's click id, else the
+  // F-37 record. One page load = one page view, so it is answered once here.
+  const gclid = /[?&]gclid=/.test(search) || storedGclidPresent(Date.now());
   // 0.60.0 — the landing campaign tag (raw; server normalizes). Memory only.
   let utm = null;
   try {
