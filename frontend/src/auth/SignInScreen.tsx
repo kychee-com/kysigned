@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from 'react';
 import { telemetryEvent, telemetryEventOnce } from '../lib/telemetry';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { apiPost } from '../lib/api';
-import { friendlySignInError, GENERIC_ERROR, SIGNIN_SEND_FAILED } from '../lib/friendlyError';
+import { friendlySignInError, GENERIC_ERROR, SIGNIN_SEND_FAILED, SIGNIN_THROTTLED } from '../lib/friendlyError';
 import { readAttributionForSubmit } from '../lib/attribution';
 import { isValidEmail } from '../lib/validateEmail';
 import { hardNavigate } from '../lib/hardNavigate';
@@ -262,13 +262,16 @@ export function SignInScreen({
       // device), so the capture travels with THIS request. Null (organic, or
       // attribution disabled — the fork default) sends no field at all.
       const attribution = readAttributionForSubmit();
-      await apiPost('/v1/auth/magic-link', {
+      const sent = await apiPost<{ throttled?: boolean }>('/v1/auth/magic-link', {
         email: emailInput.trim(),
         ...(attribution ? { attribution } : {}),
         // F-40 / DD-57 - the emailed link carries the draft handle, which is what
         // lets ANY browser that opens it finish the send.
         ...(handle ? { draft_id: handle } : {}),
       });
+      // F-027 — say so when the platform refused to send, instead of showing a
+      // waiting state for an email that will never arrive.
+      if (sent?.throttled) setError(SIGNIN_THROTTLED);
       setMagicLinkSent(true);
     } catch {
       setError(SIGNIN_SEND_FAILED);

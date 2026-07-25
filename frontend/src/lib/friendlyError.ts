@@ -64,6 +64,16 @@ export function friendlyRestoreError(e: unknown): string {
   return GENERIC_ERROR;
 }
 
+/**
+ * F-027 (red team cycle 22) — the platform caps sign-in emails at 5 per address
+ * per hour. We used to swallow that refusal and still say "check your email",
+ * which is a lie the visitor has no way to debug: they wait for something that
+ * was never sent. Naming it leaks nothing about account existence — it is a fact
+ * about the address they just typed, and the answer is the same either way.
+ */
+export const SIGNIN_THROTTLED =
+  'You have asked for several sign-in emails in a short time, so we paused sending. Please open the most recent one already in your inbox, or try again in about an hour.';
+
 export const SESSION_EXPIRED =
   'Your sign-in expired before we could send. Sign in again and your document sends automatically. Nothing was lost.';
 

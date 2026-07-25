@@ -50,6 +50,8 @@ export interface RequestMagicLinkOpts extends BaseRun402AuthOpts {
 export interface RequestMagicLinkResult {
   ok: boolean;
   reason?: string;
+  /** The upstream status, so a caller can tell a REFUSAL apart from a fault. */
+  status?: number;
 }
 
 export async function requestMagicLink(
@@ -76,7 +78,7 @@ export async function requestMagicLink(
     } catch {
       // ignore
     }
-    return { ok: false, reason };
+    return { ok: false, reason, status: res.status };
   }
   return { ok: true };
 }

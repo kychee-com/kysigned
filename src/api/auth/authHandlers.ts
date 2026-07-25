@@ -157,6 +157,7 @@ export async function handleAuthMagicLink(
   // (DD-50.6 — no email-join, the rail stays identifier-free end to end).
   const draftId = readDraftHandle(body.draft_id);
   let sendOk = false;
+  let sendResult429 = false;
   try {
     const sendResult = await requestMagicLink({
       email,
@@ -167,6 +168,7 @@ export async function handleAuthMagicLink(
       ...(draftId ? { clientState: JSON.stringify({ draft_id: draftId }) } : {}),
     });
     sendOk = sendResult.ok;
+    sendResult429 = sendResult.status === 429;
   } catch (err) {
     await recordStep(ctx, 'send_failed', { paid: riderIsPaid(ctx, body.attribution) });
     throw err;
@@ -189,7 +191,15 @@ export async function handleAuthMagicLink(
   }
 
   // Always 200 — never reveal whether an account exists (anti-enumeration).
-  return { status: 200, body: { ok: true } };
+  //
+  // F-027 (red team cycle 22): "check your email" when nothing was sent is a
+  // lie the visitor cannot debug. run402 caps magic links at 5 per address per
+  // hour (`services/magic-link.ts` PER_EMAIL_LIMIT, read at 414cc643) and
+  // refuses with a 429 — which this handler used to swallow whole, leaving a
+  // waiting state that would never resolve. Saying so leaks nothing about
+  // account existence: it is a fact about the address the requester just typed
+  // themselves, and it is the same answer whether or not an account exists.
+  return { status: 200, body: { ok: true, ...(sendResult429 ? { throttled: true } : {}) } };
 }
 
 export async function handleAuthTokenExchange(ctx: AuthHandlerCtx, body: { token?: unknown }): Promise<AuthResult> {

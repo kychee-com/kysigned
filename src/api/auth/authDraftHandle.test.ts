@@ -125,3 +125,37 @@ describe('the token exchange hands the handle back (DD-57)', () => {
     assert.equal((r.body as { draft_id?: string }).draft_id, undefined);
   });
 });
+
+// ── F-027 (red team cycle 22, P1) ───────────────────────────────────────────
+// The platform caps sign-in emails at 5 per address per hour
+// (run402-private@414cc643 `services/magic-link.ts` PER_EMAIL_LIMIT) and refuses
+// with a 429. This handler swallowed that whole and still answered a bare
+// `{ok:true}`, so the visitor got a "check your email" state for an email that
+// was never sent — which is exactly what the red team observed as "unreliable
+// delivery" after hammering two test addresses.
+describe('a refused send says so (F-027)', () => {
+  it('marks a 429 as throttled, while still answering 200 (anti-enumeration)', async () => {
+    const impl: FImpl = async (url: string) =>
+      url.includes('/auth/v1/magic-link')
+        ? { status: 429, ok: false, json: async () => ({ error: 'Too many magic link requests' }) }
+        : { status: 404, ok: false, json: async () => ({}) };
+    const r = await handleAuthMagicLink(ctx(impl), { email: 'creator@example.com' });
+    assert.equal(r.status, 200, 'still 200 — account existence is never revealed');
+    assert.equal((r.body as { throttled?: boolean }).throttled, true);
+  });
+
+  it('does NOT mark an ordinary success', async () => {
+    const { impl } = recordingFetch({});
+    const r = await handleAuthMagicLink(ctx(impl), { email: 'creator@example.com' });
+    assert.deepEqual(r.body, { ok: true }, 'the happy path shape is byte-identical');
+  });
+
+  it('does not mark OTHER upstream failures — only the refusal we can explain', async () => {
+    const impl: FImpl = async (url: string) =>
+      url.includes('/auth/v1/magic-link')
+        ? { status: 503, ok: false, json: async () => ({ error: 'upstream down' }) }
+        : { status: 404, ok: false, json: async () => ({}) };
+    const r = await handleAuthMagicLink(ctx(impl), { email: 'creator@example.com' });
+    assert.equal((r.body as { throttled?: boolean }).throttled, undefined);
+  });
+});
