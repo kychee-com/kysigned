@@ -25,7 +25,12 @@ import {
   deleteFinishedPendingSends,
   PENDING_SEND_TTL_MS,
   MAGIC_LINK_TTL_MS,
+  hashRestoreSecret,
+  parseHandle,
 } from './pendingSends.js';
+
+/** The secret half of a handle. The stored row keeps only its hash (F-028). */
+const SECRET = 'test-secret-value-0123456789abcdef';
 
 interface Captured {
   text: string;
@@ -65,6 +70,7 @@ function row(over: Record<string, unknown> = {}) {
     expires_at: '2026-08-01T10:00:00.000Z',
     claimed_at: null,
     claimed_envelope_id: null,
+    restore_token_hash: hashRestoreSecret(SECRET),
     ...over,
   };
 }
@@ -83,10 +89,13 @@ describe('createPendingSend', () => {
   it('binds the LOWERCASED address and stamps an expiry from the TTL', async () => {
     const now = new Date('2026-07-25T10:00:00.000Z');
     const { pool, queries } = capturePool(() => ({ rows: [row()], rowCount: 1 }));
-    const id = await createPendingSend(pool, ' Creator@Example.COM ', DRAFT, { now });
+    const handle = await createPendingSend(pool, ' Creator@Example.COM ', DRAFT, { now, secret: 'S'.repeat(43) });
+    const id = handle.split('.')[0];
     const insert = queries.find((q) => q.text.includes('INSERT INTO pending_sends'));
     assert.ok(insert, 'wrote the pending send');
     assert.equal(insert!.values[0], id, 'the handle is minted here, not assigned by the database');
+    assert.ok(handle.includes('.'), 'the visitor gets id.secret, never a bare id (F-028)');
+    assert.ok(!(insert!.values as string[]).includes('S'.repeat(43)), 'the RAW secret is never stored');
     assert.match(
       id,
       /^ps_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
@@ -114,7 +123,7 @@ describe('createPendingSend', () => {
 describe('getPendingSend', () => {
   it('returns the draft metadata including byte count, and NEVER selects bytes', async () => {
     const { pool, queries } = capturePool(() => ({ rows: [row()], rowCount: 1 }));
-    const found = await getPendingSend(pool, 'ps_1');
+    const found = await getPendingSend(pool, 'ps_1', SECRET);
     assert.equal(found?.documentName, 'contract');
     assert.equal(found?.byteCount, 4096);
     assert.deepEqual(found?.signers, DRAFT.signers);
@@ -126,7 +135,7 @@ describe('getPendingSend', () => {
 
   it('returns null for an unknown id', async () => {
     const { pool } = capturePool(() => ({ rows: [], rowCount: 0 }));
-    assert.equal(await getPendingSend(pool, 'ps_nope'), null);
+    assert.equal(await getPendingSend(pool, 'ps_nope', SECRET), null);
   });
 });
 
@@ -137,7 +146,7 @@ describe('updatePendingSendDraft — editable until claimed (F-40.4)', () => {
       documentName: 'contract v2',
       signers: [{ email: 'corrected@example.com', name: 'Alice Doe' }],
       autoClose: false,
-    });
+    }, SECRET);
     assert.equal(ok, true);
     const update = queries.find((q) => q.text.includes('UPDATE pending_sends'))!;
     assert.match(update.text, /claimed_at IS NULL/, 'a claimed draft can never be edited');
@@ -150,7 +159,7 @@ describe('updatePendingSendDraft — editable until claimed (F-40.4)', () => {
 
   it('reports false when nothing was updated (claimed, expired, or gone)', async () => {
     const { pool } = capturePool(() => ({ rows: [], rowCount: 0 }));
-    assert.equal(await updatePendingSendDraft(pool, 'ps_1', { documentName: 'x' }), false);
+    assert.equal(await updatePendingSendDraft(pool, 'ps_1', { documentName: 'x' }, SECRET), false);
   });
 });
 
@@ -240,5 +249,49 @@ describe('deleteFinishedPendingSends — held no longer than the job needs (AC-2
     assert.ok(blobs, 'orphan blobs are swept too');
     assert.match(blobs.text, /NOT EXISTS[\s\S]*envelopes/, 'never deletes a blob a real envelope still points at');
     assert.match(blobs.text, /NOT EXISTS[\s\S]*pending_sends/, 'never deletes a blob a live draft still points at');
+  });
+});
+
+// ── F-028 (red team cycle 22, P0) ────────────────────────────────────────────
+// The first cut treated the row's `id` as a capability, so anyone holding one
+// read the creator's address and the whole signer list unauthenticated. An id is
+// not a secret: it rides `?draft=` in the URL bar, sits in browser history, and
+// is echoed in claim requests and logs. These pin the fix.
+describe('F-028 — an id alone reads nothing', () => {
+  it('splits the handle into an id and a secret, and rejects a bare id', () => {
+    assert.deepEqual(parseHandle('ps_abc.sekrit'), { id: 'ps_abc', secret: 'sekrit' });
+    assert.equal(parseHandle('ps_abc'), null, 'a bare id is not a handle');
+    assert.equal(parseHandle('.sekrit'), null);
+    assert.equal(parseHandle('ps_abc.'), null);
+  });
+
+  it('refuses a read whose secret does not match the stored hash', async () => {
+    const { pool } = capturePool(() => ({ rows: [row()], rowCount: 1 }));
+    assert.equal(await getPendingSend(pool, 'ps_1', 'not-the-secret'), null);
+    assert.ok(await getPendingSend(pool, 'ps_1', SECRET), 'the right secret still reads');
+  });
+
+  it('refuses a read on a row with NO stored hash (a pre-fix row is inert)', async () => {
+    const { pool } = capturePool(() => ({ rows: [row({ restore_token_hash: null })], rowCount: 1 }));
+    assert.equal(await getPendingSend(pool, 'ps_1', SECRET), null);
+  });
+
+  it('binds the edit to the secret in the statement, not in a prior read', async () => {
+    const { pool, queries } = capturePool(() => ({ rows: [], rowCount: 0 }));
+    await updatePendingSendDraft(pool, 'ps_1', { documentName: 'x' }, SECRET);
+    const update = queries.find((q) => q.text.includes('UPDATE pending_sends'))!;
+    assert.match(update.text, /restore_token_hash = \$6/);
+    assert.ok((update.values as string[]).includes(hashRestoreSecret(SECRET)));
+    assert.ok(!(update.values as string[]).includes(SECRET), 'the raw secret never reaches the database');
+  });
+
+  it('REDACTS the draft the moment it is claimed, leaving only a receipt', async () => {
+    const { pool, queries } = capturePool(() => ({ rows: [], rowCount: 1 }));
+    await recordClaimedEnvelope(pool, 'ps_1', 'env_new');
+    const q = queries[0]!.text;
+    assert.match(q, /SET claimed_envelope_id/);
+    for (const col of ['bound_email', 'document_name', 'storage_key', 'draft']) {
+      assert.match(q, new RegExp(`${col} =`), `${col} must be cleared on claim (AC-243)`);
+    }
   });
 });

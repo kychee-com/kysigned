@@ -30,6 +30,7 @@ import type { DbPool } from '../db/pool.js';
 import { handleCreatePreflight } from './createPreflight.js';
 import { isUploadTooLarge, uploadTooLargeMessage } from './uploadGuard.js';
 import { decodePdfBase64, computePdfHash } from '../pdf/hash.js';
+import { parseHandle } from '../db/pendingSends.js';
 import type { ClaimResult, PendingSendPatch, PendingSendRecord, PendingSigner } from '../db/pendingSends.js';
 
 /** Live (unclaimed, unexpired) drafts one address may hold at once. */
@@ -39,8 +40,8 @@ const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 export interface PendingSendStore {
   create(boundEmail: string, draft: Omit<PendingSendRecord, 'id' | 'boundEmail' | 'createdAt' | 'expiresAt' | 'claimedAt' | 'claimedEnvelopeId'>): Promise<string>;
-  get(id: string): Promise<PendingSendRecord | null>;
-  update(id: string, patch: PendingSendPatch): Promise<boolean>;
+  get(id: string, secret: string): Promise<PendingSendRecord | null>;
+  update(id: string, patch: PendingSendPatch, secret: string): Promise<boolean>;
   claim(id: string, sessionEmail: string): Promise<ClaimResult>;
   countLive(boundEmail: string): Promise<number>;
   recordEnvelope(id: string, envelopeId: string): Promise<void>;
@@ -152,9 +153,17 @@ export async function handleCreatePendingSend(
   return { status: 200, body: { draft_id: id } };
 }
 
-export async function handleGetPendingSend(ctx: PendingSendCtx, id: string): Promise<PendingSendResult> {
-  const found = await ctx.store.get(id);
-  if (!found) return { status: 404, body: { error: 'That document is no longer available', code: 'not_found' } };
+/** A handle with no secret half authorizes nothing — same answer as a bad one. */
+const NOT_FOUND: PendingSendResult = {
+  status: 404,
+  body: { error: 'That document is no longer available', code: 'not_found' },
+};
+
+export async function handleGetPendingSend(ctx: PendingSendCtx, handle: string): Promise<PendingSendResult> {
+  const parts = parseHandle(handle);
+  if (!parts) return NOT_FOUND;
+  const found = await ctx.store.get(parts.id, parts.secret);
+  if (!found) return NOT_FOUND;
   // Identity, never contents (AC-243): a name, a size, the recipients. The bytes
   // are reachable only through the claim.
   //
@@ -180,11 +189,13 @@ export async function handleGetPendingSend(ctx: PendingSendCtx, id: string): Pro
 
 export async function handlePatchPendingSend(
   ctx: PendingSendCtx,
-  id: string,
+  handle: string,
   body: Record<string, unknown>,
 ): Promise<PendingSendResult> {
-  const existing = await ctx.store.get(id);
-  if (!existing) return { status: 404, body: { error: 'That document is no longer available', code: 'not_found' } };
+  const parts = parseHandle(handle);
+  if (!parts) return NOT_FOUND;
+  const existing = await ctx.store.get(parts.id, parts.secret);
+  if (!existing) return NOT_FOUND;
 
   const documentName = typeof body.document_name === 'string' ? body.document_name.trim() : undefined;
   const signers = body.signers === undefined ? undefined : readSigners(body.signers);
@@ -218,7 +229,7 @@ export async function handlePatchPendingSend(
     ...(signers ? { signers } : {}),
     ...(autoClose !== undefined ? { autoClose } : {}),
   };
-  const updated = await ctx.store.update(id, patch);
+  const updated = await ctx.store.update(parts.id, patch, parts.secret);
   if (!updated) {
     return {
       status: 409,
@@ -230,13 +241,18 @@ export async function handlePatchPendingSend(
 
 export async function handleClaimPendingSend(
   ctx: PendingSendCtx,
-  id: string,
+  handle: string,
   actorEmail: string,
 ): Promise<PendingSendResult> {
+  // The SESSION is the authority here, not the handle, so only the id half is
+  // used — but a malformed handle still resolves to nothing.
+  const parts = parseHandle(handle);
+  if (!parts) return NOT_FOUND;
+  const id = parts.id;
   const claim = await ctx.store.claim(id, actorEmail);
   switch (claim.outcome) {
     case 'not_found':
-      return { status: 404, body: { error: 'That document is no longer available', code: 'not_found' } };
+      return NOT_FOUND;
     case 'wrong_account':
       return {
         status: 403,

@@ -26,8 +26,44 @@
  * envelope, record its id — and if the create fails, release the claim so the
  * visitor can retry rather than owning a draft nobody can send.
  */
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import type { DbPool } from './pool.js';
+
+/**
+ * SECURITY (F-028, red team cycle 22 — a P0 I shipped). The first cut used the
+ * row's `id` as though it were a capability, so anyone holding an id could read
+ * the creator's address and the whole signer list unauthenticated. An id is not
+ * a secret: it rides `?draft=` in the URL bar, sits in browser history, and is
+ * echoed in claim requests and logs.
+ *
+ * So the handle the visitor holds is now `<id>.<secret>`, and the database stores
+ * only `sha256(secret)` — run402's own magic-link pattern (`services/magic-link.ts`
+ * stores a hash, never the raw token). A leaked id reads nothing; possession of
+ * the emailed link is what authorizes a read, which is the same proof of mailbox
+ * control the sign-in token beside it already carries (DD-56).
+ */
+export function mintRestoreSecret(): string {
+  return randomBytes(32).toString('base64url');
+}
+
+export function hashRestoreSecret(secret: string): string {
+  return createHash('sha256').update(secret).digest('base64url');
+}
+
+/** Constant-time compare, so a stored hash can't be probed byte by byte. */
+function hashMatches(stored: string | null, presented: string): boolean {
+  if (!stored) return false;
+  const a = Buffer.from(stored);
+  const b = Buffer.from(hashRestoreSecret(presented));
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/** `<id>.<secret>` → its parts. A handle without a secret authorizes nothing. */
+export function parseHandle(handle: string): { id: string; secret: string } | null {
+  const dot = handle.indexOf('.');
+  if (dot <= 0 || dot === handle.length - 1) return null;
+  return { id: handle.slice(0, dot), secret: handle.slice(dot + 1) };
+}
 
 /** run402's magic-link lifetime (`services/magic-link.ts`, read at 414cc643). */
 export const MAGIC_LINK_TTL_MS = 15 * 60 * 1000;
@@ -104,19 +140,21 @@ function toRecord(row: Row): PendingSendRecord {
   };
 }
 
+/** Returns the visitor-facing HANDLE (`<id>.<secret>`), never the bare id. */
 export async function createPendingSend(
   pool: DbPool,
   boundEmail: string,
   draft: PendingSendDraft,
-  opts: { now?: Date; id?: string } = {},
+  opts: { now?: Date; id?: string; secret?: string } = {},
 ): Promise<string> {
   const now = opts.now ?? new Date();
   const id = opts.id ?? `ps_${randomUUID()}`;
+  const secret = opts.secret ?? mintRestoreSecret();
   const expiresAt = new Date(now.getTime() + PENDING_SEND_TTL_MS);
   await pool.query(
     `INSERT INTO pending_sends
-       (id, bound_email, document_name, storage_key, byte_count, draft, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)`,
+       (id, bound_email, document_name, storage_key, byte_count, draft, expires_at, restore_token_hash)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)`,
     [
       id,
       normalizeBoundEmail(boundEmail),
@@ -125,9 +163,10 @@ export async function createPendingSend(
       draft.byteCount,
       JSON.stringify({ signers: draft.signers, auto_close: draft.autoClose }),
       expiresAt.toISOString(),
+      hashRestoreSecret(secret),
     ],
   );
-  return id;
+  return `${id}.${secret}`;
 }
 
 /**
@@ -146,8 +185,34 @@ export async function countLivePendingSends(pool: DbPool, boundEmail: string, no
   return row ? Number(row.n) : 0;
 }
 
-/** Metadata read. Returns claimed rows too, so a loser can be told where its envelope went. */
-export async function getPendingSend(pool: DbPool, id: string): Promise<PendingSendRecord | null> {
+/**
+ * Metadata read, authorized by the SECRET half of the handle. Returns claimed
+ * rows too (redacted to a receipt, see `redactClaimedPendingSend`), so a waiting
+ * tab can learn its document was sent from somewhere else.
+ *
+ * An id alone reads NOTHING: a wrong or absent secret is indistinguishable from
+ * a row that does not exist (F-028).
+ */
+export async function getPendingSend(
+  pool: DbPool,
+  id: string,
+  secret: string,
+): Promise<PendingSendRecord | null> {
+  const result = await pool.query(
+    `SELECT id, bound_email, document_name, storage_key, byte_count, draft,
+            created_at, expires_at, claimed_at, claimed_envelope_id, restore_token_hash
+       FROM pending_sends
+      WHERE id = $1`,
+    [id],
+  );
+  if (result.rows.length === 0) return null;
+  const row = result.rows[0] as Row & { restore_token_hash: string | null };
+  if (!hashMatches(row.restore_token_hash, secret)) return null;
+  return toRecord(row);
+}
+
+/** Internal read for the CLAIM path, where the session is the authority. */
+async function getPendingSendById(pool: DbPool, id: string): Promise<PendingSendRecord | null> {
   const result = await pool.query(
     `SELECT id, bound_email, document_name, storage_key, byte_count, draft,
             created_at, expires_at, claimed_at, claimed_envelope_id
@@ -174,6 +239,7 @@ export async function updatePendingSendDraft(
   pool: DbPool,
   id: string,
   patch: PendingSendPatch,
+  secret: string,
   opts: { now?: Date } = {},
 ): Promise<boolean> {
   const now = opts.now ?? new Date();
@@ -186,13 +252,15 @@ export async function updatePendingSendDraft(
             )
       WHERE id = $1
         AND claimed_at IS NULL
-        AND expires_at > $5`,
+        AND expires_at > $5
+        AND restore_token_hash = $6`,
     [
       id,
       patch.documentName ?? null,
       patch.signers ? JSON.stringify(patch.signers) : null,
       patch.autoClose ?? null,
       now.toISOString(),
+      hashRestoreSecret(secret),
     ],
   );
   return (result.rowCount ?? 0) > 0;
@@ -225,15 +293,34 @@ export async function claimPendingSend(
   if (claimed.rows.length > 0) {
     return { outcome: 'claimed', record: toRecord(claimed.rows[0] as Row) };
   }
-  const existing = await getPendingSend(pool, id);
+  const existing = await getPendingSendById(pool, id);
   if (!existing) return { outcome: 'not_found' };
   if (existing.boundEmail !== email) return { outcome: 'wrong_account' };
   if (existing.claimedAt) return { outcome: 'already', envelopeId: existing.claimedEnvelopeId };
   return { outcome: 'expired' };
 }
 
+/**
+ * Record what the claim produced AND redact the draft in the same statement
+ * (F-028 / AC-243). Once the envelope exists the pending send has served its
+ * whole purpose, so everything personal about it goes immediately rather than
+ * waiting for the daily sweep: the address, the signer set, the document name.
+ * What remains is a RECEIPT — the id, when it was claimed, and which envelope it
+ * became — which is what lets a tab still waiting on "check your email" learn
+ * that its document was sent from somewhere else (AC-239).
+ */
 export async function recordClaimedEnvelope(pool: DbPool, id: string, envelopeId: string): Promise<void> {
-  await pool.query(`UPDATE pending_sends SET claimed_envelope_id = $2 WHERE id = $1`, [id, envelopeId]);
+  await pool.query(
+    `UPDATE pending_sends
+        SET claimed_envelope_id = $2,
+            bound_email = '',
+            document_name = '',
+            storage_key = '',
+            byte_count = 0,
+            draft = '{}'::jsonb
+      WHERE id = $1`,
+    [id, envelopeId],
+  );
 }
 
 /**

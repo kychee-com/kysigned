@@ -195,8 +195,8 @@ function pendingSendCtx(deps: RequestDeps): PendingSendCtx {
     pool,
     store: {
       create: (boundEmail, draft) => createPendingSend(pool, boundEmail, draft),
-      get: (id) => getPendingSend(pool, id),
-      update: (id, patch) => updatePendingSendDraft(pool, id, patch),
+      get: (id, secret) => getPendingSend(pool, id, secret),
+      update: (id, patch, secret) => updatePendingSendDraft(pool, id, patch, secret),
       claim: (id, sessionEmail) => claimPendingSend(pool, id, sessionEmail),
       countLive: (boundEmail) => countLivePendingSends(pool, boundEmail),
       recordEnvelope: (id, envelopeId) => recordClaimedEnvelope(pool, id, envelopeId),

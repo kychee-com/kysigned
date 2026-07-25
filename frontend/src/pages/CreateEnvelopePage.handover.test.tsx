@@ -56,7 +56,7 @@ vi.mock('../lib/api', async (importActual) => {
 import { ApiError } from '../lib/api';
 import { CreateEnvelopePage } from './CreateEnvelopePage';
 
-const HANDLE = 'ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34';
+const HANDLE = 'ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34.the-secret-half-abcdef';
 
 const PDF_FILE = () => new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], 'contract.pdf', { type: 'application/pdf' });
 

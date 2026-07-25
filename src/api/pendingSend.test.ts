@@ -24,6 +24,9 @@ import type { PendingSendRecord } from '../db/pendingSends.js';
 
 const PDF_B64 = Buffer.from('%PDF-1.4 fake').toString('base64');
 
+/** Composite handle: an id alone authorizes nothing (F-028). */
+const HANDLE = 'ps_1.the-secret-half';
+
 const VALID_BODY = {
   email: 'creator@example.com',
   document_name: 'contract',
@@ -34,7 +37,7 @@ const VALID_BODY = {
 
 function record(over: Partial<PendingSendRecord> = {}): PendingSendRecord {
   return {
-    id: 'ps_1',
+    id: HANDLE,
     boundEmail: 'creator@example.com',
     documentName: 'contract',
     storageKey: 'pending/abc/original.pdf',
@@ -117,7 +120,7 @@ describe('POST /v1/pending-send — the gate write (AC-238)', () => {
 
 describe('GET /v1/pending-send/:id — identity, never contents (AC-243)', () => {
   it('returns the metadata the restored editor needs and NO bytes', async () => {
-    const res = await handleGetPendingSend(ctx(), 'ps_1');
+    const res = await handleGetPendingSend(ctx(), HANDLE);
     assert.equal(res.status, 200);
     const body = res.body as Record<string, unknown>;
     assert.equal(body.document_name, 'contract');
@@ -134,7 +137,7 @@ describe('GET /v1/pending-send/:id — identity, never contents (AC-243)', () =>
     (c.store.get as ReturnType<typeof mock.fn>).mock.mockImplementation(async () =>
       record({ claimedAt: new Date(), claimedEnvelopeId: 'env_done' }),
     );
-    const res = await handleGetPendingSend(c, 'ps_1');
+    const res = await handleGetPendingSend(c, HANDLE);
     assert.equal((res.body as { claimed: boolean }).claimed, true);
     assert.equal((res.body as { envelope_id?: string }).envelope_id, 'env_done');
   });
@@ -142,14 +145,14 @@ describe('GET /v1/pending-send/:id — identity, never contents (AC-243)', () =>
   it('404s an unknown handle', async () => {
     const c = ctx();
     (c.store.get as ReturnType<typeof mock.fn>).mock.mockImplementation(async () => null);
-    assert.equal((await handleGetPendingSend(c, 'ps_nope')).status, 404);
+    assert.equal((await handleGetPendingSend(c, 'ps_nope.secret')).status, 404);
   });
 });
 
 describe('PATCH /v1/pending-send/:id — editable until claimed (AC-241)', () => {
   it('saves a corrected signer address', async () => {
     const c = ctx();
-    const res = await handlePatchPendingSend(c, 'ps_1', {
+    const res = await handlePatchPendingSend(c, HANDLE, {
       signers: [{ email: 'corrected@example.com', name: 'Alice Doe' }],
     });
     assert.equal(res.status, 200);
@@ -161,7 +164,7 @@ describe('PATCH /v1/pending-send/:id — editable until claimed (AC-241)', () =>
 
   it('runs the edited draft through preflight, so an edit cannot smuggle past validation', async () => {
     const c = ctx();
-    const res = await handlePatchPendingSend(c, 'ps_1', { signers: [{ email: 'nope', name: '' }] });
+    const res = await handlePatchPendingSend(c, HANDLE, { signers: [{ email: 'nope', name: '' }] });
     assert.equal(res.status, 400);
     assert.equal((c.store.update as ReturnType<typeof mock.fn>).mock.callCount(), 0);
   });
@@ -169,13 +172,13 @@ describe('PATCH /v1/pending-send/:id — editable until claimed (AC-241)', () =>
   it('409s once the draft is claimed', async () => {
     const c = ctx();
     (c.store.update as ReturnType<typeof mock.fn>).mock.mockImplementation(async () => false);
-    const res = await handlePatchPendingSend(c, 'ps_1', { document_name: 'x' });
+    const res = await handlePatchPendingSend(c, HANDLE, { document_name: 'x' });
     assert.equal(res.status, 409);
   });
 
   it('offers no way to replace the document file', async () => {
     const c = ctx();
-    await handlePatchPendingSend(c, 'ps_1', { document_name: 'x', pdf_base64: PDF_B64 } as Record<string, unknown>);
+    await handlePatchPendingSend(c, HANDLE, { document_name: 'x', pdf_base64: PDF_B64 } as Record<string, unknown>);
     const patch = (c.store.update as ReturnType<typeof mock.fn>).mock.calls[0]!.arguments[1] as Record<string, unknown>;
     assert.ok(!('pdf_base64' in patch) && !('storageKey' in patch));
   });
@@ -184,7 +187,7 @@ describe('PATCH /v1/pending-send/:id — editable until claimed (AC-241)', () =>
 describe('POST /v1/pending-send/:id/claim — one envelope, ever (AC-238)', () => {
   it('claims, creates, and records the envelope', async () => {
     const c = ctx();
-    const res = await handleClaimPendingSend(c, 'ps_1', 'creator@example.com');
+    const res = await handleClaimPendingSend(c, HANDLE, 'creator@example.com');
     assert.equal(res.status, 200);
     assert.equal((res.body as { envelope_id: string }).envelope_id, 'env_new');
     assert.equal((c.store.recordEnvelope as ReturnType<typeof mock.fn>).mock.callCount(), 1);
@@ -197,7 +200,7 @@ describe('POST /v1/pending-send/:id/claim — one envelope, ever (AC-238)', () =
       outcome: 'already',
       envelopeId: 'env_first',
     }));
-    const res = await handleClaimPendingSend(c, 'ps_1', 'creator@example.com');
+    const res = await handleClaimPendingSend(c, HANDLE, 'creator@example.com');
     assert.equal(res.status, 200);
     assert.equal((res.body as { envelope_id: string }).envelope_id, 'env_first');
     assert.equal((res.body as { already_sent: boolean }).already_sent, true);
@@ -207,7 +210,7 @@ describe('POST /v1/pending-send/:id/claim — one envelope, ever (AC-238)', () =
   it('refuses a session for a different address', async () => {
     const c = ctx();
     (c.store.claim as ReturnType<typeof mock.fn>).mock.mockImplementation(async () => ({ outcome: 'wrong_account' }));
-    const res = await handleClaimPendingSend(c, 'ps_1', 'someone@else.com');
+    const res = await handleClaimPendingSend(c, HANDLE, 'someone@else.com');
     assert.equal(res.status, 403);
     assert.equal((c.createEnvelope as ReturnType<typeof mock.fn>).mock.callCount(), 0);
   });
@@ -217,7 +220,7 @@ describe('POST /v1/pending-send/:id/claim — one envelope, ever (AC-238)', () =
     (c.createEnvelope as ReturnType<typeof mock.fn>).mock.mockImplementation(async () => {
       throw new Error('boom');
     });
-    await assert.rejects(() => handleClaimPendingSend(c, 'ps_1', 'creator@example.com'));
+    await assert.rejects(() => handleClaimPendingSend(c, HANDLE, 'creator@example.com'));
     assert.equal((c.store.release as ReturnType<typeof mock.fn>).mock.callCount(), 1);
     assert.equal((c.store.recordEnvelope as ReturnType<typeof mock.fn>).mock.callCount(), 0);
   });
@@ -228,7 +231,7 @@ describe('POST /v1/pending-send/:id/claim — one envelope, ever (AC-238)', () =
       status: 402,
       body: { error: 'Insufficient credit', code: 'credit_insufficient' },
     }));
-    const res = await handleClaimPendingSend(c, 'ps_1', 'creator@example.com');
+    const res = await handleClaimPendingSend(c, HANDLE, 'creator@example.com');
     assert.equal(res.status, 402);
     assert.equal((c.store.release as ReturnType<typeof mock.fn>).mock.callCount(), 1, 'a refused send is retryable');
     assert.equal((c.store.recordEnvelope as ReturnType<typeof mock.fn>).mock.callCount(), 0);
@@ -237,8 +240,50 @@ describe('POST /v1/pending-send/:id/claim — one envelope, ever (AC-238)', () =
   it('reports an expired draft distinctly rather than as a generic failure', async () => {
     const c = ctx();
     (c.store.claim as ReturnType<typeof mock.fn>).mock.mockImplementation(async () => ({ outcome: 'expired' }));
-    const res = await handleClaimPendingSend(c, 'ps_1', 'creator@example.com');
+    const res = await handleClaimPendingSend(c, HANDLE, 'creator@example.com');
     assert.equal(res.status, 409);
     assert.equal((res.body as { code: string }).code, 'state_pending_send_expired');
+  });
+});
+
+// ── F-028 (red team cycle 22, P0) ────────────────────────────────────────────
+// `GET /v1/pending-send/:id` returned the creator's address and the whole signer
+// list to anyone holding an id, with no authentication at all — and a claimed
+// record still resolved in full. Both are pinned here at the door.
+describe('F-028 — a bare id is not a capability', () => {
+  it('404s a handle with no secret half, without ever reaching the store', async () => {
+    const c = ctx();
+    const res = await handleGetPendingSend(c, 'ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34');
+    assert.equal(res.status, 404);
+    assert.equal((c.store.get as ReturnType<typeof mock.fn>).mock.callCount(), 0, 'no read is even attempted');
+  });
+
+  it('passes the secret to the store, so authorization is not the route\'s to fake', async () => {
+    const c = ctx();
+    await handleGetPendingSend(c, HANDLE);
+    const call = (c.store.get as ReturnType<typeof mock.fn>).mock.calls[0]!;
+    assert.equal(call.arguments[0], 'ps_1');
+    assert.equal(call.arguments[1], 'the-secret-half');
+  });
+
+  it('refuses an EDIT on a bare id too', async () => {
+    const c = ctx();
+    const res = await handlePatchPendingSend(c, 'ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34', { document_name: 'x' });
+    assert.equal(res.status, 404);
+    assert.equal((c.store.update as ReturnType<typeof mock.fn>).mock.callCount(), 0);
+  });
+
+  it('gives a wrong secret the SAME answer as a missing draft (no oracle)', async () => {
+    const c = ctx();
+    (c.store.get as ReturnType<typeof mock.fn>).mock.mockImplementation(async () => null);
+    const wrong = await handleGetPendingSend(c, 'ps_1.wrong-secret');
+    const missing = await handleGetPendingSend(c, 'ps_gone.some-secret');
+    assert.deepEqual(wrong, missing);
+  });
+
+  it('uses only the ID half for the claim, where the SESSION is the authority', async () => {
+    const c = ctx();
+    await handleClaimPendingSend(c, HANDLE, 'creator@example.com');
+    assert.equal((c.store.claim as ReturnType<typeof mock.fn>).mock.calls[0]!.arguments[0], 'ps_1');
   });
 });

@@ -48,7 +48,8 @@ function readHandover(search: string) {
   const params = new URLSearchParams(search)
   const draft = params.get('draft')
   return {
-    draftId: draft && /^ps_[0-9a-f-]{36}$/.test(draft) ? draft : null,
+    // F-028 — the handle is `<id>.<secret>`; an id on its own reads nothing.
+    draftId: draft && /^ps_[0-9a-f-]{36}\.[A-Za-z0-9_-]{20,64}$/.test(draft) ? draft : null,
     claim: params.get('claim') === '1',
     signInFailed: params.get('signin_failed') === '1',
   }

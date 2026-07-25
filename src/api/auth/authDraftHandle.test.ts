@@ -49,22 +49,22 @@ const OK_EXCHANGE = {
   access_token: 'at',
   refresh_token: 'rt',
   user: { email: 'Creator@Example.com' },
-  magic_link: { intent: 'signin', client_state: '{"draft_id":"ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34"}', state_source: 'anonymous', state_trusted: false },
+  magic_link: { intent: 'signin', client_state: '{"draft_id":"ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34.the-secret-half-abcdef"}', state_source: 'anonymous', state_trusted: false },
 };
 
 describe('the magic-link request carries the handle both ways (DD-57)', () => {
   it('puts the handle in the redirect URL AND in client_state', async () => {
     const { impl, sent } = recordingFetch({});
-    await handleAuthMagicLink(ctx(impl), { email: 'creator@example.com', draft_id: 'ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34' });
+    await handleAuthMagicLink(ctx(impl), { email: 'creator@example.com', draft_id: 'ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34.the-secret-half-abcdef' });
     const req = sent.find((s) => s.url.includes('/auth/v1/magic-link'))!;
     assert.equal(
       req.body.redirect_url,
-      'https://kysigned.com/dashboard?draft=ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34',
+      'https://kysigned.com/dashboard?draft=ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34.the-secret-half-abcdef',
       'the query copy is what survives a FAILED exchange',
     );
     assert.equal(
       req.body.client_state,
-      JSON.stringify({ draft_id: 'ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34' }),
+      JSON.stringify({ draft_id: 'ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34.the-secret-half-abcdef' }),
       'the bound copy is what a SUCCESSFUL exchange returns',
     );
   });
@@ -87,7 +87,7 @@ describe('the magic-link request carries the handle both ways (DD-57)', () => {
 
   it('still answers 200 (anti-enumeration) whatever the handle was', async () => {
     const { impl } = recordingFetch({});
-    const r = await handleAuthMagicLink(ctx(impl), { email: 'creator@example.com', draft_id: 'ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34' });
+    const r = await handleAuthMagicLink(ctx(impl), { email: 'creator@example.com', draft_id: 'ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34.the-secret-half-abcdef' });
     assert.equal(r.status, 200);
     assert.deepEqual(r.body, { ok: true });
   });
@@ -98,7 +98,7 @@ describe('the token exchange hands the handle back (DD-57)', () => {
     const { impl } = recordingFetch(OK_EXCHANGE);
     const r = await handleAuthTokenExchange(ctx(impl), { token: 'tok' });
     assert.equal(r.status, 200);
-    assert.equal((r.body as { draft_id?: string }).draft_id, 'ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34');
+    assert.equal((r.body as { draft_id?: string }).draft_id, 'ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34.the-secret-half-abcdef');
     assert.equal((r.body as { email: string }).email, 'creator@example.com');
   });
 

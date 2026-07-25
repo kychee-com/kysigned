@@ -131,7 +131,7 @@ export const MAGIC_LINK_LANDING_PATH = '/dashboard';
  * Safe to append: run402 joins its own `token=` with `&` when the redirect
  * already carries a query (`routes/auth.ts:1204`, read at 414cc643).
  */
-const DRAFT_HANDLE_RE = /^ps_[0-9a-f-]{36}$/;
+const DRAFT_HANDLE_RE = /^ps_[0-9a-f-]{36}\.[A-Za-z0-9_-]{20,64}$/;
 
 function magicLinkLandingUrl(appBaseUrl: string, draftId?: string): string {
   const url = new URL(MAGIC_LINK_LANDING_PATH, appBaseUrl);
