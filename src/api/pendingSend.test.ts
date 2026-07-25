@@ -124,8 +124,9 @@ describe('GET /v1/pending-send/:id — identity, never contents (AC-243)', () =>
     assert.equal(body.byte_count, 13);
     assert.deepEqual(body.signers, [{ email: 'alice@example.com', name: 'Alice Doe' }]);
     assert.equal(body.claimed, false);
+    assert.equal(body.email, 'creator@example.com', 'so the resend control can prefill it (AC-240)');
     const serialized = JSON.stringify(body);
-    assert.ok(!/pdf_base64|bytes|storage_key/.test(serialized), 'no byte channel and no internal key');
+    assert.ok(!/pdf_base64|storage_key/.test(serialized), 'no byte channel and no internal key');
   });
 
   it('reports a claimed draft as claimed, so a waiting tab can stop waiting', async () => {

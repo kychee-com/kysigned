@@ -157,9 +157,16 @@ export async function handleGetPendingSend(ctx: PendingSendCtx, id: string): Pro
   if (!found) return { status: 404, body: { error: 'That document is no longer available', code: 'not_found' } };
   // Identity, never contents (AC-243): a name, a size, the recipients. The bytes
   // are reachable only through the claim.
+  //
+  // The bound address IS returned, so the restored editor's resend control can
+  // prefill it (AC-240) without the visitor retyping the address they already
+  // gave. It leaks nothing beyond what the reader already has: the handle
+  // arrived in that mailbox, alongside a sign-in token that grants the whole
+  // account. Same bound as DD-56.
   return {
     status: 200,
     body: {
+      email: found.boundEmail,
       document_name: found.documentName,
       byte_count: found.byteCount,
       signers: found.signers,
