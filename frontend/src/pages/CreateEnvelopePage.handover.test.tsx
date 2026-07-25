@@ -215,6 +215,37 @@ describe('the landing tab finishes the job (AC-239)', () => {
     expect(callsTo(`/v1/pending-send/${HANDLE}/claim`)).toHaveLength(1);
   });
 
+  // Found by the LIVE handover probe, 2026-07-25: the landing signed in
+  // cross-context and the claim was correctly refused for want of credit, but the
+  // page then rendered the full-page "Add credits" card INSTEAD of the visitor's
+  // document. The replacing card reads `!file`, and a restored draft's document
+  // lives on the service rather than in `file`. F-39.4 / AC-226 is explicit that
+  // a draft that already exists must never be swallowed by that card.
+  it('a restored draft is NEVER swallowed by the insufficient-credit card', async () => {
+    searchHolder.current = `?draft=${HANDLE}&claim=1`;
+    authHolder.current = { ...authHolder.current, user: { email: 'creator@example.com' } };
+    apiGetMock.mockImplementation(async (path: string) => {
+      if (path === '/v1/credits/balance') {
+        return { balance_usd_micros: '0', envelope_cost_usd_micros: '250000', sufficient_for_envelope: false };
+      }
+      return RESTORED;
+    });
+    apiPostMock.mockImplementation(async (path: string) => {
+      if (path === `/v1/pending-send/${HANDLE}/claim`) throw new ApiError('Insufficient credit', 402);
+      throw new Error(`unexpected apiPost ${path}`);
+    });
+    renderPage();
+    // The document is still on screen, with the inline top-up beside it.
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('e.g., NDA for Acme Corp') as HTMLInputElement).value).toBe('contract'),
+    );
+    expect(screen.getByTestId('restored-draft-file')).toBeTruthy();
+    // The replacing card is the thing that swallowed it live. It must not appear.
+    expect(screen.queryByText(/add credits to send your document/i)).toBeNull();
+    // And the refusal is still explained, on the form, beside the document.
+    expect(screen.getByText(/insufficient credit/i)).toBeTruthy();
+  });
+
   it('a refused claim (no credit) shows the reason on the restored form, not a dead end', async () => {
     searchHolder.current = `?draft=${HANDLE}&claim=1`;
     authHolder.current = { ...authHolder.current, user: { email: 'creator@example.com' } };

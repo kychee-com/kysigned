@@ -701,7 +701,11 @@ export function CreateEnvelopePage() {
           draft that already exists must never be swallowed by it (F-39.4 /
           AC-226): with a file picked, the form stays and the inline top-up
           strip below carries the referral instead. */}
-      {insufficientCredit && !file ? (
+      {/* A RESTORED draft is a draft that already exists, so the replacing card
+          must never swallow it either — its document lives on the service rather
+          than in `file`, and reading `!file` alone hid the visitor's own document
+          behind the top-up card (found by the live handover probe, 2026-07-25). */}
+      {insufficientCredit && !file && !isRestored ? (
         <div className="bg-white border border-gray-200 rounded-xl p-8 text-center space-y-4">
           <div
             className="mx-auto w-12 h-12 rounded-full bg-amber-50 flex items-center justify-center text-amber-600 text-2xl font-semibold"
@@ -738,7 +742,7 @@ export function CreateEnvelopePage() {
         {/* F-39.4 / AC-226 — the draft-preserving top-up: shown when the
             balance is short but a draft EXISTS. Checkout opens in a new tab so
             the draft tab survives; Send again afterward sends this same draft. */}
-        {insufficientCredit && file && (
+        {insufficientCredit && (file || isRestored) && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-900" data-testid="topup-inline">
             <p className="font-medium mb-2">
               Add credits to send. Your document is saved in this tab: top up, then press Send again.
