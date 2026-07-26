@@ -170,6 +170,93 @@ export async function createPendingSend(
 }
 
 /**
+ * F-41.6 / DD-59 — the Google path has no address at gate time (the visitor
+ * never types one), so a send-gate ceremony's draft is created bound to this
+ * SENTINEL and the establishing session's address is bound AT CLAIM, inside the
+ * claim's own UPDATE. Empty string (not NULL) so the schema stays untouched and
+ * the per-address live-count treats all ceremony-bound drafts as one bucket.
+ */
+export const CEREMONY_BOUND_SENTINEL = '';
+
+/** The Google-gate variant of `createPendingSend`: no binding yet (see above). */
+export async function createCeremonyPendingSend(
+  pool: DbPool,
+  draft: PendingSendDraft,
+  opts: { now?: Date; id?: string; secret?: string } = {},
+): Promise<string> {
+  const now = opts.now ?? new Date();
+  const id = opts.id ?? `ps_${randomUUID()}`;
+  const secret = opts.secret ?? mintRestoreSecret();
+  const expiresAt = new Date(now.getTime() + PENDING_SEND_TTL_MS);
+  await pool.query(
+    `INSERT INTO pending_sends
+       (id, bound_email, document_name, storage_key, byte_count, draft, expires_at, restore_token_hash)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)`,
+    [
+      id,
+      CEREMONY_BOUND_SENTINEL,
+      draft.documentName,
+      draft.storageKey,
+      draft.byteCount,
+      JSON.stringify({ signers: draft.signers, auto_close: draft.autoClose }),
+      expiresAt.toISOString(),
+      hashRestoreSecret(secret),
+    ],
+  );
+  return `${id}.${secret}`;
+}
+
+/**
+ * F-41.6 — claim a CEREMONY-BOUND draft and bind it to the establishing
+ * session's address in the same single-winner statement. Authorization is
+ * possession of the ceremony-held SECRET (the handle's second half, which only
+ * the ceremony row and the composing tab ever held) — the id alone claims
+ * nothing, and a wrong secret reads exactly like a draft that does not exist
+ * (F-028 parity). Only a still-sentinel row is claimable this way, so an
+ * email-bound draft can never be re-bound by a Google session.
+ */
+export async function claimCeremonyPendingSend(
+  pool: DbPool,
+  id: string,
+  secret: string,
+  sessionEmail: string,
+  opts: { now?: Date } = {},
+): Promise<ClaimResult> {
+  const now = opts.now ?? new Date();
+  const email = normalizeBoundEmail(sessionEmail);
+  const claimed = await pool.query(
+    `UPDATE pending_sends
+        SET claimed_at = $2, bound_email = $4
+      WHERE id = $1
+        AND claimed_at IS NULL
+        AND bound_email = '${CEREMONY_BOUND_SENTINEL}'
+        AND restore_token_hash = $3
+        AND expires_at > $2
+      RETURNING id, bound_email, document_name, storage_key, byte_count, draft,
+                created_at, expires_at, claimed_at, claimed_envelope_id`,
+    [id, now.toISOString(), hashRestoreSecret(secret), email],
+  );
+  if (claimed.rows.length > 0) {
+    return { outcome: 'claimed', record: toRecord(claimed.rows[0] as Row) };
+  }
+  // Losers are diagnosed under the same authorization: no matching secret →
+  // indistinguishable from absence.
+  const result = await pool.query(
+    `SELECT id, bound_email, document_name, storage_key, byte_count, draft,
+            created_at, expires_at, claimed_at, claimed_envelope_id, restore_token_hash
+       FROM pending_sends
+      WHERE id = $1`,
+    [id],
+  );
+  if (result.rows.length === 0) return { outcome: 'not_found' };
+  const row = result.rows[0] as Row & { restore_token_hash: string | null };
+  if (!hashMatches(row.restore_token_hash, secret)) return { outcome: 'not_found' };
+  const existing = toRecord(row);
+  if (existing.claimedAt) return { outcome: 'already', envelopeId: existing.claimedEnvelopeId };
+  return { outcome: 'expired' };
+}
+
+/**
  * AC-243 — the anti-anonymous-storage bound, counted in the DATABASE rather than
  * in memory: a Lambda has no shared process to hold a counter, so an in-memory
  * limiter would reset with every cold start. Live = unclaimed and unexpired.

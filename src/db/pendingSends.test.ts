@@ -17,6 +17,9 @@ import assert from 'node:assert/strict';
 import type { DbPool } from './pool.js';
 import {
   createPendingSend,
+  createCeremonyPendingSend,
+  claimCeremonyPendingSend,
+  CEREMONY_BOUND_SENTINEL,
   getPendingSend,
   updatePendingSendDraft,
   claimPendingSend,
@@ -293,5 +296,74 @@ describe('F-028 — an id alone reads nothing', () => {
     for (const col of ['bound_email', 'document_name', 'storage_key', 'draft']) {
       assert.match(q, new RegExp(`${col} =`), `${col} must be cleared on claim (AC-243)`);
     }
+  });
+});
+
+describe('ceremony-bound pending sends (F-41.6 / DD-59) — bound at CLAIM, not at creation', () => {
+  it('creates with the ceremony sentinel (no address exists yet on the Google path)', async () => {
+    const { pool, queries } = capturePool(() => ({ rows: [], rowCount: 1 }));
+    const handle = await createCeremonyPendingSend(pool, DRAFT, { secret: 'S'.repeat(43) });
+    assert.ok(handle.includes('.'), 'id.secret, same handle shape as the email path');
+    const insert = queries.find((q) => q.text.includes('INSERT INTO pending_sends'))!;
+    assert.equal(insert.values[1], CEREMONY_BOUND_SENTINEL, 'no address binding until the session exists');
+  });
+
+  it('claims with ONE update that binds the session address, guarded by the ceremony-held secret', async () => {
+    const now = new Date('2026-07-26T10:05:00.000Z');
+    const { pool, queries } = capturePool((text) =>
+      text.startsWith('UPDATE pending_sends')
+        ? { rows: [row({ bound_email: 'newuser@example.com', claimed_at: now.toISOString() })], rowCount: 1 }
+        : null,
+    );
+    const result = await claimCeremonyPendingSend(pool, 'ps_1', 'S'.repeat(43), ' NewUser@Example.com ', { now });
+    assert.equal(result.outcome, 'claimed');
+    const update = queries.find((q) => q.text.startsWith('UPDATE pending_sends'))!;
+    assert.match(update.text, /claimed_at IS NULL/, 'single-winner, decided in the WHERE clause');
+    assert.match(update.text, /restore_token_hash =/, 'possession of the ceremony-held SECRET authorizes the bind');
+    assert.match(update.text, /bound_email = \$\d+\s*$|SET[\s\S]*bound_email/, 'the claim IS the binding');
+    assert.ok(
+      (update.values as unknown[]).includes('newuser@example.com'),
+      'the establishing session address is bound, normalized',
+    );
+    assert.ok(
+      !(update.values as unknown[]).includes('S'.repeat(43)),
+      'the raw secret never reaches the database — only its hash',
+    );
+    assert.match(update.text, new RegExp(`bound_email = '${CEREMONY_BOUND_SENTINEL}'`), 'only a ceremony-bound row can be claimed this way');
+  });
+
+  it('a wrong secret reads exactly like a draft that does not exist (F-028 parity)', async () => {
+    const { pool } = capturePool((text) =>
+      text.startsWith('UPDATE pending_sends') ? { rows: [], rowCount: 0 } : { rows: [], rowCount: 0 },
+    );
+    const result = await claimCeremonyPendingSend(pool, 'ps_1', 'WRONG'.repeat(9), 'x@example.com');
+    assert.equal(result.outcome, 'not_found');
+  });
+
+  it('an already-claimed ceremony draft answers with the envelope it became (a success, AC-239)', async () => {
+    const { pool } = capturePool((text) =>
+      text.startsWith('UPDATE pending_sends')
+        ? { rows: [], rowCount: 0 }
+        : {
+            rows: [row({ bound_email: 'newuser@example.com', claimed_at: '2026-07-26T10:00:00.000Z', claimed_envelope_id: 'env_1', restore_token_hash: hashRestoreSecret('S'.repeat(43)) })],
+            rowCount: 1,
+          },
+    );
+    const result = await claimCeremonyPendingSend(pool, 'ps_1', 'S'.repeat(43), 'x@example.com');
+    assert.equal(result.outcome, 'already');
+    assert.equal((result as { envelopeId?: string | null }).envelopeId, 'env_1');
+  });
+
+  it('an expired unclaimed ceremony draft reports expired', async () => {
+    const { pool } = capturePool((text) =>
+      text.startsWith('UPDATE pending_sends')
+        ? { rows: [], rowCount: 0 }
+        : {
+            rows: [row({ bound_email: CEREMONY_BOUND_SENTINEL, expires_at: '2026-07-01T00:00:00.000Z', restore_token_hash: hashRestoreSecret('S'.repeat(43)) })],
+            rowCount: 1,
+          },
+    );
+    const result = await claimCeremonyPendingSend(pool, 'ps_1', 'S'.repeat(43), 'x@example.com', { now: new Date('2026-07-26T10:00:00.000Z') });
+    assert.equal(result.outcome, 'expired');
   });
 });

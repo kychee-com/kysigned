@@ -19,6 +19,7 @@
     "016_telemetry_campaign.sql": "sha256:4bc1a09edbe40ae9cfa460d45e9517191db2ae8f7048d5d82f0a18be62cb6ae2",
     "017_telemetry_device.sql": "sha256:af18ec10b50146c9c7f24fb2b1eb1155100aace27b1e43477a0437fe2fef795c",
     "018_pending_sends.sql": "sha256:bdbe0edc936e2954a4cf8f5672620ea3525bf5118bde2b2cbc0927359cab3158",
-    "019_pending_send_restore_token.sql": "sha256:d93f8a97c10aae287662778dbebb7cc8429fd1fc330218642c7eda6f38506605"
+    "019_pending_send_restore_token.sql": "sha256:d93f8a97c10aae287662778dbebb7cc8429fd1fc330218642c7eda6f38506605",
+    "020_google_ceremonies.sql": "sha256:dd6c207345c5d72f66a57f2dc16007872e059d85caa2c5b2242e20e1d9694e82"
   }
 }
