@@ -23,3 +23,4 @@ memory/
 
 # Local scratch (SSM params, downloaded build artifacts — all also in S3)
 .tmp/
+.design-sync/
