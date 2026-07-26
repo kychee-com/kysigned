@@ -29,6 +29,15 @@ import { creditUser } from '../db/userCredits.js';
 import { normalizeInbox } from './signerInboxGuard.js';
 import { isDisposableEmailDomain } from './disposableDomains.js';
 
+/**
+ * F-41.3 / DD-62 — HOW mailbox control was proven for this establishment. The
+ * grant is method-blind between the two real proofs (magic-link confirmation
+ * and a Google-attested-verified email); a Google identity whose email Google
+ * does NOT attest verified establishes the account but earns nothing — the
+ * same account-yes-freebie-no posture as the disposable-domain rule.
+ */
+export type SignupGrantProof = 'magic_link' | 'google_verified' | 'google_unverified';
+
 export interface SignupGrantConfig {
   /**
    * The grant amount in USD micros (`signupGrantCredits` × the flat envelope
@@ -36,9 +45,11 @@ export interface SignupGrantConfig {
    * never grants unless an operator sets it.
    */
   grantUsdMicros: bigint;
+  /** Defaults to 'magic_link' (every pre-F-41 caller is the magic-link path). */
+  proof?: SignupGrantProof;
 }
 
-export type SignupGrantReason = 'granted' | 'disabled' | 'already_granted' | 'disposable_domain';
+export type SignupGrantReason = 'granted' | 'disabled' | 'already_granted' | 'disposable_domain' | 'unverified_email';
 
 export interface SignupGrantOutcome {
   granted: boolean;
@@ -61,6 +72,12 @@ export async function grantSignupCreditIfEligible(
 ): Promise<SignupGrantOutcome> {
   if (config.grantUsdMicros <= 0n) {
     return { granted: false, reason: 'disabled' };
+  }
+
+  // F-41.3 / DD-62 — no mailbox-control proof, no freebie. The account itself
+  // is unaffected (the caller has already established it); only the grant is.
+  if (config.proof === 'google_unverified') {
+    return { granted: false, reason: 'unverified_email' };
   }
 
   // F-13.6c — disposable / throwaway domains get no freebie (the account is

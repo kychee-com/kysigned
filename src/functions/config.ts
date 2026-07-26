@@ -35,6 +35,7 @@ import type { DbPool } from '../db/pool.js';
 import type { EmailProvider } from '../email/types.js';
 import type { ApiContext } from '../api/envelope.js';
 import type { AuthHandlerCtx } from '../api/auth/authHandlers.js';
+import { createMethodsResolver, type AuthMethods } from '../api/auth/authMethods.js';
 import type { AdminContext } from '../api/admin.js';
 import type { SignerApiCtx } from '../api/signerApi.js';
 import type { SessionConfig } from '../api/auth/session.js';
@@ -347,6 +348,9 @@ export interface AppDeps {
   // per-request / per-sweep ctx factories
   apiContext: (creatorEmail: string) => ApiContext;
   authCtx: () => AuthHandlerCtx;
+  /** F-41 — platform provider discovery (cached per warm container); the gate's
+   *  Google button feature-detects through it and fails to email-only. */
+  authMethods: () => Promise<AuthMethods>;
   /**
    * F-38 — the telemetry collection ctx. Present ONLY when
    * `KYSIGNED_TELEMETRY` is on; absent (the fork default) the public
@@ -620,6 +624,9 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
       }
     : undefined;
 
+  // F-41 — one cached provider-discovery resolver per warm container (DD-60).
+  const authMethods = createMethodsResolver({ session: sessionConfig });
+
   const authCtx = (): AuthHandlerCtx => ({
     pool,
     session: sessionConfig,
@@ -782,6 +789,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     healthChecks,
     apiContext,
     authCtx,
+    authMethods,
     ...(telemetry ? { telemetry } : {}), // F-38 funnel-telemetry rail
     adminCtx,
     signerCtx,

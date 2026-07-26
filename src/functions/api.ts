@@ -47,6 +47,8 @@ import { handleX402CreateEnvelope, defaultX402Seams } from '../api/x402Create.js
 import { handleCreatePreflight } from '../api/createPreflight.js';
 import {
   handleCreatePendingSend,
+  handleCreateCeremonyPendingSend,
+  handleClaimCeremonyPendingSend,
   handleGetPendingSend,
   handlePatchPendingSend,
   handleClaimPendingSend,
@@ -54,6 +56,8 @@ import {
 } from '../api/pendingSend.js';
 import {
   createPendingSend,
+  createCeremonyPendingSend,
+  claimCeremonyPendingSend,
   getPendingSend,
   updatePendingSendDraft,
   claimPendingSend,
@@ -70,6 +74,12 @@ import {
   handleAuthUser,
   handleAuthSignout,
 } from '../api/auth/authHandlers.js';
+import {
+  handleGoogleStart,
+  handleGoogleExchange,
+  handleGoogleLink,
+  type GoogleHandlerCtx,
+} from '../api/auth/googleHandlers.js';
 import {
   handlePasskeyLoginOptions,
   handlePasskeyLoginVerify,
@@ -195,9 +205,11 @@ function pendingSendCtx(deps: RequestDeps): PendingSendCtx {
     pool,
     store: {
       create: (boundEmail, draft) => createPendingSend(pool, boundEmail, draft),
+      createCeremony: (draft) => createCeremonyPendingSend(pool, draft),
       get: (id, secret) => getPendingSend(pool, id, secret),
       update: (id, patch, secret) => updatePendingSendDraft(pool, id, patch, secret),
       claim: (id, sessionEmail) => claimPendingSend(pool, id, sessionEmail),
+      claimCeremony: (id, secret, sessionEmail) => claimCeremonyPendingSend(pool, id, secret, sessionEmail),
       countLive: (boundEmail) => countLivePendingSends(pool, boundEmail),
       recordEnvelope: (id, envelopeId) => recordClaimedEnvelope(pool, id, envelopeId),
       release: (id) => releasePendingSendClaim(pool, id),
@@ -207,6 +219,19 @@ function pendingSendCtx(deps: RequestDeps): PendingSendCtx {
     createEnvelope: async (actorEmail, request) => {
       const inner = await handleCreateEnvelope(deps.apiContext(actorEmail), request as never);
       return { status: inner.status, body: inner.body };
+    },
+  };
+}
+
+/** F-41 — the Google handlers' ctx: the magic-link downstream + provider
+ *  discovery + the ceremony draft claim (DD-58..62). */
+function googleCtx(deps: RequestDeps, req: Request): GoogleHandlerCtx {
+  return {
+    auth: telemetryBoundAuthCtx(deps, req),
+    methods: deps.authMethods,
+    claimCeremonyDraft: async (handle, sessionEmail) => {
+      const r = await handleClaimCeremonyPendingSend(pendingSendCtx(deps), handle, sessionEmail);
+      return { status: r.status, body: r.body };
     },
   };
 }
@@ -421,6 +446,22 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
       const r = await handleAuthTokenExchange(telemetryBoundAuthCtx(deps, req), await readJsonBody(req));
       return json(r.body, r.status, r.setCookies);
     }
+    // ── Google sign-in (F-41, DD-58..62) ──
+    case 'authMethods': {
+      return json(await deps.authMethods(), 200);
+    }
+    case 'googleStart': {
+      const r = await handleGoogleStart(googleCtx(deps, req), await readJsonBody(req));
+      return json(r.body, r.status, r.setCookies);
+    }
+    case 'googleExchange': {
+      const r = await handleGoogleExchange(googleCtx(deps, req), await readJsonBody(req));
+      return json(r.body, r.status, r.setCookies);
+    }
+    case 'googleLink': {
+      const r = await handleGoogleLink(googleCtx(deps, req), { email: actorEmail!, sessionId: actorSessionId! });
+      return json(r.body, r.status, r.setCookies);
+    }
     case 'authUser': {
       const r = await handleAuthUser(deps.authCtx(), { email: actorEmail!, sessionId: actorSessionId! });
       return json(r.body, r.status, r.setCookies);
@@ -473,7 +514,12 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
     // holding a draft does not have one yet); every bound is inside the handler.
     case 'createPendingSend': {
       const body = await readJsonBody(req);
-      const r = await handleCreatePendingSend(pendingSendCtx(deps), body as Record<string, unknown>);
+      // F-41.6 — `ceremony: true` is the Google-gate write: same validation, no
+      // address (the ceremony's claim binds one, DD-59).
+      const r =
+        (body as { ceremony?: unknown }).ceremony === true
+          ? await handleCreateCeremonyPendingSend(pendingSendCtx(deps), body as Record<string, unknown>)
+          : await handleCreatePendingSend(pendingSendCtx(deps), body as Record<string, unknown>);
       return json(r.body, r.status);
     }
     case 'getPendingSend': {

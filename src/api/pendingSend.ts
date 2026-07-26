@@ -30,19 +30,34 @@ import type { DbPool } from '../db/pool.js';
 import { handleCreatePreflight } from './createPreflight.js';
 import { isUploadTooLarge, uploadTooLargeMessage } from './uploadGuard.js';
 import { decodePdfBase64, computePdfHash } from '../pdf/hash.js';
-import { parseHandle } from '../db/pendingSends.js';
+import { parseHandle, CEREMONY_BOUND_SENTINEL } from '../db/pendingSends.js';
 import type { ClaimResult, PendingSendPatch, PendingSendRecord, PendingSigner } from '../db/pendingSends.js';
 
 /** Live (unclaimed, unexpired) drafts one address may hold at once. */
 export const MAX_LIVE_PENDING_SENDS_PER_ADDRESS = 5;
 
+/**
+ * F-41.6 — the ceremony-bound bucket's GLOBAL backstop. A Google-gate draft has
+ * no address until its claim binds one, so the per-address cap cannot apply;
+ * all ceremony-bound drafts share the sentinel bucket, bounded high enough that
+ * legitimate concurrent gate crossings never collide (a draft leaves the bucket
+ * within one ceremony, ~minutes) and low enough that the surface cannot become
+ * anonymous storage (AC-243's terms: same class of bound as the sign-in email).
+ */
+export const MAX_LIVE_CEREMONY_PENDING_SENDS = 200;
+
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 export interface PendingSendStore {
   create(boundEmail: string, draft: Omit<PendingSendRecord, 'id' | 'boundEmail' | 'createdAt' | 'expiresAt' | 'claimedAt' | 'claimedEnvelopeId'>): Promise<string>;
+  /** F-41.6 — the Google-gate variant: no address exists yet, so the draft is
+   *  created ceremony-bound and the claim binds the session address (DD-59). */
+  createCeremony(draft: Omit<PendingSendRecord, 'id' | 'boundEmail' | 'createdAt' | 'expiresAt' | 'claimedAt' | 'claimedEnvelopeId'>): Promise<string>;
   get(id: string, secret: string): Promise<PendingSendRecord | null>;
   update(id: string, patch: PendingSendPatch, secret: string): Promise<boolean>;
   claim(id: string, sessionEmail: string): Promise<ClaimResult>;
+  /** F-41.6 — claim + bind, authorized by the ceremony-held SECRET. */
+  claimCeremony(id: string, secret: string, sessionEmail: string): Promise<ClaimResult>;
   countLive(boundEmail: string): Promise<number>;
   recordEnvelope(id: string, envelopeId: string): Promise<void>;
   release(id: string): Promise<void>;
@@ -95,30 +110,30 @@ function toCreateBody(documentName: string, signers: PendingSigner[], autoClose:
   return { document_name: documentName, pdf_base64: pdfBase64, signers, auto_close: autoClose };
 }
 
-export async function handleCreatePendingSend(
+/** The shared door: shape + preflight validation, nothing stored on failure. */
+async function validateDraftBody(
   ctx: PendingSendCtx,
   body: Record<string, unknown>,
-): Promise<PendingSendResult> {
-  const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
-  if (!email || !EMAIL_RE.test(email)) {
-    return { status: 400, body: { error: 'A valid email address is required', code: 'validation_email' } };
-  }
+): Promise<
+  | { ok: false; result: PendingSendResult }
+  | { ok: true; documentName: string; signers: PendingSigner[]; autoClose: boolean; bytes: Uint8Array }
+> {
   const documentName = typeof body.document_name === 'string' ? body.document_name.trim() : '';
   const pdfBase64 = typeof body.pdf_base64 === 'string' ? body.pdf_base64 : '';
   const signers = readSigners(body.signers);
   const autoClose = body.auto_close !== false;
   if (!documentName || !pdfBase64 || !signers || signers.length === 0) {
-    return { status: 400, body: { error: 'A document, a name and at least one signer are required', code: 'validation_draft' } };
+    return { ok: false, result: { status: 400, body: { error: 'A document, a name and at least one signer are required', code: 'validation_draft' } } };
   }
 
   let bytes: Uint8Array;
   try {
     bytes = decodePdfBase64(pdfBase64);
   } catch {
-    return { status: 400, body: { error: 'The document could not be read', code: 'validation_pdf' } };
+    return { ok: false, result: { status: 400, body: { error: 'The document could not be read', code: 'validation_pdf' } } };
   }
   if (isUploadTooLarge(bytes.byteLength)) {
-    return { status: 400, body: { error: uploadTooLargeMessage(bytes.byteLength), code: 'validation_pdf_size' } };
+    return { ok: false, result: { status: 400, body: { error: uploadTooLargeMessage(bytes.byteLength), code: 'validation_pdf_size' } } };
   }
 
   // The same deterministic validation a guest Send already runs. Nothing is
@@ -127,28 +142,72 @@ export async function handleCreatePendingSend(
     toCreateBody(documentName, signers, autoClose, pdfBase64),
     ctx.pool,
   );
-  if (preflight.status !== 200) return { status: preflight.status, body: preflight.body };
+  if (preflight.status !== 200) return { ok: false, result: { status: preflight.status, body: preflight.body as Record<string, unknown> } };
+
+  return { ok: true, documentName, signers, autoClose, bytes };
+}
+
+const TOO_MANY_PENDING: PendingSendResult = {
+  status: 429,
+  body: {
+    error: 'Too many documents are waiting to be sent from this address. Send or finish one first.',
+    code: 'rate_size_pending_sends',
+  },
+};
+
+export async function handleCreatePendingSend(
+  ctx: PendingSendCtx,
+  body: Record<string, unknown>,
+): Promise<PendingSendResult> {
+  const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+  if (!email || !EMAIL_RE.test(email)) {
+    return { status: 400, body: { error: 'A valid email address is required', code: 'validation_email' } };
+  }
+  const draft = await validateDraftBody(ctx, body);
+  if (!draft.ok) return draft.result;
 
   if ((await ctx.store.countLive(email)) >= MAX_LIVE_PENDING_SENDS_PER_ADDRESS) {
-    return {
-      status: 429,
-      body: {
-        error: 'Too many documents are waiting to be sent from this address. Send or finish one first.',
-        code: 'rate_size_pending_sends',
-      },
-    };
+    return TOO_MANY_PENDING;
   }
 
   // Content-addressed under a `pending/` prefix so the retention sweep can find
   // orphans without ever touching a blob a real envelope shares.
-  const storageKey = `pending/${computePdfHash(bytes)}/original.pdf`;
-  await ctx.store.putBlob(storageKey, bytes);
+  const storageKey = `pending/${computePdfHash(draft.bytes)}/original.pdf`;
+  await ctx.store.putBlob(storageKey, draft.bytes);
   const id = await ctx.store.create(email, {
-    documentName,
+    documentName: draft.documentName,
     storageKey,
-    byteCount: bytes.byteLength,
-    signers,
-    autoClose,
+    byteCount: draft.bytes.byteLength,
+    signers: draft.signers,
+    autoClose: draft.autoClose,
+  });
+  return { status: 200, body: { draft_id: id } };
+}
+
+/**
+ * F-41.6 — the Google-gate write: identical validation, no address (the
+ * ceremony binds one at claim, DD-59). Bounded by the sentinel bucket's global
+ * backstop rather than the per-address cap the email path uses.
+ */
+export async function handleCreateCeremonyPendingSend(
+  ctx: PendingSendCtx,
+  body: Record<string, unknown>,
+): Promise<PendingSendResult> {
+  const draft = await validateDraftBody(ctx, body);
+  if (!draft.ok) return draft.result;
+
+  if ((await ctx.store.countLive(CEREMONY_BOUND_SENTINEL)) >= MAX_LIVE_CEREMONY_PENDING_SENDS) {
+    return TOO_MANY_PENDING;
+  }
+
+  const storageKey = `pending/${computePdfHash(draft.bytes)}/original.pdf`;
+  await ctx.store.putBlob(storageKey, draft.bytes);
+  const id = await ctx.store.createCeremony({
+    documentName: draft.documentName,
+    storageKey,
+    byteCount: draft.bytes.byteLength,
+    signers: draft.signers,
+    autoClose: draft.autoClose,
   });
   return { status: 200, body: { draft_id: id } };
 }
@@ -248,8 +307,32 @@ export async function handleClaimPendingSend(
   // used — but a malformed handle still resolves to nothing.
   const parts = parseHandle(handle);
   if (!parts) return NOT_FOUND;
-  const id = parts.id;
-  const claim = await ctx.store.claim(id, actorEmail);
+  const claim = await ctx.store.claim(parts.id, actorEmail);
+  return finishClaim(ctx, parts.id, claim);
+}
+
+/**
+ * F-41.6 — the Google-path claim: the ceremony-held SECRET (the handle's second
+ * half, which only the ceremony row and the composing tab ever held) authorizes
+ * the bind, and the claim binds the establishing session's address (DD-59).
+ */
+export async function handleClaimCeremonyPendingSend(
+  ctx: PendingSendCtx,
+  handle: string,
+  actorEmail: string,
+): Promise<PendingSendResult> {
+  const parts = parseHandle(handle);
+  if (!parts) return NOT_FOUND;
+  const claim = await ctx.store.claimCeremony(parts.id, parts.secret, actorEmail);
+  return finishClaim(ctx, parts.id, claim);
+}
+
+/** The shared post-claim path: outcome mapping + create + release-on-failure. */
+async function finishClaim(
+  ctx: PendingSendCtx,
+  id: string,
+  claim: ClaimResult,
+): Promise<PendingSendResult> {
   switch (claim.outcome) {
     case 'not_found':
       return NOT_FOUND;

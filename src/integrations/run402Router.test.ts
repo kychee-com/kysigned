@@ -70,6 +70,18 @@ describe('matchRoute', () => {
     assert.equal(matchRoute('POST', '/v1/auth/signout')?.auth, 'session');
   });
 
+  it('routes Google sign-in (F-41): discovery/start/exchange public (the ceremony IS the auth), link is session', () => {
+    assert.equal(matchRoute('GET', '/v1/auth/methods')?.name, 'authMethods');
+    assert.equal(matchRoute('GET', '/v1/auth/methods')?.auth, 'public');
+    assert.equal(matchRoute('POST', '/v1/auth/google/start')?.name, 'googleStart');
+    assert.equal(matchRoute('POST', '/v1/auth/google/start')?.auth, 'public');
+    assert.equal(matchRoute('POST', '/v1/auth/google/exchange')?.name, 'googleExchange');
+    assert.equal(matchRoute('POST', '/v1/auth/google/exchange')?.auth, 'public');
+    // Connect Google attaches an identity to the CALLER's account — session only.
+    assert.equal(matchRoute('POST', '/v1/auth/google/link')?.name, 'googleLink');
+    assert.equal(matchRoute('POST', '/v1/auth/google/link')?.auth, 'session');
+  });
+
   it('routes passkeys: login/* is public, register/list/delete are session', () => {
     // login ceremony IS the auth → public; verify issues the session cookie.
     assert.equal(matchRoute('POST', '/v1/auth/passkeys/login/options')?.name, 'passkeyLoginOptions');

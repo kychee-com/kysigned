@@ -44,6 +44,7 @@ const REGISTERED_EMIT_SITES: Record<string, number> = {
   'api/signing/archiveReconciliation.ts': 1, // sweep_anomaly (archive)
   'api/signupGrantMonitor.ts': 1, // sweep_anomaly (grant)
   'api/auth/authHandlers.ts': 1, // creator_signed_up (F-36.4)
+  'api/auth/googleHandlers.ts': 1, // creator_signed_up, Google establishment (F-41.2)
   'api/x402Create.ts': 1, // credit_purchase, x402 rail (F-36.5)
   'integrations/appEvents.ts': 1, // the seam's own definition/entry
   'functions/config.ts': 1, // buildAppDeps constructs the seam binding
@@ -109,6 +110,7 @@ const GATED_SUPPRESSION_SITES: Record<string, number> = {
   'api/envelope.ts': 1, // envelope_undeliverable
   'api/distributeBundle.ts': 1, // envelope_completed
   'api/auth/authHandlers.ts': 1, // creator_signed_up
+  'api/auth/googleHandlers.ts': 1, // creator_signed_up (Google path, same gate)
   'api/x402Create.ts': 1, // credit_purchase (x402 rail)
   'api/signing/archiveReconciliation.ts': 0, // sweep_anomaly — NEVER gated
   'api/signupGrantMonitor.ts': 0, // sweep_anomaly — NEVER gated

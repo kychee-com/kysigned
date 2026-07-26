@@ -70,7 +70,7 @@ export interface AuthHandlerCtx {
    */
   telemetryStep?: (
     event: 'send_ok' | 'send_failed' | 'link_opened' | 'session_created',
-    opts?: { paid?: boolean; country?: string; device?: string },
+    opts?: { paid?: boolean; country?: string; device?: string; method?: 'magic_link' | 'google' | 'passkey' },
   ) => Promise<void>;
 }
 
@@ -234,6 +234,7 @@ export async function handleAuthTokenExchange(ctx: AuthHandlerCtx, body: { token
   try {
     const grant = await grantSignupCreditIfEligible(ctx.pool, email, {
       grantUsdMicros: ctx.signupGrantUsdMicros ?? 0n,
+      proof: 'magic_link', // F-41.3 — the confirmed link IS the mailbox proof
     });
     // F-36.4 — creator_signed_up on the FRESH claim only (the grant's
     // normalized-inbox UNIQUE is the exactly-once anchor). Keyed by the grant

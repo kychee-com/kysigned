@@ -98,6 +98,7 @@ function makeDeps(over: Partial<RequestDeps> = {}): RequestDeps {
     healthChecks: () => ({ checkDb: async () => {}, checkMailbox: async () => {} }),
     apiContext: thrower('apiContext') as never,
     authCtx: thrower('authCtx') as never,
+    authMethods: async () => ({ google: false }),
     adminCtx: thrower('adminCtx') as never,
     signerCtx: thrower('signerCtx') as never,
     reconcilerDeps: thrower('reconcilerDeps') as never,

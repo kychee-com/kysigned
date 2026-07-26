@@ -14,9 +14,11 @@ import assert from 'node:assert/strict';
 import type { DbPool } from '../db/pool.js';
 import {
   handleCreatePendingSend,
+  handleCreateCeremonyPendingSend,
   handleGetPendingSend,
   handlePatchPendingSend,
   handleClaimPendingSend,
+  handleClaimCeremonyPendingSend,
   MAX_LIVE_PENDING_SENDS_PER_ADDRESS,
   type PendingSendCtx,
 } from './pendingSend.js';
@@ -285,5 +287,71 @@ describe('F-028 — a bare id is not a capability', () => {
     const c = ctx();
     await handleClaimPendingSend(c, HANDLE, 'creator@example.com');
     assert.equal((c.store.claim as ReturnType<typeof mock.fn>).mock.calls[0]!.arguments[0], 'ps_1');
+  });
+});
+
+describe('ceremony-bound doors (F-41.6 / DD-59)', () => {
+  it('creates a CEREMONY-bound pending send: no email required, ceremony create used, handle returned', async () => {
+    const c = ctx();
+    (c.store as unknown as Record<string, unknown>).createCeremony = mock.fn(async () => 'ps_cer.secret-half');
+    const r = await handleCreateCeremonyPendingSend(c, { ...VALID_BODY });
+    assert.equal(r.status, 200);
+    assert.equal((r.body as { draft_id?: string }).draft_id, 'ps_cer.secret-half');
+    const createCeremony = (c.store as unknown as { createCeremony: ReturnType<typeof mock.fn> }).createCeremony;
+    assert.equal(createCeremony.mock.callCount(), 1);
+    assert.equal((c.store.create as ReturnType<typeof mock.fn>).mock.callCount(), 0, 'never the email-bound create');
+  });
+
+  it('runs the same preflight: an invalid ceremony draft stores nothing', async () => {
+    const c = ctx();
+    (c.store as unknown as Record<string, unknown>).createCeremony = mock.fn(async () => 'ps_cer.secret');
+    const r = await handleCreateCeremonyPendingSend(c, { ...VALID_BODY, signers: [] });
+    assert.equal(r.status, 400);
+    assert.equal((c.store.putBlob as ReturnType<typeof mock.fn>).mock.callCount(), 0);
+  });
+
+  it('bounds live ceremony drafts (the anonymous-storage backstop)', async () => {
+    const c = ctx();
+    (c.store as unknown as Record<string, unknown>).createCeremony = mock.fn(async () => 'ps_cer.secret');
+    (c.store.countLive as unknown as ReturnType<typeof mock.fn>).mock.mockImplementation(async () => 200);
+    const r = await handleCreateCeremonyPendingSend(c, { ...VALID_BODY });
+    assert.equal(r.status, 429);
+    assert.equal((r.body as { code?: string }).code, 'rate_size_pending_sends');
+  });
+
+  it('claims a ceremony draft for the establishing session and creates the envelope', async () => {
+    const c = ctx();
+    (c.store as unknown as Record<string, unknown>).claimCeremony = mock.fn(
+      async () => ({ outcome: 'claimed', record: record({ boundEmail: 'fresh@example.com' }) }) as const,
+    );
+    const r = await handleClaimCeremonyPendingSend(c, HANDLE, 'fresh@example.com');
+    assert.equal(r.status, 200);
+    assert.equal((r.body as { envelope_id?: string }).envelope_id, 'env_new');
+    const claimCeremony = (c.store as unknown as { claimCeremony: ReturnType<typeof mock.fn> }).claimCeremony;
+    assert.equal(claimCeremony.mock.callCount(), 1);
+    const [id, secret, email] = claimCeremony.mock.calls[0]!.arguments as [string, string, string];
+    assert.equal(id, 'ps_1');
+    assert.equal(secret, 'the-secret-half', 'the ceremony-held secret authorizes the bind');
+    assert.equal(email, 'fresh@example.com');
+  });
+
+  it('a create REFUSAL releases the ceremony claim and reports the refusal (F-39.4)', async () => {
+    const c = ctx({ createEnvelope: mock.fn(async () => ({ status: 402, body: { code: 'payment_insufficient_credit' } })) });
+    (c.store as unknown as Record<string, unknown>).claimCeremony = mock.fn(
+      async () => ({ outcome: 'claimed', record: record({ boundEmail: 'fresh@example.com' }) }) as const,
+    );
+    const r = await handleClaimCeremonyPendingSend(c, HANDLE, 'fresh@example.com');
+    assert.equal(r.status, 402);
+    assert.equal((c.store.release as ReturnType<typeof mock.fn>).mock.callCount(), 1);
+  });
+
+  it('an already-claimed ceremony draft answers already_sent with its envelope (a success, not an error)', async () => {
+    const c = ctx();
+    (c.store as unknown as Record<string, unknown>).claimCeremony = mock.fn(
+      async () => ({ outcome: 'already', envelopeId: 'env_prior' }) as const,
+    );
+    const r = await handleClaimCeremonyPendingSend(c, HANDLE, 'fresh@example.com');
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { envelope_id: 'env_prior', already_sent: true });
   });
 });

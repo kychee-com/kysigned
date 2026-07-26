@@ -192,3 +192,50 @@ describe('grantSignupCreditIfEligible — disposable-domain exclusion (AC-95)', 
     assert.equal(pool._ledger.length, 1);
   });
 });
+
+describe('grantSignupCreditIfEligible — method-blind, proof-gated (F-41.3 / AC-246, DD-62)', () => {
+  it('a Google-verified establishment grants exactly like a magic-link one, once per normalized email across methods', async () => {
+    const pool = createInMemoryPool();
+    const viaGoogle = await grantSignupCreditIfEligible(pool, 'new@example.com', { ...GRANT, proof: 'google_verified' });
+    assert.equal(viaGoogle.granted, true);
+    // The same normalized inbox signing in later by the OTHER method gets nothing.
+    const viaMagic = await grantSignupCreditIfEligible(pool, 'New@Example.com', { ...GRANT, proof: 'magic_link' });
+    assert.equal(viaMagic.granted, false);
+    assert.equal(viaMagic.reason, 'already_granted');
+    assert.equal(pool._ledger.length, 1, 'one signup_grant row per normalized email, whatever the method');
+  });
+
+  it('magic-link first, Google later: still exactly one grant (the reverse order)', async () => {
+    const pool = createInMemoryPool();
+    await grantSignupCreditIfEligible(pool, 'reverse@example.com', { ...GRANT, proof: 'magic_link' });
+    const second = await grantSignupCreditIfEligible(pool, 'reverse@example.com', { ...GRANT, proof: 'google_verified' });
+    assert.equal(second.granted, false);
+    assert.equal(second.reason, 'already_granted');
+    assert.equal(pool._ledger.length, 1);
+  });
+
+  it('a gmail dot/+tag variant granted via magic link blocks the Google grant too (AC-94 across methods)', async () => {
+    const pool = createInMemoryPool();
+    await grantSignupCreditIfEligible(pool, 'some.one@gmail.com', { ...GRANT, proof: 'magic_link' });
+    const variant = await grantSignupCreditIfEligible(pool, 'someone+promo@googlemail.com', { ...GRANT, proof: 'google_verified' });
+    assert.equal(variant.granted, false);
+    assert.equal(variant.reason, 'already_granted');
+    assert.equal(pool._ledger.length, 1);
+  });
+
+  it('an email Google does NOT attest verified establishes no grant (account yes, freebie no)', async () => {
+    const pool = createInMemoryPool();
+    const r = await grantSignupCreditIfEligible(pool, 'unverified@example.com', { ...GRANT, proof: 'google_unverified' });
+    assert.equal(r.granted, false);
+    assert.equal(r.reason, 'unverified_email');
+    assert.equal(pool._ledger.length, 0, 'no credit write at all');
+  });
+
+  it('a disposable-domain Google sign-up gets the same refusal as the magic-link path (AC-95 parity)', async () => {
+    const pool = createInMemoryPool();
+    const r = await grantSignupCreditIfEligible(pool, 'nope@mailinator.com', { ...GRANT, proof: 'google_verified' });
+    assert.equal(r.granted, false);
+    assert.equal(r.reason, 'disposable_domain');
+    assert.equal(pool._ledger.length, 0);
+  });
+});

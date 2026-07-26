@@ -52,6 +52,15 @@ export const API_ROUTES: RouteDef[] = [
   { method: 'GET', pattern: '/v1/auth/user', name: 'authUser', auth: 'session' },
   { method: 'POST', pattern: '/v1/auth/signout', name: 'authSignout', auth: 'session' },
   // passkeys (F-18.1 passkey-first) — kysigned does NOT implement WebAuthn; these
+  // ── Google sign-in (F-41, DD-58..62) ────────────────────────────────────
+  // discovery + start + exchange are public (the ceremony IS the auth; the
+  // exchange issues the same session cookie as magic-link/passkey verify).
+  // link (Connect Google) attaches an identity to the CALLER's account, so it
+  // requires the session whose stored run402 token becomes the upstream Bearer.
+  { method: 'GET', pattern: '/v1/auth/methods', name: 'authMethods', auth: 'public' },
+  { method: 'POST', pattern: '/v1/auth/google/start', name: 'googleStart', auth: 'public' },
+  { method: 'POST', pattern: '/v1/auth/google/exchange', name: 'googleExchange', auth: 'public' },
+  { method: 'POST', pattern: '/v1/auth/google/link', name: 'googleLink', auth: 'session' },
   // proxy to run402's `/auth/v1/passkeys/*` (run402 owns the relying-party logic).
   // login/* is public (the ceremony IS the auth; verify issues the session
   // cookie); register/list/delete are session-authed (the session's run402 token
