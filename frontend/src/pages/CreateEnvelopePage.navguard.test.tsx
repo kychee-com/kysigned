@@ -144,3 +144,59 @@ describe('CreateEnvelopePage — navigation guard (F-025)', () => {
     expect(confirmSpy).not.toHaveBeenCalled();
   });
 });
+
+describe('CreateEnvelopePage — the Google ceremony is a deliberate navigation, not an escape (F-41.6)', () => {
+  let confirmSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    apiPostMock.mockReset();
+    apiGetMock.mockReset();
+    sessionStorage.clear();
+    authHolder.current = { user: null, loading: false, refresh: vi.fn(), signOut: vi.fn() };
+    confirmSpy = vi.spyOn(window, 'confirm');
+    apiGetMock.mockImplementation(async (path: string) => {
+      if (path === '/v1/auth/methods') return { google: true };
+      throw new Error(`unexpected apiGet ${path}`);
+    });
+    apiPostMock.mockImplementation(async (path: string) => {
+      if (path === '/v1/envelope/preflight') return { ok: true };
+      if (path === '/v1/pending-send') return { draft_id: 'ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34.the-secret-half-abcdef' };
+      if (path === '/v1/auth/google/start') return { authorization_url: 'https://accounts.google.com/x' };
+      throw new Error(`unexpected apiPost ${path}`);
+    });
+  });
+  afterEach(() => {
+    confirmSpy.mockRestore();
+  });
+
+  // Barry's live report, human pass 2026-07-26: clicking "Continue with Google"
+  // at the send gate raised the browser's "Leave site? Changes that you made may
+  // not be saved." dialog. That warning is both alarming AND false — the draft
+  // was committed to the service moments earlier, which is the entire point of
+  // F-40/F-41.6. The ceremony is OUR navigation, the same class as the send's own
+  // result navigation, so the guard must yield to it exactly the same way.
+  it('leaving for Google does NOT arm beforeunload — the draft is already saved server-side', async () => {
+    const { container } = renderApp();
+    pickFile(container);
+    fireEvent.change(screen.getAllByPlaceholderText('e.g., Jane Smith')[0]!, { target: { value: 'Alice Doe' } });
+    fireEvent.change(screen.getAllByPlaceholderText('jane.smith@example.com')[0]!, { target: { value: 'alice@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: /send for signing/i }));
+    await screen.findByTestId('signin-screen');
+
+    // Before the ceremony the draft is unsaved — the guard is correctly armed.
+    const armed = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(armed);
+    expect(armed.defaultPrevented).toBe(true);
+
+    fireEvent.click(await screen.findByTestId('signin-google'));
+    await waitFor(() =>
+      expect(apiPostMock.mock.calls.some(([p]) => p === '/v1/auth/google/start')).toBe(true),
+    );
+
+    // Once the draft is committed and we are leaving for Google, the warning
+    // would be a lie: no confirm, no beforeunload block.
+    const leaving = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(leaving);
+    expect(leaving.defaultPrevented).toBe(false);
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+});

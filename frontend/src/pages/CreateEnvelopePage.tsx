@@ -596,10 +596,22 @@ export function CreateEnvelopePage() {
    * path: a storage failure starts no ceremony and keeps the filled-in form.
    */
   const storeDraftForCeremony = async (): Promise<string> => {
-    if (draftHandle) return draftHandle // a restored draft is already stored
+    // The ceremony LEAVES this page (a same-tab redirect to Google), so the
+    // nav guard must yield to it exactly as it yields to the send's own result
+    // navigation (F-025's allowNavRef). Otherwise the browser raises "Leave
+    // site? Changes that you made may not be saved." on the happy path — both
+    // alarming and FALSE, since the draft is committed to the service on the
+    // very next line, which is the whole point of F-40/F-41.6. Flipped only
+    // AFTER a successful store: if the store throws we stay here with a real
+    // unsaved draft, and the guard must still protect it.
+    if (draftHandle) {
+      allowNavRef.current = true
+      return draftHandle // a restored draft is already stored
+    }
     const payload = heldPayloadRef.current ?? (await buildPayload())
     const { draft_id } = await apiPost<{ draft_id: string }>('/v1/pending-send', { ceremony: true, ...payload })
     setDraftHandle(draft_id)
+    allowNavRef.current = true
     return draft_id
   }
 
