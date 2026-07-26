@@ -15,7 +15,13 @@ import { useEffect, useRef, useState } from 'react';
 import { telemetryEvent, telemetryEventOnce } from '../lib/telemetry';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { apiPost } from '../lib/api';
-import { friendlySignInError, GENERIC_ERROR, SIGNIN_SEND_FAILED, SIGNIN_THROTTLED } from '../lib/friendlyError';
+import { friendlySignInError, friendlyGoogleError, GENERIC_ERROR, GOOGLE_FAILED, SIGNIN_SEND_FAILED, SIGNIN_THROTTLED } from '../lib/friendlyError';
+import {
+  fetchAuthMethods,
+  startGoogleSignIn,
+  readGoogleHash,
+  takeGoogleDraftStash,
+} from './google';
 import { readAttributionForSubmit } from '../lib/attribution';
 import { isValidEmail } from '../lib/validateEmail';
 import { hardNavigate } from '../lib/hardNavigate';
@@ -64,6 +70,14 @@ interface SignInScreenProps {
   /** F-40 — prefill for a resend on a restored draft (AC-240): the address is
    *  already known, so nobody retypes what they already gave. */
   initialEmail?: string;
+  /**
+   * F-41.6 — the send gate's Google path has no address at gate time, so the
+   * draft is stored CEREMONY-bound (no email) immediately before the ceremony
+   * starts; the returned handle rides the ceremony server-side and the claim
+   * binds the establishing session's address (DD-59). Absent on the deliberate
+   * and protected-page gates (no draft to hold).
+   */
+  prepareCeremonyDraft?: () => Promise<string>;
 }
 
 /** F-40 — where a landing tab goes once the token has been exchanged. */
@@ -80,6 +94,7 @@ export function SignInScreen({
   draftId,
   prepareDraft,
   initialEmail,
+  prepareCeremonyDraft,
 }: SignInScreenProps) {
   const { user, refresh } = useAuth();
   const location = useLocation();
@@ -93,7 +108,99 @@ export function SignInScreen({
   // passkey button is needed); false = no autofill → show the manual passkey link.
   const [autofillAvailable, setAutofillAvailable] = useState<boolean | null>(null);
   const conditionalStarted = useRef(false);
+  // F-41.1 — the platform's provider answer; null while probing, and the button
+  // renders only on an explicit true (platform-off forks get the email-only gate).
+  const [googleAvailable, setGoogleAvailable] = useState<boolean | null>(null);
+  const [googleStarting, setGoogleStarting] = useState(false);
   const emailValid = isValidEmail(emailInput);
+
+  // F-41.1 — feature-detect the Google option (server-cached; failure = false).
+  useEffect(() => {
+    let cancelled = false;
+    void fetchAuthMethods().then((m) => {
+      if (!cancelled) setGoogleAvailable(m.google);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // F-41 — the same-tab Google landing: the callback hash (`#code`/`#error` +
+  // the ceremony id) beside the magic link's `?token=`. Consumed exactly once
+  // (the hash is stripped immediately, so a refresh cannot replay it).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const parsed = readGoogleHash(window.location.hash);
+    if (!parsed) return;
+    const clean = new URL(window.location.href);
+    clean.hash = '';
+    window.history.replaceState({}, '', clean.toString());
+
+    if (parsed.kind === 'error') {
+      // F-41.6 / AC-252 — a failed or refused ceremony with a held draft puts
+      // the visitor back in front of their own document (the F-40.3 restore);
+      // without one, the gate explains in plain words and stays usable.
+      const stashed = takeGoogleDraftStash();
+      if (stashed) {
+        hardNavigate(
+          `/dashboard/create?draft=${encodeURIComponent(stashed)}&signin_failed=1&reason=${encodeURIComponent(parsed.error)}`,
+        );
+        return;
+      }
+      setError(friendlyGoogleError(parsed.error));
+      return;
+    }
+
+    setExchanging(true);
+    apiPost<{
+      ok?: boolean;
+      email?: string;
+      linked?: boolean;
+      claim?: { status: number; envelope_id?: string; already_sent?: boolean };
+    }>('/v1/auth/google/exchange', { code: parsed.code, ceremony: parsed.ceremony })
+      .then((result) => {
+        if (result.linked) {
+          // Connect-Google round trip: back to Sign-in methods, connected.
+          hardNavigate('/account/passkeys?linked=1');
+          return;
+        }
+        if (!result.ok || !result.email) {
+          setError(GENERIC_ERROR);
+          setExchanging(false);
+          return;
+        }
+        broadcastAuthEvent({ type: 'signed-in', email: result.email });
+        const claim = result.claim;
+        if (claim?.envelope_id) {
+          // The ceremony's held draft was claimed and sent (AC-251) — land on it.
+          takeGoogleDraftStash();
+          hardNavigate(`/dashboard/envelope/${encodeURIComponent(claim.envelope_id)}`);
+          return;
+        }
+        if (claim && claim.status !== 200) {
+          // Signed in, but the send was refused (no credit, allowlist — F-39.4):
+          // the editor's standard restored-draft path owns what happens next.
+          const stashed = takeGoogleDraftStash();
+          if (stashed) {
+            hardNavigate(`/dashboard/create?draft=${encodeURIComponent(stashed)}&claim=1`);
+            return;
+          }
+        }
+        takeGoogleDraftStash();
+        hardNavigate('/dashboard');
+      })
+      .catch(() => {
+        const stashed = takeGoogleDraftStash();
+        if (stashed) {
+          hardNavigate(
+            `/dashboard/create?draft=${encodeURIComponent(stashed)}&signin_failed=1&reason=google`,
+          );
+          return;
+        }
+        setError(GOOGLE_FAILED);
+        setExchanging(false);
+      });
+  }, []);
 
   // F-38.3 (AC-216) — the sign-in prompt became visible. Once per page load
   // (eventOnce), naming the trigger; config-gated inside the module.
@@ -237,6 +344,33 @@ export function SignInScreen({
     // automatically — the user explicitly chose passkey and may want to retry
     // rather than receive a magic-link email they didn't ask for.
     setError(result.error || 'Passkey sign-in failed. Try again or use the email sign-in link.');
+  };
+
+  // F-41.1 — the Google path: the ceremony leaves this page (same-tab redirect),
+  // so a send-gate draft is committed FIRST (ceremony-bound, DD-59) exactly like
+  // the email path stores before its link goes out. Fail closed: no draft
+  // stored → no ceremony started → the visitor keeps their filled-in form.
+  const attemptGoogle = async () => {
+    if (googleStarting) return;
+    telemetryEvent('signin_google', telemetryTrigger);
+    setError('');
+    setGoogleStarting(true);
+    try {
+      let handle = draftId;
+      if (!handle && prepareCeremonyDraft) {
+        handle = await prepareCeremonyDraft();
+      }
+      const attribution = readAttributionForSubmit();
+      const url = await startGoogleSignIn({
+        trigger: telemetryTrigger,
+        ...(handle ? { draftHandle: handle } : {}),
+        ...(attribution ? { attribution } : {}),
+      });
+      hardNavigate(url);
+    } catch {
+      setError(friendlyGoogleError('auth_google_unavailable'));
+      setGoogleStarting(false);
+    }
   };
 
   const requestMagicLink = async () => {
@@ -387,6 +521,33 @@ export function SignInScreen({
             >
               Sign in with a passkey instead
             </button>
+          )}
+
+          {/* F-41.1 (AC-244) — the Google option, on every arrival of this one
+              screen, rendered only when the PLATFORM reports it available; a
+              platform-off fork gets the email-only gate with nothing dangling. */}
+          {googleAvailable === true && (
+            <>
+              <div className="flex items-center gap-3 text-xs text-gray-400" aria-hidden="true">
+                <span className="flex-1 h-px bg-gray-200" />
+                or
+                <span className="flex-1 h-px bg-gray-200" />
+              </div>
+              <button
+                onClick={attemptGoogle}
+                disabled={googleStarting}
+                className="w-full min-h-[44px] flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium border border-gray-300 bg-white text-gray-900 hover:bg-gray-50 active:bg-gray-100 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                data-testid="signin-google"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 48 48" aria-hidden="true">
+                  <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+                  <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+                  <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+                  <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+                </svg>
+                Continue with Google
+              </button>
+            </>
           )}
 
           {/* F-39.6 / AC-228 — the gate answers the fear before the field:

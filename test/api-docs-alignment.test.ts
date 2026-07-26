@@ -79,6 +79,13 @@ const EXCLUDED_ENDPOINTS = [
   'POST /v1/auth/passkeys/register/verify',
   'GET /v1/auth/passkeys',
   'DELETE /v1/auth/passkeys/:id',
+  // F-41 Google sign-in — a BROWSER redirect ceremony (Google's consent screen
+  // cannot be driven by an agent), same UI-internal class as the passkey
+  // ceremony above. Agents authenticate with ksk_ bearer keys (F-30.1).
+  'GET /v1/auth/methods',
+  'POST /v1/auth/google/start',
+  'POST /v1/auth/google/exchange',
+  'POST /v1/auth/google/link',
   // Internal inbound-mail webhook (run402 signature-gated).
   'POST /v1/webhooks/inbound',
   // kysigned.com-proprietary billing (the operator's private function); not in the forkable public API:

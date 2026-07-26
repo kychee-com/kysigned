@@ -325,6 +325,7 @@ describe('AdminConsolePage — Funnel tab (F-38.6)', () => {
     by_campaign: { summer_launch: [55, 22, 18, 12, 8, 8, 5, 4], none: [45, 18, 12, 8, 4, 4, 3, 3] },
     by_country: { IL: [80, 30, 25, 15, 10, 10, 6, 5], US: [20, 10, 5, 5, 2, 2, 2, 2] },
     by_device: { mobile: [70, 20, 12, 6, 3, 3, 2, 1], desktop: [30, 20, 18, 14, 9, 9, 6, 6] },
+    by_method: { magic_link: [0, 0, 0, 0, 0, 0, 0, 1], google: [0, 0, 0, 0, 0, 0, 0, 2] },
     by_source_device: { 'paid|mobile': [55, 15, 8, 4, 2, 2, 1, 1], 'direct|desktop': [25, 18, 16, 12, 8, 8, 6, 6] },
     home_clicks: { 'cta_create:hero': 33, 'other:faq': 9 },
   };
@@ -349,6 +350,8 @@ describe('AdminConsolePage — Funnel tab (F-38.6)', () => {
     expect(screen.getByTestId('admin-funnel-countries')).toHaveTextContent('IL');
     // 0.62.0 — the device split and the source×device cross (paid×mobile isolable).
     expect(screen.getByTestId('admin-funnel-devices')).toHaveTextContent('mobile');
+    // F-41.5 (AC-250) — the sign-in method split renders beside the others.
+    expect(screen.getByTestId('admin-funnel-methods')).toHaveTextContent('google');
     expect(screen.getByTestId('admin-funnel-source-devices')).toHaveTextContent('paid|mobile');
     expect(screen.getByTestId('admin-funnel-home-clicks')).toHaveTextContent('cta_create:hero');
     // The window selector drives the days param.

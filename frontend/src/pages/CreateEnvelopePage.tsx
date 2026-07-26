@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ApiError, apiGet, apiPatch, apiPost, formatUsd, type CreditBalance } from '../lib/api'
-import { friendlyCreateError, friendlyRestoreError, RESTORE_LINK_FAILED, SESSION_EXPIRED } from '../lib/friendlyError'
+import { friendlyCreateError, friendlyGoogleError, friendlyRestoreError, RESTORE_LINK_FAILED, SESSION_EXPIRED } from '../lib/friendlyError'
 import { isPdfTooLarge, pdfTooLargeMessage } from '../lib/pdfSize'
 import { useAuth } from '../auth/auth-core'
 import { SignInScreen } from '../auth/SignInScreen'
@@ -9,6 +9,7 @@ import { trackEvent, GA_EVENTS } from '../lib/analytics'
 import { telemetryEvent, telemetryEventOnce } from '../lib/telemetry'
 import { getOperatorConfig } from '../config/operator'
 import { hasUnsentDraft, DRAFT_LEAVE_WARNING } from './createEnvelopeDraft'
+import { takeGoogleDraftStash } from '../auth/google'
 
 interface SignerInput {
   email: string
@@ -52,6 +53,9 @@ function readHandover(search: string) {
     draftId: draft && /^ps_[0-9a-f-]{36}\.[A-Za-z0-9_-]{20,64}$/.test(draft) ? draft : null,
     claim: params.get('claim') === '1',
     signInFailed: params.get('signin_failed') === '1',
+    // F-41.6 — a Google ceremony failure names its code so the restore notice
+    // can give the specific next step (e.g. the linking guidance, AC-247).
+    failReason: params.get('reason'),
   }
 }
 
@@ -111,7 +115,9 @@ export function CreateEnvelopePage() {
   // The bound address, so a resend prefills what the visitor already gave.
   const [restoredEmail, setRestoredEmail] = useState('')
   // Why this page is showing a restored document rather than an empty editor.
-  const [restoreNotice, setRestoreNotice] = useState(handover.signInFailed ? RESTORE_LINK_FAILED : '')
+  const [restoreNotice, setRestoreNotice] = useState(
+    handover.signInFailed ? (handover.failReason ? friendlyGoogleError(handover.failReason) : RESTORE_LINK_FAILED) : '',
+  )
   // The composing tab's ending: another browser claimed the draft and sent it.
   const [sentElsewhere, setSentElsewhere] = useState<string | null>(null)
   const claimFiredRef = useRef(false)
@@ -283,6 +289,19 @@ export function CreateEnvelopePage() {
         : [emptySigner()],
     )
   }
+
+  // F-41.6 (AC-252) — the Back-from-Google case: the visitor abandoned the
+  // ceremony (browser Back, closed the chooser), so this tab re-mounts the
+  // editor with NO ?draft — but the stash still holds the ceremony's handle.
+  // Re-enter through the standard restore path so their filled-in document
+  // comes back instead of an empty form. Single-use: the stash is cleared.
+  useEffect(() => {
+    if (handover.draftId) return
+    const stashed = takeGoogleDraftStash()
+    if (!stashed) return
+    navigate(`/dashboard/create?draft=${encodeURIComponent(stashed)}`, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // F-40.3 (AC-240) — this tab landed from the sign-in email with a draft handle.
   // Bring the document back BEFORE deciding what to do with it, so both outcomes
@@ -570,6 +589,20 @@ export function CreateEnvelopePage() {
     return draft_id
   }
 
+  /**
+   * F-41.6 — the Google path stores the SAME draft with no address: the
+   * ceremony's claim binds the establishing session's address (DD-59). Stored
+   * immediately before the ceremony starts, same fail-closed rule as the email
+   * path: a storage failure starts no ceremony and keeps the filled-in form.
+   */
+  const storeDraftForCeremony = async (): Promise<string> => {
+    if (draftHandle) return draftHandle // a restored draft is already stored
+    const payload = heldPayloadRef.current ?? (await buildPayload())
+    const { draft_id } = await apiPost<{ draft_id: string }>('/v1/pending-send', { ceremony: true, ...payload })
+    setDraftHandle(draft_id)
+    return draft_id
+  }
+
   /** F-40.4 — save a restored draft's edits before anything acts on it. */
   const saveRestoredEdits = async (): Promise<void> => {
     if (!draftHandle || !isRestored) return
@@ -673,6 +706,7 @@ export function CreateEnvelopePage() {
           telemetryTrigger="send"
           onSignedIn={handleGateSignedIn}
           prepareDraft={storeDraftForLink}
+          prepareCeremonyDraft={storeDraftForCeremony}
           {...(draftHandle ? { draftId: draftHandle } : {})}
           {...(restoredEmail ? { initialEmail: restoredEmail } : {})}
         />

@@ -8,7 +8,7 @@
  *   - Signed out: primary `Sign in` button (links to `/?intent=signin&next=<path>`).
  *     Hides Dashboard from the centered cluster — unauthenticated visitors
  *     shouldn't be invited to land on the sign-in form via nav.
- *   - Signed in: `{email ▾}` dropdown with Dashboard / Account / Passkeys /
+ *   - Signed in: `{email ▾}` dropdown with Dashboard / Account / Sign-in methods /
  *     Sign out. Dashboard is also added to the right edge of the centered
  *     cluster (per F11.9). Sign out calls AuthContext.signOut() which POSTs
  *     /v1/auth/signout and broadcasts signed-out.
@@ -143,7 +143,7 @@ export function AppHeader() {
                     className="block px-3 py-1.5 hover:bg-gray-50"
                     onClick={() => setMenuOpen(false)}
                   >
-                    Passkeys
+                    Sign-in methods
                   </Link>
                   <Link
                     to="/account/api-keys"
@@ -224,7 +224,7 @@ export function AppHeader() {
                   {/* The signed-in email lives INSIDE the menu, not in the bar. */}
                   <div className="px-3 py-1 text-xs text-gray-500 font-mono truncate" title={user.email}>{user.email}</div>
                   <Link to="/dashboard" role="menuitem" className="block px-3 py-2 hover:bg-gray-50 text-gray-800 font-medium" onClick={closeMobile}>Dashboard</Link>
-                  <Link to="/account/passkeys" role="menuitem" className={mobileItem} onClick={closeMobile}>Passkeys</Link>
+                  <Link to="/account/passkeys" role="menuitem" className={mobileItem} onClick={closeMobile}>Sign-in methods</Link>
                   <Link to="/account/api-keys" role="menuitem" className={mobileItem} onClick={closeMobile}>API keys</Link>
                   <SignOutMenuItem testId="header-signout-mobile" onAfter={closeMobile} />
                 </>

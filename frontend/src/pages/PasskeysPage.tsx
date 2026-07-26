@@ -9,8 +9,11 @@
  * anonymous visitors.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { apiDelete, apiGet } from '../lib/api';
+import { apiDelete, apiGet, apiPost } from '../lib/api';
 import { passkeysSupported, registerPasskey } from '../auth/passkey';
+import { fetchAuthMethods } from '../auth/google';
+import { GOOGLE_UNAVAILABLE } from '../lib/friendlyError';
+import { hardNavigate } from '../lib/hardNavigate';
 
 interface PasskeyRow {
   id: string;
@@ -27,6 +30,50 @@ export function PasskeysPage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [newLabel, setNewLabel] = useState('');
   const [adding, setAdding] = useState(false);
+  // F-41.4 — the Google row: platform availability + this account's link state
+  // (the ?identities=1 opt-in — only THIS page pays the extra upstream hop).
+  const [googleAvailable, setGoogleAvailable] = useState(false);
+  const [googleConnected, setGoogleConnected] = useState<boolean | null>(null);
+  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const justLinked =
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('linked') === '1';
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const m = await fetchAuthMethods();
+      if (cancelled || !m.google) return;
+      setGoogleAvailable(true);
+      try {
+        const u = await apiGet<{ google_connected?: boolean; google_email?: string }>('/v1/auth/user?identities=1');
+        if (cancelled) return;
+        setGoogleConnected(u.google_connected === true);
+        setGoogleEmail(u.google_email ?? null);
+      } catch {
+        if (!cancelled) setGoogleConnected(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // F-41.4 — Connect Google: the server starts the link ceremony with the
+  // session's own run402 token (never exposed here); we just go where it says.
+  const connectGoogle = async () => {
+    if (connecting) return;
+    setConnecting(true);
+    setError('');
+    try {
+      const r = await apiPost<{ authorization_url?: string }>('/v1/auth/google/link', {});
+      if (!r.authorization_url) throw new Error('no authorization_url');
+      hardNavigate(r.authorization_url);
+    } catch {
+      setError(GOOGLE_UNAVAILABLE);
+      setConnecting(false);
+    }
+  };
 
   const load = useCallback(async () => {
     setError('');
@@ -74,17 +121,56 @@ export function PasskeysPage() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8" data-testid="passkeys-page">
-      <h1 className="text-2xl font-semibold mb-2">Passkeys</h1>
-      <p className="text-sm text-gray-500 mb-6">
-        Passkeys let you sign in with Touch ID, Face ID, or a security key — no email
-        roundtrip. Add one to make next sign-in one tap. Delete the ones you no longer use.
-      </p>
+      {/* F-41.4 — this page is the account's SIGN-IN METHODS home: passkeys as
+          before, plus the Google connection. The email link needs no row: it is
+          the standing method every account always has. */}
+      <h1 className="text-2xl font-semibold mb-2">Sign-in methods</h1>
 
       {error && (
         <div className="mb-4 px-4 py-3 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm">
           {error}
         </div>
       )}
+
+      {googleAvailable && (
+        <div className="mb-8 p-4 border border-gray-200 rounded-lg bg-white" data-testid="google-row">
+          <h2 className="text-sm font-semibold mb-1">Google</h2>
+          {justLinked && googleConnected && (
+            <p
+              className="mb-2 px-3 py-2 rounded-lg border border-green-200 bg-green-50 text-green-800 text-sm"
+              data-testid="google-linked-note"
+            >
+              Google is connected. From now on you can sign in with it directly.
+            </p>
+          )}
+          {googleConnected === true ? (
+            <p className="text-sm text-gray-600">
+              Connected as <span className="font-medium">{googleEmail ?? 'your Google account'}</span>. You can
+              sign in with Google or with your email link.
+            </p>
+          ) : (
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm text-gray-600">
+                Connect your Google account to sign in with one click. Your email link keeps working either way.
+              </p>
+              <button
+                onClick={connectGoogle}
+                disabled={connecting || googleConnected === null}
+                className="shrink-0 px-4 py-2 min-h-[44px] border border-gray-300 bg-white text-gray-900 rounded-lg text-sm font-medium hover:bg-gray-50 active:bg-gray-100 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                data-testid="google-connect"
+              >
+                {connecting ? 'Opening Google…' : 'Connect Google'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      <h2 className="text-lg font-semibold mb-2">Passkeys</h2>
+      <p className="text-sm text-gray-500 mb-6">
+        Passkeys let you sign in with Touch ID, Face ID, or a security key — no email
+        roundtrip. Add one to make next sign-in one tap. Delete the ones you no longer use.
+      </p>
 
       {/* Add new passkey */}
       {passkeysSupported() ? (

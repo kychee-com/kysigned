@@ -77,6 +77,40 @@ export const SIGNIN_THROTTLED =
 export const SESSION_EXPIRED =
   'Your sign-in expired before we could send. Sign in again and your document sends automatically. Nothing was lost.';
 
+// ── F-41 (AC-247/AC-252) — Google sign-in copy. Plain words, next step named,
+// no status code, no vendor reason string (the F-40.3 language bar). ──────────
+
+/** The platform refuses a same-email Google sign-in until the account links
+ *  Google (F-41.4): tell them the one path that works, in their own words. */
+export const GOOGLE_ACCOUNT_EXISTS =
+  'This email already has an account here. Sign in with your email link this once, then connect Google from Sign-in methods, and Google will work from then on.';
+
+/** A Google identity can belong to one account only (no silent switching). */
+export const GOOGLE_IDENTITY_TAKEN =
+  'That Google account is already connected to a different sign-in here. Choose another Google account, or use your email link.';
+
+export const GOOGLE_UNAVAILABLE =
+  'Google sign-in is not available right now. Use the email sign-in link instead.';
+
+export const GOOGLE_FAILED =
+  'Google sign-in did not complete. You can try again, or use the email sign-in link.';
+
+/** Map a callback `#error=<code>` (or a start/exchange failure) to copy. */
+export function friendlyGoogleError(code: string | null | undefined): string {
+  switch (code) {
+    case 'account_exists_requires_link':
+      return GOOGLE_ACCOUNT_EXISTS;
+    case 'identity_already_linked':
+      return GOOGLE_IDENTITY_TAKEN;
+    case 'domain_not_allowed':
+      return 'This service is restricted to approved email domains. Sign in with your work Google account.';
+    case 'auth_google_unavailable':
+      return GOOGLE_UNAVAILABLE;
+    default:
+      return GOOGLE_FAILED;
+  }
+}
+
 /** Map a thrown token-exchange failure to actionable sign-in copy. */
 export function friendlySignInError(e: unknown): string {
   if (e instanceof ApiError) {
