@@ -123,21 +123,45 @@ describe('the gate stores the draft CEREMONY-bound for the Google path (AC-251)'
   });
 });
 
-describe('Back-from-Google re-enters the restore (AC-252)', () => {
-  it('a mount with a stashed handle and no ?draft navigates to the standard restore, single-use', async () => {
+describe('Back-from-Google returns the FILLED-IN document (AC-252)', () => {
+  // Barry's walk-3 human pass, 2026-07-26: pressing browser Back at Google's
+  // screen landed on an EMPTY editor. Root cause: `handover` is read ONCE at
+  // mount, so re-entering via a router navigate() to `?draft=…` changed the URL
+  // without remounting — the restore effect keyed on handover.draftId never
+  // fired. The first version of this test asserted only that navigate() was
+  // CALLED, which is why it passed while the feature was broken: it verified the
+  // mechanism, never the outcome. These tests assert the OUTCOME — the visitor's
+  // document is actually on screen.
+  it('a mount with a stashed handle and no ?draft restores the document IN PLACE', async () => {
     sessionStorage.setItem(GOOGLE_DRAFT_STASH_KEY, HANDLE);
     renderPage();
-    await waitFor(() =>
-      expect(navigateMock).toHaveBeenCalledWith(`/dashboard/create?draft=${encodeURIComponent(HANDLE)}`, { replace: true }),
-    );
+    // The document identity and its signer are back on screen — the whole point.
+    expect(await screen.findByDisplayValue('contract')).toBeTruthy();
+    expect(await screen.findByDisplayValue('alice@example.com')).toBeTruthy();
+    // Fetched through the standard restore door, by the stashed handle.
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith(`/v1/pending-send/${HANDLE}`));
+  });
+
+  it('explains why the document is back, in plain words naming no code or vendor', async () => {
+    sessionStorage.setItem(GOOGLE_DRAFT_STASH_KEY, HANDLE);
+    renderPage();
+    const notice = await screen.findByTestId('restore-notice');
+    expect(notice.textContent).toMatch(/document is (still )?(saved|here)/i);
+    expect(notice.textContent).not.toMatch(/google|run402|http|\b[45]\d\d\b/i);
+  });
+
+  it('is single-use: the stash is cleared once consumed', async () => {
+    sessionStorage.setItem(GOOGLE_DRAFT_STASH_KEY, HANDLE);
+    renderPage();
+    await screen.findByDisplayValue('contract');
     expect(sessionStorage.getItem(GOOGLE_DRAFT_STASH_KEY)).toBeNull();
   });
 
-  it('a mount that already has ?draft leaves the stash alone (the landing owns it)', async () => {
+  it('a mount that already has ?draft restores from the URL and leaves no stash behind', async () => {
     sessionStorage.setItem(GOOGLE_DRAFT_STASH_KEY, HANDLE);
     searchHolder.current = `?draft=${HANDLE}`;
     renderPage();
-    await screen.findByText(/contract/);
+    expect(await screen.findByDisplayValue('contract')).toBeTruthy();
     expect(navigateMock).not.toHaveBeenCalledWith(expect.stringContaining('draft='), expect.anything());
   });
 });

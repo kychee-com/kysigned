@@ -92,6 +92,16 @@ export const GOOGLE_IDENTITY_TAKEN =
 export const GOOGLE_UNAVAILABLE =
   'Google sign-in is not available right now. Use the email sign-in link instead.';
 
+/**
+ * F-41.6 (AC-252) — the visitor left for the sign-in ceremony and came back
+ * without finishing (browser Back at the provider's screen). Nothing failed, so
+ * this is a plain statement of where they are, not an error: their document is
+ * on the service and the next step is one button. Names no status code and no
+ * vendor.
+ */
+export const CEREMONY_ABANDONED_NOTICE =
+  'You came back before finishing sign-in. Your document is still here, exactly as you left it. Sign in and it sends.';
+
 export const GOOGLE_FAILED =
   'Google sign-in did not complete. You can try again, or use the email sign-in link.';
 

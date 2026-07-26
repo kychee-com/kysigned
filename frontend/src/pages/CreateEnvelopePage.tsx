@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ApiError, apiGet, apiPatch, apiPost, formatUsd, type CreditBalance } from '../lib/api'
-import { friendlyCreateError, friendlyGoogleError, friendlyRestoreError, RESTORE_LINK_FAILED, SESSION_EXPIRED } from '../lib/friendlyError'
+import { CEREMONY_ABANDONED_NOTICE, friendlyCreateError, friendlyGoogleError, friendlyRestoreError, RESTORE_LINK_FAILED, SESSION_EXPIRED } from '../lib/friendlyError'
 import { isPdfTooLarge, pdfTooLargeMessage } from '../lib/pdfSize'
 import { useAuth } from '../auth/auth-core'
 import { SignInScreen } from '../auth/SignInScreen'
@@ -9,7 +9,7 @@ import { trackEvent, GA_EVENTS } from '../lib/analytics'
 import { telemetryEvent, telemetryEventOnce } from '../lib/telemetry'
 import { getOperatorConfig } from '../config/operator'
 import { hasUnsentDraft, DRAFT_LEAVE_WARNING } from './createEnvelopeDraft'
-import { takeGoogleDraftStash } from '../auth/google'
+import { peekGoogleDraftStash, takeGoogleDraftStash } from '../auth/google'
 
 interface SignerInput {
   email: string
@@ -108,7 +108,15 @@ export function CreateEnvelopePage() {
   // ── F-40: the pending send ────────────────────────────────────────────────
   // The handle of the draft this page is working on. Set when the gate stores a
   // guest draft, or read from the URL when this tab IS the magic-link landing.
-  const [draftHandle, setDraftHandle] = useState<string | null>(handover.draftId)
+  // F-41.6 (AC-252) — read at mount, non-destructively: when this load carries no
+  // `?draft`, a stashed ceremony handle means the visitor came back from Google
+  // without finishing, and their committed draft is what should be on screen.
+  const [ceremonyStash] = useState<string | null>(() =>
+    handover.draftId ? null : peekGoogleDraftStash(),
+  )
+  /** The draft this load restores, from the URL (email path) or the stash (Google). */
+  const restoreHandle = handover.draftId ?? ceremonyStash
+  const [draftHandle, setDraftHandle] = useState<string | null>(restoreHandle)
   // A restored draft's document: the file is immutable for the life of the
   // pending send, so we carry its IDENTITY (name, size) and never its bytes.
   const [restoredFile, setRestoredFile] = useState<{ name: string; size: number } | null>(null)
@@ -290,31 +298,34 @@ export function CreateEnvelopePage() {
     )
   }
 
-  // F-41.6 (AC-252) — the Back-from-Google case: the visitor abandoned the
-  // ceremony (browser Back, closed the chooser), so this tab re-mounts the
-  // editor with NO ?draft — but the stash still holds the ceremony's handle.
-  // Re-enter through the standard restore path so their filled-in document
-  // comes back instead of an empty form. Single-use: the stash is cleared.
-  useEffect(() => {
-    if (handover.draftId) return
-    const stashed = takeGoogleDraftStash()
-    if (!stashed) return
-    navigate(`/dashboard/create?draft=${encodeURIComponent(stashed)}`, { replace: true })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
   // F-40.3 (AC-240) — this tab landed from the sign-in email with a draft handle.
-  // Bring the document back BEFORE deciding what to do with it, so both outcomes
-  // (claim and send, or explain and offer a fresh link) have something to show.
+  // F-41.6 (AC-252) — OR the visitor abandoned the Google ceremony (browser Back
+  // at Google's screen), which re-mounts this editor with NO `?draft` and an
+  // empty form; the sessionStorage stash still holds the ceremony's handle, so
+  // it is the restore target instead.
+  //
+  // Both cases restore IN PLACE. An earlier cut re-entered the ceremony case by
+  // router-navigating to `?draft=…`, which does not work and shipped broken:
+  // `handover` is read ONCE at mount, and a same-route navigate never remounts,
+  // so this effect's dependency never changed and the visitor got a blank editor
+  // (Barry, human pass 2026-07-26). Restoring in place also keeps the handle out
+  // of the URL entirely on this path, which is strictly better for F-40.6.
   useEffect(() => {
-    if (!handover.draftId || restoreFiredRef.current) return
+    if (!restoreHandle || restoreFiredRef.current) return
     restoreFiredRef.current = true
+    // Consume the stash the moment it becomes the restore target: single-use,
+    // exactly like the handle the emailed link carries.
+    if (!handover.draftId) takeGoogleDraftStash()
     let cancelled = false
     void (async () => {
       try {
-        const d = await apiGet<PendingSendView>(`/v1/pending-send/${handover.draftId}`)
+        const d = await apiGet<PendingSendView>(`/v1/pending-send/${restoreHandle}`)
         if (cancelled) return
         applyRestored(d)
+        // An abandoned ceremony leaves no error behind, so say plainly why the
+        // document is on screen — a silent re-fill reads as a glitch. Names no
+        // status code and no vendor (AC-252).
+        if (!handover.draftId && !d.claimed) setRestoreNotice(CEREMONY_ABANDONED_NOTICE)
         // Someone else already sent it — say so instead of offering to send it again.
         if (d.claimed && d.envelope_id) setSentElsewhere(d.envelope_id)
       } catch (e) {
@@ -327,7 +338,7 @@ export function CreateEnvelopePage() {
     return () => {
       cancelled = true
     }
-  }, [handover.draftId])
+  }, [restoreHandle, handover.draftId])
 
   // F-40.2 (AC-239) — the tab that landed FINISHES the job: claim the draft and
   // send it, then land on that envelope. Exactly once, guarded by a ref so no
