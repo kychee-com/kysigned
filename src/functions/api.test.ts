@@ -165,7 +165,7 @@ describe('handleRequest — routing + auth gate', () => {
     assert.equal(((await nonOp.json()) as { code: string }).code, 'auth_operator_scope');
   });
 
-  it('GET /v1/telemetry/summary serves the operator the full funnel — 11 steps incl. the F-39.5 editor steps (rail enabled)', async () => {
+  it('GET /v1/telemetry/summary serves the operator the full funnel — 12 steps incl. the F-39.5 editor + F-41.5 chose-google steps (rail enabled)', async () => {
     const sessionPool = validSessionPool('op@kychee.com');
     const telemetryPool = {
       async query(text: string) {
@@ -187,7 +187,7 @@ describe('handleRequest — routing + auth gate', () => {
     assert.equal(res.status, 200);
     const body = (await res.json()) as { window_days: number; steps: Array<{ step: string; count: number }> };
     assert.equal(body.window_days, 14);
-    assert.equal(body.steps.length, 11); // AC-219 0.61.0 — the F-39.5 editor steps joined the funnel
+    assert.equal(body.steps.length, 12); // AC-219 0.61.0 — the F-39.5 editor steps joined the funnel
     assert.equal(body.steps[0].step, 'landed');
     assert.equal(body.steps[0].count, 1);
   });

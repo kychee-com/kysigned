@@ -607,3 +607,59 @@ describe('F-38.4 — server-recorded funnel steps (send_ok / send_failed / link_
     assert.equal(r.status, 200);
   });
 });
+
+describe('handleAuthUser — linked-identities opt-in (F-41.4 / 73.5)', () => {
+  it('with identities requested, reports the google connection from run402 /auth/v1/user', async () => {
+    const { pool } = fakePool();
+    const f: FImpl = async (url: string) => {
+      if (url.includes('/auth/v1/user')) {
+        return {
+          status: 200, ok: true,
+          json: async () => ({
+            id: 'u1', email: 'owner@example.com', email_verified_at: '2026-07-01T00:00:00Z',
+            identities: [{ provider: 'google', provider_sub: 'g-123', provider_email: 'owner@gmail.com', created_at: '2026-07-20T00:00:00Z' }],
+          }),
+        };
+      }
+      return { status: 404, ok: false, json: async () => ({}) };
+    };
+    const c = ctx(pool, f);
+    // The session's stored run402 token is the upstream Bearer.
+    (pool as unknown as { query: unknown }).query = async (text: string) => {
+      if (/auth_sessions/.test(text) && /SELECT/.test(text)) {
+        return { rows: [{ session_id: 's1', email: 'owner@example.com', run402_access_token: 'at-1', run402_refresh_token: 'rt', access_expires_at: new Date(Date.now() + 3600e3).toISOString() }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    };
+    const r = await handleAuthUser(c, { email: 'owner@example.com', sessionId: 's1' }, { identities: true });
+    assert.equal(r.status, 200);
+    const body = r.body as { google_connected?: boolean; google_email?: string };
+    assert.equal(body.google_connected, true);
+    assert.equal(body.google_email, 'owner@gmail.com');
+  });
+
+  it('without the flag the response is unchanged (no upstream round-trip)', async () => {
+    const { pool } = fakePool();
+    let upstream = 0;
+    const f: FImpl = async () => { upstream++; return { status: 500, ok: false, json: async () => ({}) }; };
+    const r = await handleAuthUser(ctx(pool, f), { email: 'a@x.com', sessionId: 's1' });
+    assert.equal(r.status, 200);
+    assert.equal(upstream, 0, 'ordinary hydration stays one-hop');
+    assert.ok(!('google_connected' in (r.body as Record<string, unknown>)));
+  });
+
+  it('an upstream failure degrades to the plain response, never an error', async () => {
+    const { pool } = fakePool();
+    const f: FImpl = async () => { throw new Error('offline'); };
+    const c = ctx(pool, f);
+    (pool as unknown as { query: unknown }).query = async (text: string) => {
+      if (/auth_sessions/.test(text) && /SELECT/.test(text)) {
+        return { rows: [{ session_id: 's1', email: 'a@x.com', run402_access_token: 'at-1', run402_refresh_token: 'rt', access_expires_at: new Date(Date.now() + 3600e3).toISOString() }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    };
+    const r = await handleAuthUser(c, { email: 'a@x.com', sessionId: 's1' }, { identities: true });
+    assert.equal(r.status, 200);
+    assert.equal((r.body as { google_connected?: boolean }).google_connected, false);
+  });
+});

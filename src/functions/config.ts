@@ -599,7 +599,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
   const telemetryStep = telemetryEnabled
     ? async (
         event: 'send_ok' | 'send_failed' | 'link_opened' | 'session_created',
-        opts?: { paid?: boolean; country?: string; device?: string },
+        opts?: { paid?: boolean; country?: string; device?: string; method?: 'magic_link' | 'google' | 'passkey' },
       ) => {
         try {
           await insertTelemetryEvents(pool, [
@@ -607,7 +607,9 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
               occurredAt: new Date(),
               event,
               page: 'signin',
-              element: null,
+              // F-41.5 — session_created carries the sign-in method here (an
+              // enumerated value, identifying no one); other steps stay null.
+              element: opts?.method ?? null,
               country: opts?.country ?? 'unknown',
               source: opts?.paid === true ? 'paid' : 'unknown',
               // Server steps have no page URL in reach — explicit none (F-38.5).

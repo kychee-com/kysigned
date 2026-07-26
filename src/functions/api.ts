@@ -463,7 +463,9 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
       return json(r.body, r.status, r.setCookies);
     }
     case 'authUser': {
-      const r = await handleAuthUser(deps.authCtx(), { email: actorEmail!, sessionId: actorSessionId! });
+      // F-41.4 — ?identities=1 opts into the linked-identity summary (73.5).
+      const wantIdentities = new URL(req.url).searchParams.get('identities') === '1';
+      const r = await handleAuthUser(deps.authCtx(), { email: actorEmail!, sessionId: actorSessionId! }, { identities: wantIdentities });
       return json(r.body, r.status, r.setCookies);
     }
     case 'authSignout': {

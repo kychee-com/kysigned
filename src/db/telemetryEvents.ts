@@ -89,6 +89,8 @@ export const TELEMETRY_FUNNEL_STEPS: ReadonlyArray<{ step: string; event: string
   { step: 'prompt_shown', event: 'signin_prompt' },
   { step: 'email_touched', event: 'signin_email_focus' },
   { step: 'link_requested', event: 'signin_submit' },
+  // F-41.5 — the Google choice at the gate, parallel to the email request.
+  { step: 'chose_google', event: 'signin_google' },
   { step: 'link_sent', event: 'send_ok' },
   { step: 'link_opened', event: 'link_opened' },
   { step: 'session_created', event: 'session_created' },
@@ -110,6 +112,13 @@ export interface TelemetryFunnelSummary {
    * split that isolates e.g. `paid|mobile`, the funnel this feature exists for.
    */
   by_source_device: Record<string, number[]>;
+  /**
+   * F-41.5 (AC-250) — the sign-in method split (magic_link | google | passkey |
+   * unknown) over the gate-to-session steps. A row's method: session_created
+   * carries it in element; signin_google IS google; the email-mechanics steps
+   * are magic_link by construction; every other row contributes nothing here.
+   */
+  by_method?: Record<string, number[]>;
   /** Home-page per-element click counts (F-38.2's named + catch-all buckets). */
   home_clicks: Record<string, number>;
 }
@@ -122,6 +131,17 @@ interface SummaryRow {
   source: string;
   campaign: string;
   device: string;
+}
+
+/** F-41.5 — which sign-in method a row testifies about (null: not method-bearing). */
+const SIGNIN_METHODS = new Set(['magic_link', 'google', 'passkey']);
+function methodOfRow(row: SummaryRow): string | null {
+  if (row.event === 'session_created') {
+    return row.element && SIGNIN_METHODS.has(row.element) ? row.element : 'unknown';
+  }
+  if (row.event === 'signin_google') return 'google';
+  if (row.event === 'signin_submit' || row.event === 'send_ok' || row.event === 'link_opened') return 'magic_link';
+  return null;
 }
 
 /** True when a row lands the given funnel step. */
@@ -158,6 +178,7 @@ export async function summarizeTelemetry(
   const byCampaign: Record<string, number[]> = {};
   const byDevice: Record<string, number[]> = {};
   const bySourceDevice: Record<string, number[]> = {};
+  const byMethod: Record<string, number[]> = {};
   const homeClicks: Record<string, number> = {};
 
   const bump = (map: Record<string, number[]>, key: string, stepIndex: number) => {
@@ -175,6 +196,8 @@ export async function summarizeTelemetry(
       bump(byCampaign, row.campaign ?? 'none', i);
       bump(byDevice, device, i);
       bump(bySourceDevice, `${row.source}|${device}`, i);
+      const method = methodOfRow(row);
+      if (method) bump(byMethod, method, i);
     }
     if (row.event === 'click' && row.page === 'home' && row.element) {
       homeClicks[row.element] = (homeClicks[row.element] ?? 0) + 1;
@@ -189,6 +212,7 @@ export async function summarizeTelemetry(
     by_campaign: byCampaign,
     by_device: byDevice,
     by_source_device: bySourceDevice,
+    by_method: byMethod,
     home_clicks: homeClicks,
   };
 }

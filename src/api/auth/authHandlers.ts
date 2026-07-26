@@ -16,6 +16,7 @@ import type { DbPool } from '../../db/pool.js';
 import { requestMagicLink, exchangeMagicLinkToken } from './dashboardAuth.js';
 import { startSession, endSession, type SessionConfig, type SessionActor } from './session.js';
 import { getCreatorName } from '../../db/creatorProfiles.js';
+import { getAuthSession } from '../../db/authSessions.js';
 import { grantSignupCreditIfEligible } from '../signupGrant.js';
 import {
   parseAttributionSubmission,
@@ -97,7 +98,7 @@ function riderIsPaid(ctx: AuthHandlerCtx, attribution: unknown): boolean {
 async function recordStep(
   ctx: AuthHandlerCtx,
   event: 'send_ok' | 'send_failed' | 'link_opened' | 'session_created',
-  opts?: { paid?: boolean },
+  opts?: { paid?: boolean; method?: 'magic_link' | 'google' | 'passkey' },
 ): Promise<void> {
   if (!ctx.telemetryStep) return;
   try {
@@ -223,8 +224,9 @@ export async function handleAuthTokenExchange(ctx: AuthHandlerCtx, body: { token
     accessToken: r.accessToken,
     refreshToken: r.refreshToken,
   });
-  // F-38.4 — the session exists: the funnel's last step.
-  await recordStep(ctx, 'session_created');
+  // F-38.4 — the session exists: the funnel's last step. F-41.5 — it names
+  // its method, so the operator's method split can read google beside email.
+  await recordStep(ctx, 'session_created', { method: 'magic_link' });
 
   // F-13.4 / F-18.4 — new-account trial credit. The magic-link click is the
   // mailbox-control proof, and the grant is idempotent + deduped on the
@@ -296,9 +298,47 @@ export async function handleAuthTokenExchange(ctx: AuthHandlerCtx, body: { token
   return { status: 200, body: { ok: true, email, ...(draftId ? { draft_id: draftId } : {}) }, setCookies: [cookie] };
 }
 
-export async function handleAuthUser(ctx: AuthHandlerCtx, actor: SessionActor): Promise<AuthResult> {
+export async function handleAuthUser(
+  ctx: AuthHandlerCtx,
+  actor: SessionActor,
+  opts: { identities?: boolean } = {},
+): Promise<AuthResult> {
   const displayName = await getCreatorName(ctx.pool, actor.email).catch(() => null);
-  return { status: 200, body: { email: actor.email, display_name: displayName ?? undefined } };
+  const base = { email: actor.email, display_name: displayName ?? undefined };
+  if (!opts.identities) return { status: 200, body: base };
+
+  // F-41.4 (73.5) — the sign-in-methods page opts in (`?identities=1`) to the
+  // linked-identity summary from run402's `/auth/v1/user` (its `identities[]`),
+  // using the session's server-held token as the Bearer. Best-effort: an
+  // upstream failure degrades to "not connected", never an error — the page
+  // still renders and Connect still works.
+  let googleConnected = false;
+  let googleEmail: string | undefined;
+  try {
+    const session = await getAuthSession(ctx.pool, actor.sessionId);
+    const bearer = session?.run402_access_token;
+    if (bearer) {
+      const f =
+        (ctx.session.fetchImpl as
+          | ((url: string, init?: { headers?: Record<string, string> }) => Promise<{ status: number; json: () => Promise<unknown> }>)
+          | undefined) ?? ((url: string, init?: RequestInit) => fetch(url, init));
+      const res = await f(`${ctx.session.run402BaseUrl ?? 'https://api.run402.com'}/auth/v1/user`, {
+        headers: { apikey: ctx.session.projectAnonKey, Authorization: `Bearer ${bearer}` },
+      });
+      if (res.status >= 200 && res.status < 300) {
+        const body = (await res.json()) as { identities?: Array<{ provider?: string; provider_email?: string }> };
+        const google = (body.identities ?? []).find((i) => i?.provider === 'google');
+        googleConnected = Boolean(google);
+        googleEmail = google?.provider_email ?? undefined;
+      }
+    }
+  } catch {
+    // degrade to not-connected
+  }
+  return {
+    status: 200,
+    body: { ...base, google_connected: googleConnected, ...(googleEmail ? { google_email: googleEmail } : {}) },
+  };
 }
 
 export async function handleAuthSignout(ctx: AuthHandlerCtx, actor: SessionActor): Promise<AuthResult> {

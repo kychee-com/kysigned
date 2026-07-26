@@ -70,11 +70,11 @@ describe('buildAppDeps — F-38 telemetry gate (fork default OFF)', () => {
   });
 
   it('the enabled authCtx carries telemetryStep storing the identifier-free signin row (F-38.4)', async () => {
-    const queries: Array<{ sql: string }> = [];
+    const queries: Array<{ sql: string; values: unknown[] }> = [];
     const runtime = fakeRuntime();
     (runtime as unknown as { adminDb: unknown }).adminDb = {
-      sql: async (text: string) => {
-        queries.push({ sql: text });
+      sql: async (text: string, values?: unknown[]) => {
+        queries.push({ sql: text, values: values ?? [] });
         return { rows: [], row_count: 1 };
       },
     };
@@ -84,6 +84,12 @@ describe('buildAppDeps — F-38 telemetry gate (fork default OFF)', () => {
     await authCtx.telemetryStep!('send_ok', { paid: true, country: 'IL' });
     const insert = queries.find((q) => /INSERT INTO telemetry_events/i.test(q.sql));
     assert.ok(insert, 'the step must store a telemetry row');
+
+    // F-41.5 (AC-250) — session_created carries the sign-in METHOD in the
+    // element column; a method-less step stores element null, never a guess.
+    await authCtx.telemetryStep!('session_created', { method: 'google' });
+    const withMethod = queries[queries.length - 1]!;
+    assert.ok(withMethod.values.includes('google'), 'the method value reaches the stored row (element column)');
   });
 
   it('a telemetryStep store failure is swallowed (never gates auth)', async () => {

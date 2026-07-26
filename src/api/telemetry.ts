@@ -28,6 +28,8 @@ const BROWSER_EVENTS = new Set([
   'signin_prompt',
   'signin_email_focus',
   'signin_submit',
+  // F-41.5 — the gate's Continue-with-Google click (element = the gate trigger).
+  'signin_google',
   // F-39.5 (0.61.0) — the guest-editor steps, hand-fired (DD-52): first draft
   // interaction and the Send press. Element-less by design so no draft-adjacent
   // label can ride them.

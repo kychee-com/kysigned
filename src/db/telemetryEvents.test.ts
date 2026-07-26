@@ -161,31 +161,32 @@ describe('telemetryEvents — operator funnel summary (F-38.6 / AC-219)', () => 
         ['prompt_shown', 2],
         ['email_touched', 1],
         ['link_requested', 1],
+        ['chose_google', 0],
         ['link_sent', 1],
         ['link_opened', 1],
         ['session_created', 1],
       ],
     );
-    assert.deepEqual(s.by_source.organic, [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert.deepEqual(s.by_source.organic, [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     assert.equal(s.by_source.paid[0], 2);
-    assert.deepEqual(s.by_country.US, [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert.deepEqual(s.by_country.US, [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     assert.equal(s.by_country.IL[0], 2);
     // AC-219 (0.60.0): the campaign split answers "what did campaign X's visitors do".
     assert.equal(s.by_campaign.summer_launch[0], 2);
-    assert.deepEqual(s.by_campaign.spring_promo, [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert.deepEqual(s.by_campaign.spring_promo, [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     assert.deepEqual(s.home_clicks, { 'cta_create:hero': 1, 'cta_create:header': 1, 'other:faq': 1 });
     // AC-233 (0.62.0): the device split, and the source×device cross that isolates
     // e.g. paid×mobile. Two rows here are mobile (organic/US); everything else desktop.
-    assert.deepEqual(s.by_device.mobile, [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert.deepEqual(s.by_device.mobile, [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     assert.equal(s.by_device.desktop[0], 2); // two desktop landings in-window (home + create page_view)
-    assert.deepEqual(s.by_source_device['organic|mobile'], [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert.deepEqual(s.by_source_device['organic|mobile'], [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     assert.equal(s.by_source_device['paid|desktop'][0], 2);
   });
 
   it('an empty window returns zeroed steps, empty splits', async () => {
     const { pool } = seededPool([]);
     const s = await summarizeTelemetry(pool, { windowDays: 7, now: NOW });
-    assert.equal(s.steps.length, 11);
+    assert.equal(s.steps.length, 12);
     assert.ok(s.steps.every((x) => x.count === 0));
     assert.deepEqual(s.by_source, {});
     assert.deepEqual(s.by_campaign, {});
@@ -193,4 +194,32 @@ describe('telemetryEvents — operator funnel summary (F-38.6 / AC-219)', () => 
     assert.deepEqual(s.by_source_device, {});
     assert.deepEqual(s.home_clicks, {});
   });
+
+describe('F-41.5 (73.7) — the chose-Google step + the sign-in method split (AC-250)', () => {
+  it('counts signin_google as its own funnel step and splits gate-to-session by method', async () => {
+    const { pool } = seededPool([
+      r('signin_prompt', { element: 'send', page: 'signin' }),
+      r('signin_google', { element: 'send', page: 'signin' }),
+      r('signin_submit', { page: 'signin' }),
+      r('send_ok', { page: 'signin' }),
+      r('link_opened', { page: 'signin' }),
+      r('session_created', { page: 'signin', element: 'magic_link' }),
+      r('session_created', { page: 'signin', element: 'google' }),
+      // Pre-F-41 rows carry no method — they read unknown, never a guess.
+      r('session_created', { page: 'signin' }),
+    ]);
+    const s = await summarizeTelemetry(pool, { windowDays: 7, now: NOW });
+    const stepCount = (name: string) => s.steps.find((x) => x.step === name)?.count;
+    assert.equal(stepCount('chose_google'), 1, 'the button click is its own funnel step');
+    assert.equal(stepCount('session_created'), 3);
+
+    const stepIndex = (name: string) => s.steps.findIndex((x) => x.step === name);
+    assert.ok(s.by_method, 'the summary carries the method split');
+    assert.equal(s.by_method!.google[stepIndex('chose_google')], 1, 'chose google');
+    assert.equal(s.by_method!.google[stepIndex('session_created')], 1, 'completed via google');
+    assert.equal(s.by_method!.magic_link[stepIndex('link_requested')], 1);
+    assert.equal(s.by_method!.magic_link[stepIndex('session_created')], 1);
+    assert.equal(s.by_method!.unknown[stepIndex('session_created')], 1, 'a methodless historical row reads unknown');
+  });
+});
 });
