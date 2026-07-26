@@ -207,56 +207,6 @@ export async function createCeremonyPendingSend(
 }
 
 /**
- * F-41.6 — claim a CEREMONY-BOUND draft and bind it to the establishing
- * session's address in the same single-winner statement. Authorization is
- * possession of the ceremony-held SECRET (the handle's second half, which only
- * the ceremony row and the composing tab ever held) — the id alone claims
- * nothing, and a wrong secret reads exactly like a draft that does not exist
- * (F-028 parity). Only a still-sentinel row is claimable this way, so an
- * email-bound draft can never be re-bound by a Google session.
- */
-export async function claimCeremonyPendingSend(
-  pool: DbPool,
-  id: string,
-  secret: string,
-  sessionEmail: string,
-  opts: { now?: Date } = {},
-): Promise<ClaimResult> {
-  const now = opts.now ?? new Date();
-  const email = normalizeBoundEmail(sessionEmail);
-  const claimed = await pool.query(
-    `UPDATE pending_sends
-        SET claimed_at = $2, bound_email = $4
-      WHERE id = $1
-        AND claimed_at IS NULL
-        AND bound_email = '${CEREMONY_BOUND_SENTINEL}'
-        AND restore_token_hash = $3
-        AND expires_at > $2
-      RETURNING id, bound_email, document_name, storage_key, byte_count, draft,
-                created_at, expires_at, claimed_at, claimed_envelope_id`,
-    [id, now.toISOString(), hashRestoreSecret(secret), email],
-  );
-  if (claimed.rows.length > 0) {
-    return { outcome: 'claimed', record: toRecord(claimed.rows[0] as Row) };
-  }
-  // Losers are diagnosed under the same authorization: no matching secret →
-  // indistinguishable from absence.
-  const result = await pool.query(
-    `SELECT id, bound_email, document_name, storage_key, byte_count, draft,
-            created_at, expires_at, claimed_at, claimed_envelope_id, restore_token_hash
-       FROM pending_sends
-      WHERE id = $1`,
-    [id],
-  );
-  if (result.rows.length === 0) return { outcome: 'not_found' };
-  const row = result.rows[0] as Row & { restore_token_hash: string | null };
-  if (!hashMatches(row.restore_token_hash, secret)) return { outcome: 'not_found' };
-  const existing = toRecord(row);
-  if (existing.claimedAt) return { outcome: 'already', envelopeId: existing.claimedEnvelopeId };
-  return { outcome: 'expired' };
-}
-
-/**
  * AC-243 — the anti-anonymous-storage bound, counted in the DATABASE rather than
  * in memory: a Lambda has no shared process to hold a counter, so an in-memory
  * limiter would reset with every cold start. Live = unclaimed and unexpired.
@@ -296,19 +246,6 @@ export async function getPendingSend(
   const row = result.rows[0] as Row & { restore_token_hash: string | null };
   if (!hashMatches(row.restore_token_hash, secret)) return null;
   return toRecord(row);
-}
-
-/** Internal read for the CLAIM path, where the session is the authority. */
-async function getPendingSendById(pool: DbPool, id: string): Promise<PendingSendRecord | null> {
-  const result = await pool.query(
-    `SELECT id, bound_email, document_name, storage_key, byte_count, draft,
-            created_at, expires_at, claimed_at, claimed_envelope_id
-       FROM pending_sends
-      WHERE id = $1`,
-    [id],
-  );
-  if (result.rows.length === 0) return null;
-  return toRecord(result.rows[0] as Row);
 }
 
 export interface PendingSendPatch {
@@ -354,13 +291,30 @@ export async function updatePendingSendDraft(
 }
 
 /**
- * AC-238 — the single-winner claim. Everything that decides the winner is in the
- * WHERE clause of one statement; a caller that loses reads the row afterwards
- * ONLY to explain why (already sent / wrong account / expired / gone).
+ * AC-238 / AC-252 — the single-winner claim, for BOTH ways a draft is held.
+ *
+ * Everything that decides the winner is in the WHERE clause of one statement; a
+ * caller that loses reads the row afterwards ONLY to explain why (already sent /
+ * wrong account / expired / gone).
+ *
+ * Two bindings reach here and one statement serves both:
+ *   - EMAIL path — the draft was bound to the address the link was sent to, so
+ *     the session's address must match it;
+ *   - CEREMONY path (F-41.6) — no address existed at gate time, so the row
+ *     carries the sentinel and the claim BINDS the establishing session's
+ *     address.
+ *
+ * Authorization is possession of the handle's SECRET in both cases. That is what
+ * lets a visitor who abandoned the Google ceremony finish through the emailed
+ * link instead (AC-252's "either method"): the sentinel row would otherwise be
+ * unclaimable by an address-matching rule, a dead end Barry's walk-3 question
+ * surfaced. It also strengthens the email path, which previously relied on the
+ * address match alone.
  */
 export async function claimPendingSend(
   pool: DbPool,
   id: string,
+  secret: string,
   sessionEmail: string,
   opts: { now?: Date } = {},
 ): Promise<ClaimResult> {
@@ -368,22 +322,36 @@ export async function claimPendingSend(
   const email = normalizeBoundEmail(sessionEmail);
   const claimed = await pool.query(
     `UPDATE pending_sends
-        SET claimed_at = $4
+        SET claimed_at = $2, bound_email = $5
       WHERE id = $1
         AND claimed_at IS NULL
-        AND bound_email = $3
+        AND restore_token_hash = $4
+        AND (bound_email = '${CEREMONY_BOUND_SENTINEL}' OR bound_email = $3)
         AND expires_at > $2
       RETURNING id, bound_email, document_name, storage_key, byte_count, draft,
                 created_at, expires_at, claimed_at, claimed_envelope_id`,
-    [id, now.toISOString(), email, now.toISOString()],
+    [id, now.toISOString(), email, hashRestoreSecret(secret), email],
   );
   if (claimed.rows.length > 0) {
     return { outcome: 'claimed', record: toRecord(claimed.rows[0] as Row) };
   }
-  const existing = await getPendingSendById(pool, id);
-  if (!existing) return { outcome: 'not_found' };
-  if (existing.boundEmail !== email) return { outcome: 'wrong_account' };
+  // Losers are diagnosed under the SAME authorization: without the secret a row
+  // is indistinguishable from one that does not exist (F-028).
+  const result = await pool.query(
+    `SELECT id, bound_email, document_name, storage_key, byte_count, draft,
+            created_at, expires_at, claimed_at, claimed_envelope_id, restore_token_hash
+       FROM pending_sends
+      WHERE id = $1`,
+    [id],
+  );
+  if (result.rows.length === 0) return { outcome: 'not_found' };
+  const row = result.rows[0] as Row & { restore_token_hash: string | null };
+  if (!hashMatches(row.restore_token_hash, secret)) return { outcome: 'not_found' };
+  const existing = toRecord(row);
   if (existing.claimedAt) return { outcome: 'already', envelopeId: existing.claimedEnvelopeId };
+  if (existing.boundEmail !== CEREMONY_BOUND_SENTINEL && existing.boundEmail !== email) {
+    return { outcome: 'wrong_account' };
+  }
   return { outcome: 'expired' };
 }
 

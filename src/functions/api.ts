@@ -57,7 +57,6 @@ import {
 import {
   createPendingSend,
   createCeremonyPendingSend,
-  claimCeremonyPendingSend,
   getPendingSend,
   updatePendingSendDraft,
   claimPendingSend,
@@ -208,8 +207,7 @@ function pendingSendCtx(deps: RequestDeps): PendingSendCtx {
       createCeremony: (draft) => createCeremonyPendingSend(pool, draft),
       get: (id, secret) => getPendingSend(pool, id, secret),
       update: (id, patch, secret) => updatePendingSendDraft(pool, id, patch, secret),
-      claim: (id, sessionEmail) => claimPendingSend(pool, id, sessionEmail),
-      claimCeremony: (id, secret, sessionEmail) => claimCeremonyPendingSend(pool, id, secret, sessionEmail),
+      claim: (id, secret, sessionEmail) => claimPendingSend(pool, id, secret, sessionEmail),
       countLive: (boundEmail) => countLivePendingSends(pool, boundEmail),
       recordEnvelope: (id, envelopeId) => recordClaimedEnvelope(pool, id, envelopeId),
       release: (id) => releasePendingSendClaim(pool, id),

@@ -55,9 +55,8 @@ export interface PendingSendStore {
   createCeremony(draft: Omit<PendingSendRecord, 'id' | 'boundEmail' | 'createdAt' | 'expiresAt' | 'claimedAt' | 'claimedEnvelopeId'>): Promise<string>;
   get(id: string, secret: string): Promise<PendingSendRecord | null>;
   update(id: string, patch: PendingSendPatch, secret: string): Promise<boolean>;
-  claim(id: string, sessionEmail: string): Promise<ClaimResult>;
-  /** F-41.6 — claim + bind, authorized by the ceremony-held SECRET. */
-  claimCeremony(id: string, secret: string, sessionEmail: string): Promise<ClaimResult>;
+  /** Secret-authorized; binds a ceremony draft, matches an email-bound one. */
+  claim(id: string, secret: string, sessionEmail: string): Promise<ClaimResult>;
   countLive(boundEmail: string): Promise<number>;
   recordEnvelope(id: string, envelopeId: string): Promise<void>;
   release(id: string): Promise<void>;
@@ -298,34 +297,25 @@ export async function handlePatchPendingSend(
   return { status: 200, body: { ok: true } };
 }
 
+/**
+ * AC-238 / AC-252 — claim + send, for a draft held either way. The SESSION is
+ * still required (this route is session-authed); the handle's secret is what
+ * authorizes THIS session to take THIS draft, which is what lets a visitor who
+ * abandoned the Google ceremony finish through the emailed link instead.
+ */
 export async function handleClaimPendingSend(
   ctx: PendingSendCtx,
   handle: string,
   actorEmail: string,
 ): Promise<PendingSendResult> {
-  // The SESSION is the authority here, not the handle, so only the id half is
-  // used — but a malformed handle still resolves to nothing.
   const parts = parseHandle(handle);
   if (!parts) return NOT_FOUND;
-  const claim = await ctx.store.claim(parts.id, actorEmail);
+  const claim = await ctx.store.claim(parts.id, parts.secret, actorEmail);
   return finishClaim(ctx, parts.id, claim);
 }
 
-/**
- * F-41.6 — the Google-path claim: the ceremony-held SECRET (the handle's second
- * half, which only the ceremony row and the composing tab ever held) authorizes
- * the bind, and the claim binds the establishing session's address (DD-59).
- */
-export async function handleClaimCeremonyPendingSend(
-  ctx: PendingSendCtx,
-  handle: string,
-  actorEmail: string,
-): Promise<PendingSendResult> {
-  const parts = parseHandle(handle);
-  if (!parts) return NOT_FOUND;
-  const claim = await ctx.store.claimCeremony(parts.id, parts.secret, actorEmail);
-  return finishClaim(ctx, parts.id, claim);
-}
+/** The Google exchange's entry point — the same door, named for its caller. */
+export const handleClaimCeremonyPendingSend = handleClaimPendingSend;
 
 /** The shared post-claim path: outcome mapping + create + release-on-failure. */
 async function finishClaim(

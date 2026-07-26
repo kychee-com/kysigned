@@ -321,23 +321,22 @@ describe('ceremony-bound doors (F-41.6 / DD-59)', () => {
 
   it('claims a ceremony draft for the establishing session and creates the envelope', async () => {
     const c = ctx();
-    (c.store as unknown as Record<string, unknown>).claimCeremony = mock.fn(
+    (c.store.claim as ReturnType<typeof mock.fn>).mock.mockImplementation(
       async () => ({ outcome: 'claimed', record: record({ boundEmail: 'fresh@example.com' }) }) as const,
     );
     const r = await handleClaimCeremonyPendingSend(c, HANDLE, 'fresh@example.com');
     assert.equal(r.status, 200);
     assert.equal((r.body as { envelope_id?: string }).envelope_id, 'env_new');
-    const claimCeremony = (c.store as unknown as { claimCeremony: ReturnType<typeof mock.fn> }).claimCeremony;
-    assert.equal(claimCeremony.mock.callCount(), 1);
-    const [id, secret, email] = claimCeremony.mock.calls[0]!.arguments as [string, string, string];
+    const [id, secret, email] = (c.store.claim as ReturnType<typeof mock.fn>).mock.calls[0]!
+      .arguments as [string, string, string];
     assert.equal(id, 'ps_1');
-    assert.equal(secret, 'the-secret-half', 'the ceremony-held secret authorizes the bind');
+    assert.equal(secret, 'the-secret-half', 'the handle secret authorizes the bind');
     assert.equal(email, 'fresh@example.com');
   });
 
   it('a create REFUSAL releases the ceremony claim and reports the refusal (F-39.4)', async () => {
     const c = ctx({ createEnvelope: mock.fn(async () => ({ status: 402, body: { code: 'payment_insufficient_credit' } })) });
-    (c.store as unknown as Record<string, unknown>).claimCeremony = mock.fn(
+    (c.store.claim as ReturnType<typeof mock.fn>).mock.mockImplementation(
       async () => ({ outcome: 'claimed', record: record({ boundEmail: 'fresh@example.com' }) }) as const,
     );
     const r = await handleClaimCeremonyPendingSend(c, HANDLE, 'fresh@example.com');
@@ -347,11 +346,34 @@ describe('ceremony-bound doors (F-41.6 / DD-59)', () => {
 
   it('an already-claimed ceremony draft answers already_sent with its envelope (a success, not an error)', async () => {
     const c = ctx();
-    (c.store as unknown as Record<string, unknown>).claimCeremony = mock.fn(
+    (c.store.claim as ReturnType<typeof mock.fn>).mock.mockImplementation(
       async () => ({ outcome: 'already', envelopeId: 'env_prior' }) as const,
     );
     const r = await handleClaimCeremonyPendingSend(c, HANDLE, 'fresh@example.com');
     assert.equal(r.status, 200);
     assert.deepEqual(r.body, { envelope_id: 'env_prior', already_sent: true });
+  });
+});
+
+describe('a ceremony-bound draft must be finishable by EITHER method (AC-252)', () => {
+  // AC-252: "completing sign-in from there by EITHER method sends that same
+  // draft exactly once." A visitor who abandons Google at its consent screen
+  // and switches to the emailed link must not hit a dead end. Before the claim
+  // paths were unified, the session claim matched on bound_email, and a
+  // ceremony row's sentinel binding could never match a real address — a 403
+  // "started for a different email address" on the visitor's own document.
+  it('the emailed-link claim and the ceremony claim are the SAME secret-authorized door', async () => {
+    const c = ctx();
+    (c.store.claim as ReturnType<typeof mock.fn>).mock.mockImplementation(
+      async (_id: string, _secret: string, sessionEmail: string) =>
+        ({ outcome: 'claimed', record: record({ boundEmail: sessionEmail }) }) as const,
+    );
+    const viaLink = await handleClaimPendingSend(c, HANDLE, 'visitor@example.com');
+    assert.equal(viaLink.status, 200, 'finishing by email after abandoning Google must work');
+    assert.equal((viaLink.body as { envelope_id?: string }).envelope_id, 'env_new');
+    // Both entry points carry the secret through, so neither can drift.
+    const args = (c.store.claim as ReturnType<typeof mock.fn>).mock.calls[0]!.arguments;
+    assert.equal(args[1], 'the-secret-half');
+    assert.equal(handleClaimCeremonyPendingSend, handleClaimPendingSend, 'one door, two names');
   });
 });

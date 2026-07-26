@@ -18,7 +18,6 @@ import type { DbPool } from './pool.js';
 import {
   createPendingSend,
   createCeremonyPendingSend,
-  claimCeremonyPendingSend,
   CEREMONY_BOUND_SENTINEL,
   getPendingSend,
   updatePendingSendDraft,
@@ -171,7 +170,7 @@ describe('claimPendingSend — one winner, ever (AC-238)', () => {
     const { pool, queries } = capturePool((text) =>
       text.startsWith('UPDATE') ? { rows: [row({ claimed_at: '2026-07-25T10:05:00.000Z' })], rowCount: 1 } : null,
     );
-    const result = await claimPendingSend(pool, 'ps_1', 'Creator@Example.com');
+    const result = await claimPendingSend(pool, 'ps_1', SECRET, 'Creator@Example.com');
     assert.equal(result.outcome, 'claimed');
     assert.equal(result.outcome === 'claimed' ? result.record.documentName : '', 'contract');
     const claim = queries[0]!;
@@ -188,7 +187,7 @@ describe('claimPendingSend — one winner, ever (AC-238)', () => {
       call += 1;
       return { rows: [row({ claimed_at: '2026-07-25T10:05:00.000Z', claimed_envelope_id: 'env_first' })], rowCount: 1 };
     });
-    const result = await claimPendingSend(pool, 'ps_1', 'creator@example.com');
+    const result = await claimPendingSend(pool, 'ps_1', SECRET, 'creator@example.com');
     assert.equal(result.outcome, 'already');
     assert.equal(result.outcome === 'already' ? result.envelopeId : null, 'env_first');
     assert.equal(call, 1, 'falls back to exactly one read to find out why it lost');
@@ -198,7 +197,7 @@ describe('claimPendingSend — one winner, ever (AC-238)', () => {
     const { pool } = capturePool((text) =>
       text.startsWith('UPDATE') ? { rows: [], rowCount: 0 } : { rows: [row()], rowCount: 1 },
     );
-    const result = await claimPendingSend(pool, 'ps_1', 'someone-else@example.com');
+    const result = await claimPendingSend(pool, 'ps_1', SECRET, 'someone-else@example.com');
     assert.equal(result.outcome, 'wrong_account');
   });
 
@@ -208,7 +207,7 @@ describe('claimPendingSend — one winner, ever (AC-238)', () => {
         ? { rows: [], rowCount: 0 }
         : { rows: [row({ expires_at: '2026-07-24T10:00:00.000Z' })], rowCount: 1 },
     );
-    const result = await claimPendingSend(pool, 'ps_1', 'creator@example.com', {
+    const result = await claimPendingSend(pool, 'ps_1', SECRET, 'creator@example.com', {
       now: new Date('2026-07-25T10:00:00.000Z'),
     });
     assert.equal(result.outcome, 'expired');
@@ -216,7 +215,7 @@ describe('claimPendingSend — one winner, ever (AC-238)', () => {
 
   it('reports a missing draft as not_found', async () => {
     const { pool } = capturePool(() => ({ rows: [], rowCount: 0 }));
-    const result = await claimPendingSend(pool, 'ps_gone', 'creator@example.com');
+    const result = await claimPendingSend(pool, 'ps_gone', SECRET, 'creator@example.com');
     assert.equal(result.outcome, 'not_found');
   });
 });
@@ -315,7 +314,7 @@ describe('ceremony-bound pending sends (F-41.6 / DD-59) — bound at CLAIM, not 
         ? { rows: [row({ bound_email: 'newuser@example.com', claimed_at: now.toISOString() })], rowCount: 1 }
         : null,
     );
-    const result = await claimCeremonyPendingSend(pool, 'ps_1', 'S'.repeat(43), ' NewUser@Example.com ', { now });
+    const result = await claimPendingSend(pool, 'ps_1', 'S'.repeat(43), ' NewUser@Example.com ', { now });
     assert.equal(result.outcome, 'claimed');
     const update = queries.find((q) => q.text.startsWith('UPDATE pending_sends'))!;
     assert.match(update.text, /claimed_at IS NULL/, 'single-winner, decided in the WHERE clause');
@@ -336,7 +335,7 @@ describe('ceremony-bound pending sends (F-41.6 / DD-59) — bound at CLAIM, not 
     const { pool } = capturePool((text) =>
       text.startsWith('UPDATE pending_sends') ? { rows: [], rowCount: 0 } : { rows: [], rowCount: 0 },
     );
-    const result = await claimCeremonyPendingSend(pool, 'ps_1', 'WRONG'.repeat(9), 'x@example.com');
+    const result = await claimPendingSend(pool, 'ps_1', 'WRONG'.repeat(9), 'x@example.com');
     assert.equal(result.outcome, 'not_found');
   });
 
@@ -349,7 +348,7 @@ describe('ceremony-bound pending sends (F-41.6 / DD-59) — bound at CLAIM, not 
             rowCount: 1,
           },
     );
-    const result = await claimCeremonyPendingSend(pool, 'ps_1', 'S'.repeat(43), 'x@example.com');
+    const result = await claimPendingSend(pool, 'ps_1', 'S'.repeat(43), 'x@example.com');
     assert.equal(result.outcome, 'already');
     assert.equal((result as { envelopeId?: string | null }).envelopeId, 'env_1');
   });
@@ -363,7 +362,7 @@ describe('ceremony-bound pending sends (F-41.6 / DD-59) — bound at CLAIM, not 
             rowCount: 1,
           },
     );
-    const result = await claimCeremonyPendingSend(pool, 'ps_1', 'S'.repeat(43), 'x@example.com', { now: new Date('2026-07-26T10:00:00.000Z') });
+    const result = await claimPendingSend(pool, 'ps_1', 'S'.repeat(43), 'x@example.com', { now: new Date('2026-07-26T10:00:00.000Z') });
     assert.equal(result.outcome, 'expired');
   });
 });
