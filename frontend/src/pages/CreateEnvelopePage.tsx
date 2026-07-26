@@ -44,6 +44,37 @@ interface PendingSendView {
   expires_at: string
 }
 
+/**
+ * F-40/F-41.6 — the comparable shape of a draft's editable content, used to
+ * tell "committed and unchanged" (safe to leave) from "edited since we saved
+ * it" (a real unsaved change). The document FILE is excluded on purpose: it is
+ * immutable for the life of a pending send.
+ */
+function currentSnapshot(v: { docName: string; signers: SignerInput[]; autoClose: boolean }) {
+  return {
+    docName: v.docName.trim(),
+    autoClose: v.autoClose,
+    signers: v.signers.map((s) => ({
+      email: s.email.trim(),
+      name: s.name.trim(),
+      onBehalfOf: s.onBehalf && s.onBehalfOf.trim() ? s.onBehalfOf.trim() : '',
+    })),
+  }
+}
+
+/** The same shape, built from what the service says it holds. */
+function restoredSnapshot(d: PendingSendView) {
+  return {
+    docName: d.document_name.trim(),
+    autoClose: d.auto_close,
+    signers: d.signers.map((s) => ({
+      email: s.email.trim(),
+      name: s.name.trim(),
+      onBehalfOf: s.on_behalf_of?.trim() ?? '',
+    })),
+  }
+}
+
 /** F-40 — what the landing tab was asked to do, read once from the URL. */
 function readHandover(search: string) {
   const params = new URLSearchParams(search)
@@ -130,6 +161,8 @@ export function CreateEnvelopePage() {
   const [sentElsewhere, setSentElsewhere] = useState<string | null>(null)
   const claimFiredRef = useRef(false)
   const restoreFiredRef = useRef(false)
+  /** What the service holds for this draft; null until something is committed. */
+  const committedSnapshotRef = useRef<ReturnType<typeof currentSnapshot> | null>(null)
   const isRestored = restoredFile !== null
 
   // Which mandatory field failed validation — drives the per-field red highlight.
@@ -177,8 +210,25 @@ export function CreateEnvelopePage() {
   // beforeunload does not double-prompt.
   const allowNavRef = useRef(false)
   const draftDirty = hasUnsentDraft({ gatePhase, file, docName, signers })
+  /**
+   * F-40/F-41.6 — a draft that is COMMITTED to the service has nothing unsaved
+   * about it: leaving is safe by construction, which is the entire premise of
+   * the pending send. Warning anyway is a lie, and a lie in a scary modal
+   * teaches people to fear a safe action (Barry, human pass 2026-07-26: the
+   * warning fired when leaving for Google AND on browser Back from the gate).
+   *
+   * So the guard arms only for work that would REALLY be lost:
+   *   - no committed handle → arm (a local-only draft; the original F-025 case);
+   *   - committed + edited since → arm (the edits are not on the service yet);
+   *   - committed + unedited → do not arm.
+   */
+  const committedAndClean =
+    draftHandle !== null &&
+    JSON.stringify(committedSnapshotRef.current) ===
+      JSON.stringify(currentSnapshot({ docName, signers, autoClose }))
+  const guardArmed = draftDirty && !committedAndClean
   useEffect(() => {
-    if (!draftDirty) return
+    if (!guardArmed) return
     const approvedUnload = { current: false }
     const onClickCapture = (e: MouseEvent) => {
       if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
@@ -205,7 +255,7 @@ export function CreateEnvelopePage() {
       document.removeEventListener('click', onClickCapture, true)
       window.removeEventListener('beforeunload', onBeforeUnload)
     }
-  }, [draftDirty])
+  }, [guardArmed])
 
   const goToTopUp = async () => {
     setRedirecting(true)
@@ -282,6 +332,9 @@ export function CreateEnvelopePage() {
 
   /** F-40 — pull a stored draft back into the editor's own fields. */
   const applyRestored = (d: PendingSendView) => {
+    // What the SERVICE currently holds. The nav guard compares against this to
+    // tell "nothing to lose" from "unsaved edits" (see committedAndClean).
+    committedSnapshotRef.current = restoredSnapshot(d)
     setDocName(d.document_name)
     setRestoredFile({ name: `${d.document_name}.pdf`, size: d.byte_count })
     setRestoredEmail(d.email)
@@ -597,6 +650,7 @@ export function CreateEnvelopePage() {
     const payload = heldPayloadRef.current ?? (await buildPayload())
     const { draft_id } = await apiPost<{ draft_id: string }>('/v1/pending-send', { email, ...payload })
     setDraftHandle(draft_id)
+    committedSnapshotRef.current = currentSnapshot({ docName, signers, autoClose })
     return draft_id
   }
 
@@ -622,6 +676,7 @@ export function CreateEnvelopePage() {
     const payload = heldPayloadRef.current ?? (await buildPayload())
     const { draft_id } = await apiPost<{ draft_id: string }>('/v1/pending-send', { ceremony: true, ...payload })
     setDraftHandle(draft_id)
+    committedSnapshotRef.current = currentSnapshot({ docName, signers, autoClose })
     allowNavRef.current = true
     return draft_id
   }
@@ -638,6 +693,7 @@ export function CreateEnvelopePage() {
       })),
       auto_close: autoClose,
     })
+    committedSnapshotRef.current = currentSnapshot({ docName, signers, autoClose })
   }
 
   /** Claim + send a restored draft (the signed-in path onto an existing draft). */

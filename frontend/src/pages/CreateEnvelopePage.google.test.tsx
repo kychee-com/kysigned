@@ -173,3 +173,51 @@ describe('a Google failure reason renders its specific guidance (AC-247 copy)', 
     await waitFor(() => expect(screen.getByTestId('restore-notice').textContent).toContain(GOOGLE_ACCOUNT_EXISTS));
   });
 });
+
+describe('a RESTORED draft at the gate: nothing is unsaved, so nothing may warn (Barry walk 3)', () => {
+  // The exact sequence Barry reported: document restored after abandoning the
+  // ceremony → "Send me a fresh link" → the gate → and then BOTH browser Back
+  // AND Continue with Google raised "Leave site? Changes that you made may not
+  // be saved." His draft was committed to the service and his edits were
+  // written before the gate opened, so the warning was false in both cases.
+  //
+  // This path skips `prepareCeremonyDraft` entirely (the gate already carries a
+  // draftId), which is why the earlier deliberate-navigation fix did not cover
+  // it — the page was never told the departure was ours.
+  let confirmSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    confirmSpy = vi.spyOn(window, 'confirm');
+  });
+  afterEach(() => confirmSpy.mockRestore());
+
+  async function restoredThenGate() {
+    searchHolder.current = `?draft=${HANDLE}&signin_failed=1`;
+    renderPage();
+    await screen.findByDisplayValue('alice@example.com');
+    fireEvent.click(await screen.findByTestId('restore-resend'));
+    await screen.findByTestId('signin-screen');
+  }
+
+  it('browser Back from that gate does not warn', async () => {
+    await restoredThenGate();
+    const e = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it('Continue with Google from that gate does not warn, and still starts the ceremony', async () => {
+    await restoredThenGate();
+    fireEvent.click(await screen.findByTestId('signin-google'));
+    await waitFor(() =>
+      expect(apiPostMock.mock.calls.some(([p]) => p === '/v1/auth/google/start')).toBe(true),
+    );
+    const e = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(false);
+    expect(confirmSpy).not.toHaveBeenCalled();
+    // The restored draft's own handle rides the ceremony — no second draft written.
+    const start = apiPostMock.mock.calls.find(([p]) => p === '/v1/auth/google/start')!;
+    expect((start[1] as Record<string, unknown>).draft_id).toBe(HANDLE);
+    expect(apiPostMock.mock.calls.filter(([p]) => p === '/v1/pending-send')).toHaveLength(0);
+  });
+});

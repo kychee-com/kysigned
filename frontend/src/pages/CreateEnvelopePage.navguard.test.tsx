@@ -200,3 +200,68 @@ describe('CreateEnvelopePage — the Google ceremony is a deliberate navigation,
     expect(confirmSpy).not.toHaveBeenCalled();
   });
 });
+
+describe('CreateEnvelopePage — a COMMITTED draft has nothing unsaved to warn about (F-40/F-41.6)', () => {
+  // Barry, human pass 2026-07-26: after his document was restored he pressed
+  // "Send me a fresh link", reached the gate, and both browser Back AND
+  // Continue with Google raised "Leave site? Changes that you made may not be
+  // saved." Nothing was unsaved: the draft lives on the service (that is the
+  // whole point of F-40), and his edits are written before the gate opens. A
+  // warning that is FALSE is worse than no warning — it teaches people to fear
+  // a safe action. The guard now arms only when work would genuinely be lost.
+  let confirmSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    apiPostMock.mockReset();
+    apiGetMock.mockReset();
+    sessionStorage.clear();
+    authHolder.current = { user: null, loading: false, refresh: vi.fn(), signOut: vi.fn() };
+    confirmSpy = vi.spyOn(window, 'confirm');
+    apiGetMock.mockImplementation(async (path: string) => {
+      if (path === '/v1/auth/methods') return { google: true };
+      throw new Error(`unexpected apiGet ${path}`);
+    });
+    apiPostMock.mockImplementation(async (path: string) => {
+      if (path === '/v1/envelope/preflight') return { ok: true };
+      if (path === '/v1/pending-send') return { draft_id: 'ps_3f2a9c14-8b7e-4d1a-9f60-5c2e7a1b8d34.the-secret-half-abcdef' };
+      if (path === '/v1/auth/google/start') return { authorization_url: 'https://accounts.google.com/x' };
+      throw new Error(`unexpected apiPost ${path}`);
+    });
+  });
+  afterEach(() => confirmSpy.mockRestore());
+
+  async function reachGateWithCommittedDraft(container: HTMLElement) {
+    pickFile(container);
+    fireEvent.change(screen.getAllByPlaceholderText('e.g., Jane Smith')[0]!, { target: { value: 'Alice Doe' } });
+    fireEvent.change(screen.getAllByPlaceholderText('jane.smith@example.com')[0]!, { target: { value: 'alice@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: /send for signing/i }));
+    await screen.findByTestId('signin-screen');
+    // Commit it the way the Google path does.
+    fireEvent.click(await screen.findByTestId('signin-google'));
+    await waitFor(() =>
+      expect(apiPostMock.mock.calls.some(([p]) => p === '/v1/auth/google/start')).toBe(true),
+    );
+  }
+
+  it('browser Back from a gate holding a COMMITTED draft does not warn', async () => {
+    const { container } = renderApp();
+    await reachGateWithCommittedDraft(container);
+    const e = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it('an in-SPA link away from a gate holding a COMMITTED draft does not confirm', async () => {
+    const { container } = renderApp();
+    await reachGateWithCommittedDraft(container);
+    fireEvent.click(screen.getByText('GLOBAL HOME LINK'));
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+
+  it('REGRESSION: an uncommitted filled form still arms the guard', () => {
+    const { container } = renderApp();
+    pickFile(container);
+    const e = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(true);
+  });
+});
