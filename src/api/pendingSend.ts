@@ -69,9 +69,27 @@ export interface PendingSendResult {
   body: Record<string, unknown>;
 }
 
+/** The F-38.7 limiter shape, reused verbatim (createTelemetryLimiter). */
+export interface CeremonyLimiter {
+  allow(sourceAddr: string | null, now: number): boolean;
+}
+
 export interface PendingSendCtx {
   pool: DbPool;
   store: PendingSendStore;
+  /**
+   * F-031 (cycle-24 red team, P1) — the per-SOURCE burst bound on the ceremony
+   * gate write. AC-243 requires repeated gate submissions be refused "on the
+   * same terms as repeated sign-in emails"; the platform rate-limits those per
+   * ADDRESS, and a ceremony submission has no address yet, so the honest
+   * analogue is per source. Same in-memory limiter the public telemetry
+   * endpoint ships (F-38.7/AC-220) — a warm-container bound, which is exactly
+   * the shape of the attack it answers (a rapid burst), with the DB-backed
+   * MAX_LIVE_CEREMONY_PENDING_SENDS as the cold-start-proof backstop.
+   */
+  ceremonyLimiter?: CeremonyLimiter;
+  /** The request's source address, for the limiter only — never stored. */
+  sourceAddr?: string | null;
   /**
    * The ordinary authenticated create, invoked on the claimant's behalf. Kept as
    * a seam so the claim path cannot drift from the create every other caller
@@ -192,6 +210,10 @@ export async function handleCreateCeremonyPendingSend(
   ctx: PendingSendCtx,
   body: Record<string, unknown>,
 ): Promise<PendingSendResult> {
+  // F-031 — before ANY work: a flood must not burn preflight CPU either.
+  if (ctx.ceremonyLimiter && !ctx.ceremonyLimiter.allow(ctx.sourceAddr ?? null, Date.now())) {
+    return TOO_MANY_PENDING;
+  }
   const draft = await validateDraftBody(ctx, body);
   if (!draft.ok) return draft.result;
 

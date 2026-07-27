@@ -377,3 +377,43 @@ describe('a ceremony-bound draft must be finishable by EITHER method (AC-252)', 
     assert.equal(handleClaimCeremonyPendingSend, handleClaimPendingSend, 'one door, two names');
   });
 });
+
+describe('the ceremony gate write is rate-limited per source (F-031, AC-243)', () => {
+  // Cycle-24 red team (F-031, P1): 20 rapid unauthenticated `ceremony:true`
+  // creates ALL succeeded, where the email path correctly refuses at its cap.
+  // AC-243 requires "repeated gate submissions are refused on the same terms as
+  // repeated sign-in emails" — the platform rate-limits those per ADDRESS, and a
+  // ceremony submission has no address, so the honest analogue is per SOURCE.
+  // Same in-memory limiter the public telemetry endpoint ships (F-38.7/AC-220).
+  function limiterAllowing(n: number) {
+    let seen = 0;
+    return { allow: () => ++seen <= n };
+  }
+
+  it('refuses past the per-source burst cap, and stores nothing when it does', async () => {
+    const c = ctx({ ceremonyLimiter: limiterAllowing(2), sourceAddr: '203.0.113.7' } as Partial<PendingSendCtx>);
+    (c.store as unknown as Record<string, unknown>).createCeremony = mock.fn(async () => 'ps_cer.secret');
+    assert.equal((await handleCreateCeremonyPendingSend(c, VALID_BODY)).status, 200);
+    assert.equal((await handleCreateCeremonyPendingSend(c, VALID_BODY)).status, 200);
+    const third = await handleCreateCeremonyPendingSend(c, VALID_BODY);
+    assert.equal(third.status, 429);
+    assert.equal((third.body as { code?: string }).code, 'rate_size_pending_sends');
+    const created = (c.store as unknown as { createCeremony: ReturnType<typeof mock.fn> }).createCeremony;
+    assert.equal(created.mock.callCount(), 2, 'the refused submission writes nothing');
+    assert.equal((c.store.putBlob as ReturnType<typeof mock.fn>).mock.callCount(), 2, 'and stores no document');
+  });
+
+  it('is checked BEFORE any validation work, so a flood cannot burn preflight either', async () => {
+    const c = ctx({ ceremonyLimiter: { allow: () => false }, sourceAddr: '203.0.113.7' } as Partial<PendingSendCtx>);
+    (c.store as unknown as Record<string, unknown>).createCeremony = mock.fn(async () => 'ps_cer.secret');
+    const r = await handleCreateCeremonyPendingSend(c, VALID_BODY);
+    assert.equal(r.status, 429);
+    assert.equal((c.store.countLive as ReturnType<typeof mock.fn>).mock.callCount(), 0);
+  });
+
+  it('with no limiter wired (fork default) the path still works', async () => {
+    const c = ctx();
+    (c.store as unknown as Record<string, unknown>).createCeremony = mock.fn(async () => 'ps_cer.secret');
+    assert.equal((await handleCreateCeremonyPendingSend(c, VALID_BODY)).status, 200);
+  });
+});

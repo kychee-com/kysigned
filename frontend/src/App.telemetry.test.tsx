@@ -21,6 +21,21 @@ function beaconBodies(spy: ReturnType<typeof vi.fn>): Array<{ page: string; reco
   return spy.mock.calls.map(([, blob]) => JSON.parse((blob as { __text: string }).__text));
 }
 
+/**
+ * The payload for ONE page, whichever position it flushed in. `freshApp()`
+ * re-imports the rail per test (vi.resetModules), and a PREVIOUS instance's
+ * `pagehide` listener is still registered — so an earlier test's payload can
+ * land at index 0 of this test's spy. Asserting on position tested flush
+ * ORDER, not the behaviour, and made the file order-dependent; assert on the
+ * page we actually asked for instead.
+ */
+function bodyForPage(spy: ReturnType<typeof vi.fn>, page: string) {
+  const all = beaconBodies(spy);
+  const matches = all.filter((b) => b.page === page);
+  expect(matches.length, 'beacon pages seen: ' + JSON.stringify(all.map((b) => b.page))).toBe(1);
+  return matches[0]!;
+}
+
 describe('App mount — telemetry rail wiring', () => {
   let beacon: ReturnType<typeof vi.fn>;
 
@@ -58,10 +73,7 @@ describe('App mount — telemetry rail wiring', () => {
       </MemoryRouter>,
     );
     flushBeacon();
-    const bodies = beaconBodies(beacon);
-    expect(bodies.length).toBeGreaterThan(0);
-    expect(bodies[0].page).toBe('/verify');
-    expect(bodies[0].records[0]).toMatchObject({ event: 'page_view' });
+    expect(bodyForPage(beacon, '/verify').records[0]).toMatchObject({ event: 'page_view' });
   });
 
   it('the sign-in landing (/?intent=signin) reports page `signin`, not home', async () => {
@@ -73,7 +85,7 @@ describe('App mount — telemetry rail wiring', () => {
       </MemoryRouter>,
     );
     flushBeacon();
-    expect(beaconBodies(beacon)[0].page).toBe('signin');
+    expect(bodyForPage(beacon, 'signin').records[0]).toMatchObject({ event: 'page_view' });
   });
 
   it('fresh-fork default: the same landing sends NOTHING and writes no storage', async () => {

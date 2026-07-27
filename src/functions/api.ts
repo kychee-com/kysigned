@@ -65,6 +65,7 @@ import {
   releasePendingSendClaim,
 } from '../db/pendingSends.js';
 import { storePdfBlob } from '../db/pdfBlobs.js';
+import { createTelemetryLimiter } from '../api/telemetry.js';
 import { buildHostedSenderGate } from '../api/billingGate.js';
 import { handleHealth, handleDeepHealth } from '../api/health.js';
 import {
@@ -198,10 +199,19 @@ function passkeyCtx(deps: RequestDeps): PasskeyHandlerCtx {
  * caller uses — the credit gate, the allowlist and delivery all behave exactly as
  * they would for a signed-in Send (F-39.4).
  */
-function pendingSendCtx(deps: RequestDeps): PendingSendCtx {
+/**
+ * F-031 — ONE limiter per warm container, like the telemetry rail's. Created at
+ * module scope so it survives across requests in the same container; a cold
+ * start resets it, which the DB-backed live cap backstops.
+ */
+const ceremonyLimiter = createTelemetryLimiter({ maxPostsPerWindow: 5, windowMs: 60_000 });
+
+function pendingSendCtx(deps: RequestDeps, sourceAddr: string | null = null): PendingSendCtx {
   const pool = deps.pool;
   return {
     pool,
+    ceremonyLimiter,
+    sourceAddr,
     store: {
       create: (boundEmail, draft) => createPendingSend(pool, boundEmail, draft),
       createCeremony: (draft) => createCeremonyPendingSend(pool, draft),
@@ -518,7 +528,10 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
       // address (the ceremony's claim binds one, DD-59).
       const r =
         (body as { ceremony?: unknown }).ceremony === true
-          ? await handleCreateCeremonyPendingSend(pendingSendCtx(deps), body as Record<string, unknown>)
+          ? await handleCreateCeremonyPendingSend(
+              pendingSendCtx(deps, req.headers.get('x-forwarded-for')),
+              body as Record<string, unknown>,
+            )
           : await handleCreatePendingSend(pendingSendCtx(deps), body as Record<string, unknown>);
       return json(r.body, r.status);
     }
