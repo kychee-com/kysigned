@@ -528,7 +528,7 @@ export function SignInScreen({
               platform-off fork gets the email-only gate with nothing dangling. */}
           {googleAvailable === true && (
             <>
-              <div className="flex items-center gap-3 text-xs text-gray-400" aria-hidden="true">
+              <div className="flex items-center gap-3 text-xs text-gray-600" aria-hidden="true">
                 <span className="flex-1 h-px bg-gray-200" />
                 or
                 <span className="flex-1 h-px bg-gray-200" />

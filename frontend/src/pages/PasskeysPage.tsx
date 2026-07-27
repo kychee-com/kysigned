@@ -235,12 +235,12 @@ export function PasskeysPage() {
               value={newLabel}
               onChange={(e) => setNewLabel(e.target.value)}
               placeholder='Label (e.g. "MacBook Touch ID")'
-              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+              className="flex-1 min-h-[44px] border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
             />
             <button
               onClick={addPasskey}
               disabled={adding}
-              className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium transition-colors duration-150 hover:bg-gray-700 active:bg-gray-950 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="shrink-0 min-h-[44px] px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium transition-colors duration-150 hover:bg-gray-700 active:bg-gray-950 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               data-testid="passkeys-add"
             >
               {adding ? 'Adding…' : 'Add passkey'}
@@ -255,7 +255,7 @@ export function PasskeysPage() {
 
       <h2 className="text-sm font-semibold mb-3">Your passkeys</h2>
       {loading ? (
-        <div className="text-center py-8">
+        <div className="text-center py-8 min-h-[180px]" data-testid="passkeys-loading">
           <div className="animate-spin h-5 w-5 border-4 border-gray-300 border-t-gray-900 rounded-full mx-auto" />
         </div>
       ) : passkeys.length === 0 ? (
@@ -263,60 +263,126 @@ export function PasskeysPage() {
           No passkeys yet. Add one above to enable one-tap sign-in.
         </p>
       ) : (
-        <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="text-left px-4 py-2 font-medium text-gray-700">Label</th>
-                <th className="text-left px-4 py-2 font-medium text-gray-700">RP</th>
-                <th className="text-left px-4 py-2 font-medium text-gray-700">Created</th>
-                <th className="text-left px-4 py-2 font-medium text-gray-700">Last used</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {passkeys.map((p) => (
-                <tr key={p.id} className="border-t border-gray-100" data-testid={`passkeys-row-${p.id}`}>
-                  <td className="px-4 py-2">{p.label || <em className="text-gray-400">unnamed</em>}</td>
-                  <td className="px-4 py-2 font-mono text-xs text-gray-500">{p.rp_id}</td>
-                  <td className="px-4 py-2 text-xs text-gray-500">
-                    {new Date(p.created_at).toLocaleDateString()}
-                  </td>
-                  <td className="px-4 py-2 text-xs text-gray-500">
-                    {p.last_used_at ? new Date(p.last_used_at).toLocaleDateString() : '—'}
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    {confirmDeleteId === p.id ? (
-                      <span className="text-xs">
-                        <button
-                          onClick={() => removePasskey(p.id)}
-                          className="text-red-600 hover:underline mr-2"
-                          data-testid={`passkeys-confirm-${p.id}`}
-                        >
-                          Confirm delete
-                        </button>
-                        <button
-                          onClick={() => setConfirmDeleteId(null)}
-                          className="text-gray-500 hover:underline"
-                        >
-                          Cancel
-                        </button>
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => setConfirmDeleteId(p.id)}
-                        className="text-xs text-red-600 hover:underline"
-                        data-testid={`passkeys-delete-${p.id}`}
-                      >
-                        Delete
-                      </button>
-                    )}
-                  </td>
+        <>
+          {/* MOBILE (UX-028…UX-033). The five-column table cannot reflow: at
+              375px its dates clipped mid-word and the Delete control sat at
+              x=404px, entirely off-screen — a phone user could not delete a
+              passkey at all. Cards carry the same facts in a layout that has no
+              horizontal axis to overflow, and put Delete in reach. */}
+          <div className="sm:hidden space-y-3">
+            {passkeys.map((p) => (
+              <div
+                key={p.id}
+                className="border border-gray-200 rounded-lg bg-white p-4"
+                data-testid={`passkey-card-${p.id}`}
+              >
+                <p className="text-sm font-medium text-gray-900 break-words">
+                  {p.label || <em className="text-gray-600">unnamed</em>}
+                </p>
+                <dl className="mt-2 space-y-1 text-xs text-gray-600">
+                  <div className="flex justify-between gap-3">
+                    <dt>Created</dt>
+                    <dd className="text-right">{new Date(p.created_at).toLocaleDateString()}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt>Last used</dt>
+                    <dd className="text-right">
+                      {p.last_used_at ? new Date(p.last_used_at).toLocaleDateString() : 'Not used yet'}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt>Site</dt>
+                    <dd className="text-right font-mono break-all">{p.rp_id}</dd>
+                  </div>
+                </dl>
+                {confirmDeleteId === p.id ? (
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      onClick={() => removePasskey(p.id)}
+                      className="flex-1 min-h-[44px] px-4 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm font-medium cursor-pointer"
+                      data-testid={`passkeys-confirm-mobile-${p.id}`}
+                    >
+                      Confirm delete
+                    </button>
+                    <button
+                      onClick={() => setConfirmDeleteId(null)}
+                      className="flex-1 min-h-[44px] px-4 rounded-lg border border-gray-300 text-gray-700 text-sm font-medium cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConfirmDeleteId(p.id)}
+                    className="mt-3 w-full min-h-[44px] min-w-[44px] px-4 rounded-lg border border-gray-300 text-red-600 text-sm font-medium cursor-pointer"
+                    data-testid={`passkeys-delete-mobile-${p.id}`}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* DESKTOP — unchanged layout, which the sweep found clean at 1280px. */}
+          <div
+            className="hidden sm:block border border-gray-200 rounded-lg overflow-hidden bg-white"
+            data-testid="passkeys-table-wrap"
+          >
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="text-left px-4 py-2 font-medium text-gray-700">Label</th>
+                  <th className="text-left px-4 py-2 font-medium text-gray-700">RP</th>
+                  <th className="text-left px-4 py-2 font-medium text-gray-700">Created</th>
+                  <th className="text-left px-4 py-2 font-medium text-gray-700">Last used</th>
+                  <th />
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {passkeys.map((p) => (
+                  <tr key={p.id} className="border-t border-gray-100" data-testid={`passkeys-row-${p.id}`}>
+                    <td className="px-4 py-2">{p.label || <em className="text-gray-600">unnamed</em>}</td>
+                    <td className="px-4 py-2 font-mono text-xs text-gray-600">{p.rp_id}</td>
+                    <td className="px-4 py-2 text-xs text-gray-600">
+                      {new Date(p.created_at).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-2 text-xs text-gray-600">
+                      {p.last_used_at ? new Date(p.last_used_at).toLocaleDateString() : '—'}
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      {confirmDeleteId === p.id ? (
+                        <span className="text-xs">
+                          <button
+                            onClick={() => removePasskey(p.id)}
+                            className="inline-flex items-center min-h-[44px] px-2 text-red-600 hover:underline cursor-pointer"
+                            data-testid={`passkeys-confirm-${p.id}`}
+                          >
+                            Confirm delete
+                          </button>
+                          <button
+                            onClick={() => setConfirmDeleteId(null)}
+                            className="inline-flex items-center min-h-[44px] px-2 text-gray-600 hover:underline cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmDeleteId(p.id)}
+                          className="inline-flex items-center min-h-[44px] px-2 text-xs text-red-600 hover:underline cursor-pointer"
+                          data-testid={`passkeys-delete-${p.id}`}
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       {/* Last-passkey warning footnote */}

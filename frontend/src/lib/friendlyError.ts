@@ -83,7 +83,7 @@ export const SESSION_EXPIRED =
 /** The platform refuses a same-email Google sign-in until the account links
  *  Google (F-41.4): tell them the one path that works, in their own words. */
 export const GOOGLE_ACCOUNT_EXISTS =
-  'This email already has an account here. Sign in with your email link this once, then connect Google from Sign-in methods, and Google will work from then on.';
+  'This email already has an account here. Sign in the way you normally do, then connect Google from Sign-in methods, and Google will work from then on.';
 
 /** A Google identity can belong to one account only (no silent switching). */
 export const GOOGLE_IDENTITY_TAKEN =

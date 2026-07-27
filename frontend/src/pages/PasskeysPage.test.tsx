@@ -53,7 +53,9 @@ describe('PasskeysPage', () => {
       expect(screen.getByTestId('passkeys-row-pk-1')).toBeInTheDocument();
       expect(screen.getByTestId('passkeys-row-pk-2')).toBeInTheDocument();
     });
-    expect(screen.getByText('MacBook Touch ID')).toBeInTheDocument();
+    // The page renders BOTH layouts (mobile cards + the sm+ table) and lets CSS
+    // choose, so a labelled passkey legitimately appears twice in the DOM.
+    expect(screen.getAllByText('MacBook Touch ID')).toHaveLength(2);
   });
 
   it('clicking Delete shows confirm, then DELETEs on confirm', async () => {
