@@ -161,8 +161,10 @@ export function CreateEnvelopePage() {
   const [sentElsewhere, setSentElsewhere] = useState<string | null>(null)
   const claimFiredRef = useRef(false)
   const restoreFiredRef = useRef(false)
-  /** What the service holds for this draft; null until something is committed. */
-  const committedSnapshotRef = useRef<ReturnType<typeof currentSnapshot> | null>(null)
+  /** What the service holds for this draft; null until something is committed.
+   *  STATE, not a ref: the nav guard reads it during render, and a ref change
+   *  would not re-render — the value the guard reads must be the rendered one. */
+  const [committedSnapshot, setCommittedSnapshot] = useState<ReturnType<typeof currentSnapshot> | null>(null)
   const isRestored = restoredFile !== null
 
   // Which mandatory field failed validation — drives the per-field red highlight.
@@ -224,7 +226,7 @@ export function CreateEnvelopePage() {
    */
   const committedAndClean =
     draftHandle !== null &&
-    JSON.stringify(committedSnapshotRef.current) ===
+    JSON.stringify(committedSnapshot) ===
       JSON.stringify(currentSnapshot({ docName, signers, autoClose }))
   const guardArmed = draftDirty && !committedAndClean
   useEffect(() => {
@@ -334,7 +336,7 @@ export function CreateEnvelopePage() {
   const applyRestored = (d: PendingSendView) => {
     // What the SERVICE currently holds. The nav guard compares against this to
     // tell "nothing to lose" from "unsaved edits" (see committedAndClean).
-    committedSnapshotRef.current = restoredSnapshot(d)
+    setCommittedSnapshot(restoredSnapshot(d))
     setDocName(d.document_name)
     setRestoredFile({ name: `${d.document_name}.pdf`, size: d.byte_count })
     setRestoredEmail(d.email)
@@ -650,7 +652,7 @@ export function CreateEnvelopePage() {
     const payload = heldPayloadRef.current ?? (await buildPayload())
     const { draft_id } = await apiPost<{ draft_id: string }>('/v1/pending-send', { email, ...payload })
     setDraftHandle(draft_id)
-    committedSnapshotRef.current = currentSnapshot({ docName, signers, autoClose })
+    setCommittedSnapshot(currentSnapshot({ docName, signers, autoClose }))
     return draft_id
   }
 
@@ -676,7 +678,7 @@ export function CreateEnvelopePage() {
     const payload = heldPayloadRef.current ?? (await buildPayload())
     const { draft_id } = await apiPost<{ draft_id: string }>('/v1/pending-send', { ceremony: true, ...payload })
     setDraftHandle(draft_id)
-    committedSnapshotRef.current = currentSnapshot({ docName, signers, autoClose })
+    setCommittedSnapshot(currentSnapshot({ docName, signers, autoClose }))
     allowNavRef.current = true
     return draft_id
   }
@@ -693,7 +695,7 @@ export function CreateEnvelopePage() {
       })),
       auto_close: autoClose,
     })
-    committedSnapshotRef.current = currentSnapshot({ docName, signers, autoClose })
+    setCommittedSnapshot(currentSnapshot({ docName, signers, autoClose }))
   }
 
   /** Claim + send a restored draft (the signed-in path onto an existing draft). */

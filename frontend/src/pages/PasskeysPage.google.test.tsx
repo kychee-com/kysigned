@@ -4,7 +4,7 @@
  * ceremony) / Connected-as (from the identities opt-in) — feature-detected
  * like every Google surface.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -165,4 +165,12 @@ describe('the link ceremony reports its outcome ON THIS PAGE (AC-248)', () => {
     expect(apiPostMock).not.toHaveBeenCalledWith('/v1/auth/google/exchange', expect.anything());
     expect(screen.queryByTestId('google-ceremony-error')).toBeNull();
   });
+});
+
+afterEach(() => {
+  // Leave the URL as we found it. These tests drive real location state
+  // (ceremony hashes), and a leftover path routed a LATER test file to the
+  // wrong page and timed it out. Cleaning up keeps the suite order-independent.
+  window.history.replaceState({}, '', '/');
+  sessionStorage.clear();
 });

@@ -3,7 +3,7 @@
  * Continue-with-Google button on the one sign-in screen, the same-tab landing
  * (`#code`/`#error` beside `?token`), and the friendly refusal copy.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -167,4 +167,12 @@ describe('the same-tab landing (#code / #error beside ?token)', () => {
     // The hash is consumed — a refresh does not replay the error.
     expect(window.location.hash).toBe('');
   });
+});
+
+afterEach(() => {
+  // Leave the URL as we found it. These tests drive real location state
+  // (ceremony hashes), and a leftover path routed a LATER test file to the
+  // wrong page and timed it out. Cleaning up keeps the suite order-independent.
+  window.history.replaceState({}, '', '/');
+  sessionStorage.clear();
 });
