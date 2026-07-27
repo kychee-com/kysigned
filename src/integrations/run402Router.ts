@@ -61,6 +61,7 @@ export const API_ROUTES: RouteDef[] = [
   { method: 'POST', pattern: '/v1/auth/google/start', name: 'googleStart', auth: 'public' },
   { method: 'POST', pattern: '/v1/auth/google/exchange', name: 'googleExchange', auth: 'public' },
   { method: 'POST', pattern: '/v1/auth/google/link', name: 'googleLink', auth: 'session' },
+  { method: 'POST', pattern: '/v1/auth/google/disconnect', name: 'googleDisconnect', auth: 'session' },
   // proxy to run402's `/auth/v1/passkeys/*` (run402 owns the relying-party logic).
   // login/* is public (the ceremony IS the auth; verify issues the session
   // cookie); register/list/delete are session-authed (the session's run402 token

@@ -320,3 +320,69 @@ export async function handleGoogleExchange(
 
   return { status: 200, body: { ok: true, email }, setCookies: [cookie] };
 }
+
+/**
+ * F-41.8 (AC-254) — Disconnect Google: remove the creator's own Google identity
+ * from their account. Two platform calls, both with the session's server-held
+ * token (never the browser's): read the identities to find the google
+ * `provider_sub`, then unlink by it.
+ *
+ * The platform gates this on the actor having authenticated RECENTLY, and a
+ * refreshed access token preserves the authentication time of the sign-in it
+ * descends from — so a long-lived session (ours is 30 days, refreshed
+ * transparently) is effectively never recent enough. That refusal is therefore
+ * the NORMAL first answer, not an error: it is mapped to a distinct
+ * `auth_reauth_required` so the page can ask for a fresh sign-in in plain
+ * words, and no platform code or vendor string reaches the creator.
+ */
+export async function handleGoogleDisconnect(ctx: GoogleHandlerCtx, actor: SessionActor): Promise<AuthResult> {
+  const session = await getAuthSession(ctx.auth.pool, actor.sessionId);
+  const bearer = session?.run402_access_token;
+  if (!bearer) return SIGNIN_FAILED;
+
+  const headers = {
+    'Content-Type': 'application/json',
+    apikey: ctx.auth.session.projectAnonKey,
+    Authorization: `Bearer ${bearer}`,
+  };
+
+  // 1. Which identity? The unlink's `subject` is the provider's subject id
+  //    (provider_sub), NOT our user id — a distinction worth naming, because
+  //    "subject" reads like the latter.
+  let providerSub: string | null = null;
+  try {
+    const res = await fetchImpl(ctx)(`${run402Base(ctx)}/auth/v1/account/identities`, { headers });
+    if (res.status < 200 || res.status >= 300) return SIGNIN_FAILED;
+    const body = (await res.json()) as { identities?: Array<{ provider?: string; provider_sub?: string }> };
+    providerSub = (body.identities ?? []).find((i) => i?.provider === 'google')?.provider_sub ?? null;
+  } catch {
+    return SIGNIN_FAILED;
+  }
+  // Nothing linked is a clean, idempotent outcome — the creator's intent (no
+  // Google on this account) already holds.
+  if (!providerSub) return { status: 200, body: { ok: true, disconnected: false } };
+
+  try {
+    const res = await fetchImpl(ctx)(`${run402Base(ctx)}/auth/v1/account/identities/unlink`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ provider: 'google', subject: providerSub }),
+    });
+    if (res.status >= 200 && res.status < 300) {
+      return { status: 200, body: { ok: true, disconnected: true } };
+    }
+    const err = (await res.json().catch(() => ({}))) as { code?: string };
+    if (res.status === 401 && err.code === 'R402_AUTH_FRESHNESS_REQUIRED') {
+      return {
+        status: 401,
+        body: {
+          error: 'For your security, sign in again before disconnecting Google.',
+          code: 'auth_reauth_required',
+        },
+      };
+    }
+    return SIGNIN_FAILED;
+  } catch {
+    return SIGNIN_FAILED;
+  }
+}

@@ -22,6 +22,7 @@ import {
   handleGoogleStart,
   handleGoogleExchange,
   handleGoogleLink,
+  handleGoogleDisconnect,
   type GoogleHandlerCtx,
 } from './googleHandlers.js';
 
@@ -374,5 +375,87 @@ describe('the LINK ceremony must return somewhere that can SHOW the outcome (AC-
     await handleGoogleStart(baseCtx(pool, impl), {});
     const start = calls.find((c) => c.url.includes('/auth/v1/oauth/google/start'))!;
     assert.equal(start.body.redirect_url, 'https://kysigned.com/dashboard');
+  });
+});
+
+describe('handleGoogleDisconnect (F-41.8 / AC-254) — reverse the link, server-side', () => {
+  /** run402 fake for the identity routes: list → unlink, with a freshness gate. */
+  function identityFake(opts: { fresh?: boolean; identities?: unknown[] } = {}) {
+    const calls: UpstreamCall[] = [];
+    const impl = async (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => {
+      const body = init?.body ? (JSON.parse(init.body) as Record<string, unknown>) : {};
+      calls.push({ url, body, headers: init?.headers ?? {} });
+      if (url.includes('/auth/v1/account/identities/unlink')) {
+        // The platform refuses unless the actor authenticated recently, and a
+        // refreshed token keeps the ORIGINAL auth_time — so this is the normal
+        // answer for a long-lived session, not an edge case.
+        if (!opts.fresh) {
+          return {
+            status: 401,
+            ok: false,
+            json: async () => ({
+              error: 'Re-authentication required to unlink an identity.',
+              code: 'R402_AUTH_FRESHNESS_REQUIRED',
+              details: { max_age: '5m' },
+            }),
+          };
+        }
+        return { status: 200, ok: true, json: async () => ({ ok: true, unlinked: true }) };
+      }
+      if (url.includes('/auth/v1/account/identities')) {
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            identities: opts.identities ?? [
+              { provider: 'google', provider_sub: 'g-sub-123', provider_email: 'owner@gmail.com' },
+            ],
+          }),
+        };
+      }
+      return { status: 404, ok: false, json: async () => ({}) };
+    };
+    return { impl, calls };
+  }
+
+  const ACTOR = { email: 'owner@example.com', sessionId: 'sess-1' };
+
+  it('finds the google identity and unlinks it by its provider_sub, with the session Bearer', async () => {
+    const { impl, calls } = identityFake({ fresh: true });
+    const { pool } = fakePool();
+    const r = await handleGoogleDisconnect(baseCtx(pool, impl), ACTOR);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { ok: true, disconnected: true });
+    const unlink = calls.find((c) => c.url.includes('/identities/unlink'))!;
+    assert.equal(unlink.body.provider, 'google');
+    assert.equal(unlink.body.subject, 'g-sub-123', 'subject is the provider_sub, not the user id');
+    assert.equal(unlink.headers['Authorization'], 'Bearer at-owner', 'the server-held token, never the browser');
+    assert.equal(unlink.headers['apikey'], 'anon');
+  });
+
+  it('maps the platform freshness refusal to a re-auth instruction, NOT an error', async () => {
+    const { impl } = identityFake({ fresh: false });
+    const { pool } = fakePool();
+    const r = await handleGoogleDisconnect(baseCtx(pool, impl), ACTOR);
+    assert.equal(r.status, 401);
+    assert.equal((r.body as { code?: string }).code, 'auth_reauth_required');
+    const text = JSON.stringify(r.body);
+    assert.ok(!/R402_|401|run402/.test(text), 'no platform code or vendor string reaches the creator');
+  });
+
+  it('an account with no google identity answers cleanly instead of calling unlink', async () => {
+    const { impl, calls } = identityFake({ fresh: true, identities: [] });
+    const { pool } = fakePool();
+    const r = await handleGoogleDisconnect(baseCtx(pool, impl), ACTOR);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { ok: true, disconnected: false });
+    assert.equal(calls.filter((c) => c.url.includes('/identities/unlink')).length, 0);
+  });
+
+  it('refuses when the session carries no platform token', async () => {
+    const { impl } = identityFake({ fresh: true });
+    const pool: DbPool = { async query() { return { rows: [], rowCount: 0 } as never; }, async end() {} };
+    const r = await handleGoogleDisconnect(baseCtx(pool, impl), ACTOR);
+    assert.equal(r.status, 401);
   });
 });

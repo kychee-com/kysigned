@@ -80,6 +80,9 @@ describe('matchRoute', () => {
     // Connect Google attaches an identity to the CALLER's account — session only.
     assert.equal(matchRoute('POST', '/v1/auth/google/link')?.name, 'googleLink');
     assert.equal(matchRoute('POST', '/v1/auth/google/link')?.auth, 'session');
+    // F-41.8 — removing a sign-in method is session-only, like adding one.
+    assert.equal(matchRoute('POST', '/v1/auth/google/disconnect')?.name, 'googleDisconnect');
+    assert.equal(matchRoute('POST', '/v1/auth/google/disconnect')?.auth, 'session');
   });
 
   it('routes passkeys: login/* is public, register/list/delete are session', () => {

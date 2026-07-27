@@ -174,3 +174,69 @@ afterEach(() => {
   window.history.replaceState({}, '', '/');
   sessionStorage.clear();
 });
+
+describe('Disconnect Google (F-41.8 / AC-254)', () => {
+  function connected() {
+    apiGetMock.mockImplementation(async (path: string) => {
+      if (path === '/v1/auth/methods') return { google: true };
+      if (path === '/v1/auth/user?identities=1')
+        return { email: 'owner@x.com', google_connected: true, google_email: 'owner@gmail.com' };
+      if (path === '/v1/auth/passkeys') return { passkeys: [] };
+      throw new Error(`unexpected apiGet ${path}`);
+    });
+  }
+
+  it('offers Disconnect when connected, and will NOT act on a single click', async () => {
+    connected();
+    renderPage();
+    const btn = await screen.findByTestId('google-disconnect');
+    fireEvent.click(btn);
+    // A confirmation stands between the click and the removal.
+    expect(await screen.findByTestId('google-disconnect-confirm')).toBeTruthy();
+    expect(apiPostMock).not.toHaveBeenCalledWith('/v1/auth/google/disconnect', expect.anything());
+  });
+
+  it('confirming disconnects and returns the row to Connect', async () => {
+    // The fake behaves like the real server: once the disconnect POST lands,
+    // the identity read stops reporting a connection. Swapping the mock after
+    // the fact raced the component's own re-read, which is a test artefact, not
+    // a product behaviour.
+    let stillConnected = true;
+    apiGetMock.mockImplementation(async (path: string) => {
+      if (path === '/v1/auth/methods') return { google: true };
+      if (path === '/v1/auth/user?identities=1')
+        return stillConnected
+          ? { email: 'owner@x.com', google_connected: true, google_email: 'owner@gmail.com' }
+          : { email: 'owner@x.com', google_connected: false };
+      if (path === '/v1/auth/passkeys') return { passkeys: [] };
+      throw new Error(`unexpected apiGet ${path}`);
+    });
+    apiPostMock.mockImplementation(async (path: string) => {
+      if (path === '/v1/auth/google/disconnect') {
+        stillConnected = false;
+        return { ok: true, disconnected: true };
+      }
+      throw new Error(`unexpected apiPost ${path}`);
+    });
+    renderPage();
+    fireEvent.click(await screen.findByTestId('google-disconnect'));
+    fireEvent.click(await screen.findByTestId('google-disconnect-confirm'));
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/v1/auth/google/disconnect', {}));
+    await waitFor(() => expect(screen.getByTestId('google-connect')).toBeTruthy());
+    expect(screen.queryByTestId('google-disconnect')).toBeNull();
+  });
+
+  it('a stale sign-in asks for a fresh one in plain words, naming no code or vendor', async () => {
+    connected();
+    const err = Object.assign(new Error('reauth'), { status: 401, code: 'auth_reauth_required' });
+    apiPostMock.mockRejectedValue(err);
+    renderPage();
+    fireEvent.click(await screen.findByTestId('google-disconnect'));
+    fireEvent.click(await screen.findByTestId('google-disconnect-confirm'));
+    const note = await screen.findByTestId('google-reauth-note');
+    expect(note.textContent).toMatch(/sign in again/i);
+    expect(note.textContent).not.toMatch(/401|R402_|run402|token/i);
+    // And it offers that sign-in directly rather than leaving them to find it.
+    expect(screen.getByTestId('google-reauth-signin')).toBeTruthy();
+  });
+});

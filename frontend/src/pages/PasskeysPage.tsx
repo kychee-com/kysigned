@@ -39,6 +39,10 @@ export function PasskeysPage() {
   /** AC-248 — what the just-returned link ceremony did, told HERE. */
   const [ceremonyError, setCeremonyError] = useState('');
   const [ceremonyLinked, setCeremonyLinked] = useState(false);
+  /** F-41.8 — Disconnect: confirm-gated, and re-auth-aware. */
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [reauthNeeded, setReauthNeeded] = useState(false);
   const justLinked =
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('linked') === '1';
 
@@ -118,6 +122,33 @@ export function PasskeysPage() {
     } catch {
       setError(GOOGLE_UNAVAILABLE);
       setConnecting(false);
+    }
+  };
+
+  /**
+   * F-41.8 — remove the Google connection. The platform requires a RECENT
+   * sign-in and a refreshed token keeps its original authentication time, so a
+   * long-lived session is normally not recent enough: that answer is a step in
+   * the flow, not an error, and it asks for a fresh sign-in in plain words.
+   */
+  const disconnectGoogle = async () => {
+    if (disconnecting) return;
+    setDisconnecting(true);
+    setError('');
+    setReauthNeeded(false);
+    try {
+      await apiPost('/v1/auth/google/disconnect', {});
+      setConfirmDisconnect(false);
+      setCeremonyLinked(false);
+      const u = await apiGet<{ google_connected?: boolean; google_email?: string }>('/v1/auth/user?identities=1');
+      setGoogleConnected(u.google_connected === true);
+      setGoogleEmail(u.google_email ?? null);
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      if (code === 'auth_reauth_required') setReauthNeeded(true);
+      else setError(GOOGLE_UNAVAILABLE);
+    } finally {
+      setDisconnecting(false);
     }
   };
 
@@ -211,10 +242,53 @@ export function PasskeysPage() {
               <div className="h-[44px] w-40 bg-gray-100 rounded-lg mt-3" />
             </div>
           ) : googleConnected === true ? (
-            <p className="text-sm text-gray-600">
-              Connected as <span className="font-medium">{googleEmail ?? 'your Google account'}</span>. You can
-              sign in with Google or with your email link.
-            </p>
+            <div>
+              <p className="text-sm text-gray-600">
+                Connected as <span className="font-medium">{googleEmail ?? 'your Google account'}</span>. You can
+                sign in with Google or with your email link.
+              </p>
+              {reauthNeeded && (
+                <div
+                  className="mt-3 px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-sm"
+                  data-testid="google-reauth-note"
+                >
+                  <p>For your security, sign in again before disconnecting Google.</p>
+                  <a
+                    href="/dashboard?next=%2Faccount%2Fpasskeys"
+                    className="mt-2 inline-flex items-center min-h-[44px] px-4 rounded-lg border border-amber-300 bg-white text-sm font-medium cursor-pointer"
+                    data-testid="google-reauth-signin"
+                  >
+                    Sign in again
+                  </a>
+                </div>
+              )}
+              {confirmDisconnect ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    onClick={() => void disconnectGoogle()}
+                    disabled={disconnecting}
+                    className="min-h-[44px] px-4 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm font-medium cursor-pointer disabled:opacity-60"
+                    data-testid="google-disconnect-confirm"
+                  >
+                    {disconnecting ? 'Disconnecting…' : 'Yes, disconnect Google'}
+                  </button>
+                  <button
+                    onClick={() => { setConfirmDisconnect(false); setReauthNeeded(false); }}
+                    className="min-h-[44px] px-4 rounded-lg border border-gray-300 text-gray-700 text-sm font-medium cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmDisconnect(true)}
+                  className="mt-3 min-h-[44px] px-4 rounded-lg border border-gray-300 text-gray-700 text-sm font-medium cursor-pointer"
+                  data-testid="google-disconnect"
+                >
+                  Disconnect
+                </button>
+              )}
+            </div>
           ) : (
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm text-gray-600">

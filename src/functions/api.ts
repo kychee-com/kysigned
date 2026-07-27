@@ -78,6 +78,7 @@ import {
   handleGoogleStart,
   handleGoogleExchange,
   handleGoogleLink,
+  handleGoogleDisconnect,
   type GoogleHandlerCtx,
 } from '../api/auth/googleHandlers.js';
 import {
@@ -468,6 +469,10 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
     }
     case 'googleLink': {
       const r = await handleGoogleLink(googleCtx(deps, req), { email: actorEmail!, sessionId: actorSessionId! });
+      return json(r.body, r.status, r.setCookies);
+    }
+    case 'googleDisconnect': {
+      const r = await handleGoogleDisconnect(googleCtx(deps, req), { email: actorEmail!, sessionId: actorSessionId! });
       return json(r.body, r.status, r.setCookies);
     }
     case 'authUser': {
