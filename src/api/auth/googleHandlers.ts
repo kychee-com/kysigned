@@ -97,6 +97,19 @@ function dashboardLanding(appBaseUrl: string): string {
   return new URL('/dashboard', appBaseUrl).toString();
 }
 
+/**
+ * AC-248 — where a LINK ceremony comes back to. NOT the dashboard: a link is
+ * always started by a signed-in visitor, and a signed-in visitor renders the
+ * dashboard rather than the sign-in screen that reads the ceremony result off
+ * the URL — so both the confirmation and the refusal were invisible (Barry,
+ * walk 5: a correctly-refused cross-account link showed him nothing, and he
+ * reasonably concluded it might have worked). It returns to the page the
+ * visitor pressed Connect on, which can therefore report what happened.
+ */
+function signInMethodsLanding(appBaseUrl: string): string {
+  return new URL('/account/passkeys', appBaseUrl).toString();
+}
+
 /** run402 machine start (routes/auth.ts:516.., read at 414cc643). */
 async function run402GoogleStart(
   ctx: GoogleHandlerCtx,
@@ -135,7 +148,7 @@ async function startCeremony(
   const started = await run402GoogleStart(
     ctx,
     {
-      redirect_url: dashboardLanding(ctx.auth.appBaseUrl),
+      redirect_url: intent === 'link' ? signInMethodsLanding(ctx.auth.appBaseUrl) : dashboardLanding(ctx.auth.appBaseUrl),
       mode: 'redirect',
       intent,
       code_challenge: pkceChallengeS256(pkceVerifier),

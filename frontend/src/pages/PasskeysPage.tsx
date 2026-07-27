@@ -11,8 +11,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiDelete, apiGet, apiPost } from '../lib/api';
 import { passkeysSupported, registerPasskey } from '../auth/passkey';
-import { fetchAuthMethods } from '../auth/google';
-import { GOOGLE_UNAVAILABLE } from '../lib/friendlyError';
+import { fetchAuthMethods, readGoogleHash, exchangeGoogle } from '../auth/google';
+import { friendlyGoogleError, GOOGLE_UNAVAILABLE } from '../lib/friendlyError';
 import { hardNavigate } from '../lib/hardNavigate';
 
 interface PasskeyRow {
@@ -36,8 +36,53 @@ export function PasskeysPage() {
   const [googleConnected, setGoogleConnected] = useState<boolean | null>(null);
   const [googleEmail, setGoogleEmail] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  /** AC-248 — what the just-returned link ceremony did, told HERE. */
+  const [ceremonyError, setCeremonyError] = useState('');
+  const [ceremonyLinked, setCeremonyLinked] = useState(false);
   const justLinked =
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('linked') === '1';
+
+  // AC-248 — the link ceremony returns to THIS page (googleHandlers'
+  // signInMethodsLanding), because the visitor is signed in and the sign-in
+  // screen that reads ceremony results never renders for them. Both outcomes
+  // are consumed exactly once here: the hash is stripped immediately so a
+  // refresh cannot replay a stale refusal or re-spend a code.
+  const [ceremonyHash] = useState(() => {
+    if (typeof window === 'undefined') return null;
+    const parsed = readGoogleHash(window.location.hash);
+    if (parsed) {
+      const clean = new URL(window.location.href);
+      clean.hash = '';
+      window.history.replaceState({}, '', clean.toString());
+    }
+    return parsed;
+  });
+
+  useEffect(() => {
+    if (!ceremonyHash) return;
+    if (ceremonyHash.kind === 'error') {
+      setCeremonyError(friendlyGoogleError(ceremonyHash.error));
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        await exchangeGoogle(ceremonyHash.code, ceremonyHash.ceremony);
+        if (cancelled) return;
+        setCeremonyLinked(true);
+        // Re-read so the row reflects the connection the exchange just sealed.
+        const u = await apiGet<{ google_connected?: boolean; google_email?: string }>('/v1/auth/user?identities=1');
+        if (cancelled) return;
+        setGoogleConnected(u.google_connected === true);
+        setGoogleEmail(u.google_email ?? null);
+      } catch {
+        if (!cancelled) setCeremonyError(friendlyGoogleError(null));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ceremonyHash]);
 
   useEffect(() => {
     let cancelled = false;
@@ -135,7 +180,15 @@ export function PasskeysPage() {
       {googleAvailable && (
         <div className="mb-8 p-4 border border-gray-200 rounded-lg bg-white" data-testid="google-row">
           <h2 className="text-sm font-semibold mb-1">Google</h2>
-          {justLinked && googleConnected && (
+          {ceremonyError && (
+            <p
+              className="mb-2 px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-sm"
+              data-testid="google-ceremony-error"
+            >
+              {ceremonyError}
+            </p>
+          )}
+          {(justLinked || ceremonyLinked) && googleConnected && (
             <p
               className="mb-2 px-3 py-2 rounded-lg border border-green-200 bg-green-50 text-green-800 text-sm"
               data-testid="google-linked-note"

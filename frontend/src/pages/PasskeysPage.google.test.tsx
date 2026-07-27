@@ -116,3 +116,53 @@ describe('the Google row', () => {
     expect(hardNavigateMock).not.toHaveBeenCalled();
   });
 });
+
+describe('the link ceremony reports its outcome ON THIS PAGE (AC-248)', () => {
+  // Barry, walk 5: the platform correctly refused connecting a Google identity
+  // already linked to his other account — and he was shown NOTHING, so he
+  // reasonably concluded it might have worked. "refused in plain words" is the
+  // clause that failed, and it failed because the round trip returned to a page
+  // that never reads the result. It now returns HERE, so here is where both
+  // outcomes are told.
+  it('#error=identity_already_linked says so in plain words, naming no code or vendor error', async () => {
+    renderPage('#error=identity_already_linked&state=gc_00000000-0000-4000-8000-000000000001');
+    const note = await screen.findByTestId('google-ceremony-error');
+    expect(note.textContent).toMatch(/already connected to a different sign-in/i);
+    expect(note.textContent).not.toMatch(/identity_already_linked|run402|\b[45]\d\d\b/);
+    // Consumed once — a refresh must not replay it.
+    expect(window.location.hash).toBe('');
+  });
+
+  it('#code confirms the connection after exchanging, and refreshes the row', async () => {
+    apiPostMock.mockResolvedValue({ ok: true, linked: true, email: 'owner@x.com' });
+    let identityCalls = 0;
+    apiGetMock.mockImplementation(async (path: string) => {
+      if (path === '/v1/auth/methods') return { google: true };
+      if (path === '/v1/auth/user?identities=1') {
+        identityCalls += 1;
+        // Connected only AFTER the exchange lands.
+        return identityCalls > 1
+          ? { email: 'owner@x.com', google_connected: true, google_email: 'owner@gmail.com' }
+          : { email: 'owner@x.com', google_connected: false };
+      }
+      if (path === '/v1/auth/passkeys') return { passkeys: [] };
+      throw new Error(`unexpected apiGet ${path}`);
+    });
+    renderPage('#code=abc&state=gc_00000000-0000-4000-8000-000000000001');
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith('/v1/auth/google/exchange', {
+        code: 'abc',
+        ceremony: 'gc_00000000-0000-4000-8000-000000000001',
+      }),
+    );
+    expect((await screen.findByTestId('google-linked-note')).textContent).toMatch(/google is connected/i);
+    await waitFor(() => expect(screen.getByTestId('google-row').textContent).toMatch(/connected as owner@gmail\.com/i));
+  });
+
+  it('a foreign or absent hash changes nothing', async () => {
+    renderPage('#code=abc&state=not-ours');
+    await screen.findByTestId('google-connect');
+    expect(apiPostMock).not.toHaveBeenCalledWith('/v1/auth/google/exchange', expect.anything());
+    expect(screen.queryByTestId('google-ceremony-error')).toBeNull();
+  });
+});

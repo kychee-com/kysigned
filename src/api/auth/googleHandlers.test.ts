@@ -350,3 +350,29 @@ describe('handleGoogleLink (F-41.4/73.5) — Connect Google from a signed-in ses
     assert.equal(r.status, 503);
   });
 });
+
+describe('the LINK ceremony must return somewhere that can SHOW the outcome (AC-248)', () => {
+  // Barry, walk 5: connecting an identity already linked to another account was
+  // correctly REFUSED by the platform, and he was shown nothing at all — he had
+  // to inspect Sign-in methods to guess what happened, and initially concluded
+  // he HAD connected it. The link round trip returned to /dashboard, where a
+  // signed-in visitor renders the dashboard and the result-reading code (which
+  // lives on the sign-in screen) never runs. A link ceremony is always started
+  // by a signed-in user, so /dashboard can never report it: it must come back to
+  // the page the visitor started from.
+  it('starts the link ceremony with the Sign-in methods page as its return, not the dashboard', async () => {
+    const { impl, calls } = run402Fake();
+    const { pool } = fakePool();
+    await handleGoogleLink(baseCtx(pool, impl), { email: 'owner@example.com', sessionId: 'sess-1' });
+    const start = calls.find((c) => c.url.includes('/auth/v1/oauth/google/start'))!;
+    assert.equal(start.body.redirect_url, 'https://kysigned.com/account/passkeys');
+  });
+
+  it('an ordinary sign-in ceremony still returns to the SPA-served dashboard landing (GH#20)', async () => {
+    const { impl, calls } = run402Fake();
+    const { pool } = fakePool();
+    await handleGoogleStart(baseCtx(pool, impl), {});
+    const start = calls.find((c) => c.url.includes('/auth/v1/oauth/google/start'))!;
+    assert.equal(start.body.redirect_url, 'https://kysigned.com/dashboard');
+  });
+});
