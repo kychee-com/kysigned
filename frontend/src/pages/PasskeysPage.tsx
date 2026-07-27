@@ -184,7 +184,7 @@ export function PasskeysPage() {
           never happens (the platform reports Google on). */}
       {googleAvailable !== false && (
         <div
-          className="mb-8 p-4 border border-gray-200 rounded-lg bg-white min-h-[132px]"
+          className="mb-8 p-4 border border-gray-200 rounded-lg bg-white min-h-[200px] sm:min-h-[160px]"
           data-testid="google-row"
         >
           <h2 className="text-sm font-semibold mb-1">Google</h2>
