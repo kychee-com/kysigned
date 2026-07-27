@@ -32,7 +32,7 @@ export function PasskeysPage() {
   const [adding, setAdding] = useState(false);
   // F-41.4 — the Google row: platform availability + this account's link state
   // (the ?identities=1 opt-in — only THIS page pays the extra upstream hop).
-  const [googleAvailable, setGoogleAvailable] = useState(false);
+  const [googleAvailable, setGoogleAvailable] = useState<boolean | null>(null);
   const [googleConnected, setGoogleConnected] = useState<boolean | null>(null);
   const [googleEmail, setGoogleEmail] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -88,8 +88,9 @@ export function PasskeysPage() {
     let cancelled = false;
     void (async () => {
       const m = await fetchAuthMethods();
-      if (cancelled || !m.google) return;
-      setGoogleAvailable(true);
+      if (cancelled) return;
+      setGoogleAvailable(m.google);
+      if (!m.google) return;
       try {
         const u = await apiGet<{ google_connected?: boolean; google_email?: string }>('/v1/auth/user?identities=1');
         if (cancelled) return;
@@ -177,8 +178,15 @@ export function PasskeysPage() {
         </div>
       )}
 
-      {googleAvailable && (
-        <div className="mb-8 p-4 border border-gray-200 rounded-lg bg-white" data-testid="google-row">
+      {/* UX-030 — the card holds its space while the platform probe and the
+          identity read are in flight. `googleAvailable === null` is "still
+          asking"; only a definitive NO removes the card, which on this service
+          never happens (the platform reports Google on). */}
+      {googleAvailable !== false && (
+        <div
+          className="mb-8 p-4 border border-gray-200 rounded-lg bg-white min-h-[132px]"
+          data-testid="google-row"
+        >
           <h2 className="text-sm font-semibold mb-1">Google</h2>
           {ceremonyError && (
             <p
@@ -196,7 +204,13 @@ export function PasskeysPage() {
               Google is connected. From now on you can sign in with it directly.
             </p>
           )}
-          {googleConnected === true ? (
+          {googleAvailable === null || googleConnected === null ? (
+            <div className="animate-pulse" aria-hidden="true" data-testid="google-row-skeleton">
+              <div className="h-4 w-3/4 bg-gray-100 rounded mt-2" />
+              <div className="h-4 w-1/2 bg-gray-100 rounded mt-2" />
+              <div className="h-[44px] w-40 bg-gray-100 rounded-lg mt-3" />
+            </div>
+          ) : googleConnected === true ? (
             <p className="text-sm text-gray-600">
               Connected as <span className="font-medium">{googleEmail ?? 'your Google account'}</span>. You can
               sign in with Google or with your email link.
