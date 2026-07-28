@@ -45,6 +45,13 @@ export interface RequestMagicLinkOpts extends BaseRun402AuthOpts {
    * request is byte-identical to what it was before F-40.
    */
   clientState?: string;
+  /**
+   * F-43.1 — ask the platform to put a six-digit code in the email BESIDE the
+   * link (`delivery: "both"`: one challenge backs both credentials; whichever
+   * is used first consumes it). Omitted entirely when absent, so the link-only
+   * request stays byte-identical to what it was before F-43.
+   */
+  delivery?: 'both';
 }
 
 export interface RequestMagicLinkResult {
@@ -52,6 +59,12 @@ export interface RequestMagicLinkResult {
   reason?: string;
   /** The upstream status, so a caller can tell a REFUSAL apart from a fault. */
   status?: number;
+  /**
+   * F-43.1 — the opaque handle the code is verified against
+   * (`grant_type=email_code`). Present only on a both-mode accepted response;
+   * non-enumerating by platform design (returned regardless of account state).
+   */
+  challengeId?: string;
 }
 
 export async function requestMagicLink(
@@ -68,6 +81,7 @@ export async function requestMagicLink(
       email: opts.email,
       redirect_url: opts.redirectUrl,
       ...(opts.clientState ? { client_state: opts.clientState } : {}),
+      ...(opts.delivery ? { delivery: opts.delivery } : {}),
     }),
   });
   if (res.status < 200 || res.status >= 300) {
@@ -80,7 +94,18 @@ export async function requestMagicLink(
     }
     return { ok: false, reason, status: res.status };
   }
-  return { ok: true };
+  // Both-mode accepted responses carry the challenge handle; the link-only
+  // response body is ignored exactly as before.
+  let challengeId: string | undefined;
+  if (opts.delivery) {
+    try {
+      const body = (await res.json()) as { challenge_id?: unknown };
+      if (typeof body.challenge_id === 'string' && body.challenge_id) challengeId = body.challenge_id;
+    } catch {
+      // a malformed accepted body degrades to link-only; the email still went out
+    }
+  }
+  return { ok: true, ...(challengeId ? { challengeId } : {}) };
 }
 
 export interface ExchangeMagicLinkOpts extends BaseRun402AuthOpts {
@@ -127,6 +152,75 @@ export async function exchangeMagicLinkToken(
       // ignore
     }
     return { ok: false, reason };
+  }
+  const body = (await res.json()) as {
+    access_token?: string;
+    refresh_token?: string;
+    user?: { email?: string };
+    magic_link?: { client_state?: unknown };
+  };
+  const clientState = body.magic_link?.client_state;
+  return {
+    ok: true,
+    accessToken: body.access_token,
+    refreshToken: body.refresh_token,
+    email: body.user?.email,
+    ...(typeof clientState === 'string' && clientState ? { clientState } : {}),
+  };
+}
+
+// --- Email-code exchange (F-43.2) ---
+
+export interface ExchangeEmailCodeOpts extends BaseRun402AuthOpts {
+  challengeId: string;
+  code: string;
+}
+
+export interface ExchangeEmailCodeResult {
+  ok: boolean;
+  accessToken?: string;
+  refreshToken?: string;
+  email?: string;
+  /** Same preserved metadata block as the link exchange (F-40's bound copy). */
+  clientState?: string;
+  reason?: string;
+  /**
+   * The platform's error code on failure — R402_AUTH_EMAIL_CODE_INVALID
+   * (uniform: wrong, expired, superseded, consumed, cross-project) or
+   * R402_AUTH_EMAIL_CODE_EXHAUSTED (fifth wrong attempt burned it). The
+   * handler maps these to friendly copy; they are never rendered.
+   */
+  errorCode?: string;
+}
+
+/**
+ * Verify a six-digit email code against its challenge —
+ * `POST /auth/v1/token?grant_type=email_code`, body exactly
+ * `{challenge_id, code}` per the platform contract. Success returns the SAME
+ * session contract as the link exchange (one shared challenge backs both
+ * credentials; whichever is used first consumes it).
+ */
+export async function exchangeEmailCode(opts: ExchangeEmailCodeOpts): Promise<ExchangeEmailCodeResult> {
+  const f = defaultFetch(opts.fetchImpl);
+  const res = await f(`${defaultBase(opts.run402BaseUrl)}/auth/v1/token?grant_type=email_code`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: opts.projectAnonKey,
+    },
+    body: JSON.stringify({ challenge_id: opts.challengeId, code: opts.code }),
+  });
+  if (res.status < 200 || res.status >= 300) {
+    let reason = `run402 returned status ${res.status}`;
+    let errorCode: string | undefined;
+    try {
+      const body = (await res.json()) as { error?: string; code?: string };
+      if (body?.error) reason = `${reason}: ${body.error}`;
+      if (typeof body?.code === 'string') errorCode = body.code;
+    } catch {
+      // ignore
+    }
+    return { ok: false, reason, ...(errorCode ? { errorCode } : {}) };
   }
   const body = (await res.json()) as {
     access_token?: string;

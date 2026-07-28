@@ -18,6 +18,14 @@ export const METHODS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export interface AuthMethods {
   google: boolean;
+  /**
+   * F-43.1 — true iff the platform advertises BOTH-mode email delivery
+   * (`magic_link.delivery_modes` contains "both"). We only ever request both
+   * (the email keeps its link), so this single capability gates the whole
+   * code path per the platform's managed-client rule: select both only when
+   * advertised, fall back to link without probing.
+   */
+  email_code: boolean;
 }
 
 type FetchLike = (
@@ -43,19 +51,24 @@ export function createMethodsResolver(opts: MethodsResolverOpts): () => Promise<
 
   return async () => {
     if (cached && now() - cached.at < METHODS_CACHE_TTL_MS) return cached.value;
-    let value: AuthMethods = { google: false };
+    let value: AuthMethods = { google: false, email_code: false };
     let fromPlatform = false;
     try {
       const res = await f(`${base}/auth/v1/providers`, {
         headers: { apikey: opts.session.projectAnonKey, Authorization: `Bearer ${opts.session.projectAnonKey}` },
       });
       if (res.status >= 200 && res.status < 300) {
-        const body = (await res.json()) as { oauth?: unknown };
+        const body = (await res.json()) as { oauth?: unknown; magic_link?: { delivery_modes?: unknown } };
         if (Array.isArray(body.oauth)) {
           const google = (body.oauth as Array<{ provider?: unknown; enabled?: unknown }>).find(
             (p) => p && p.provider === 'google',
           );
-          value = { google: google?.enabled === true };
+          // F-43.1 — an absent delivery_modes (older gateway) reads link-only.
+          const modes = body.magic_link?.delivery_modes;
+          value = {
+            google: google?.enabled === true,
+            email_code: Array.isArray(modes) && modes.includes('both'),
+          };
           fromPlatform = true;
         }
       }

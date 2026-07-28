@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from 'react';
 import { telemetryEvent, telemetryEventOnce } from '../lib/telemetry';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { apiPost } from '../lib/api';
-import { friendlySignInError, friendlyGoogleError, GENERIC_ERROR, GOOGLE_FAILED, SIGNIN_SEND_FAILED, SIGNIN_THROTTLED } from '../lib/friendlyError';
+import { friendlySignInError, friendlyGoogleError, friendlyCodeError, GENERIC_ERROR, GOOGLE_FAILED, SIGNIN_SEND_FAILED, SIGNIN_THROTTLED } from '../lib/friendlyError';
 import {
   fetchAuthMethods,
   startGoogleSignIn,
@@ -102,6 +102,11 @@ export function SignInScreen({
   const [emailInput, setEmailInput] = useState(initialEmail ?? '');
   const [magicLinkSent, setMagicLinkSent] = useState(false);
   const [tokenInput, setTokenInput] = useState('');
+  // F-43.2 — the challenge behind the emailed six-digit code. Set only when the
+  // platform minted one (both-mode delivery advertised); empty = the link-only
+  // screen of today, with no code UI at all.
+  const [challengeId, setChallengeId] = useState('');
+  const [codeInput, setCodeInput] = useState('');
   const [error, setError] = useState('');
   const [exchanging, setExchanging] = useState(false);
   // null = probing; true = the browser offers passkey AUTOFILL (so no explicit
@@ -396,7 +401,7 @@ export function SignInScreen({
       // device), so the capture travels with THIS request. Null (organic, or
       // attribution disabled — the fork default) sends no field at all.
       const attribution = readAttributionForSubmit();
-      const sent = await apiPost<{ throttled?: boolean }>('/v1/auth/magic-link', {
+      const sent = await apiPost<{ throttled?: boolean; challenge_id?: string }>('/v1/auth/magic-link', {
         email: emailInput.trim(),
         ...(attribution ? { attribution } : {}),
         // F-40 / DD-57 - the emailed link carries the draft handle, which is what
@@ -406,9 +411,35 @@ export function SignInScreen({
       // F-027 — say so when the platform refused to send, instead of showing a
       // waiting state for an email that will never arrive.
       if (sent?.throttled) setError(SIGNIN_THROTTLED);
+      // F-43.2 — a minted challenge means the email carries a code too; the
+      // check-email state then offers typing it right here.
+      setChallengeId(typeof sent?.challenge_id === 'string' ? sent.challenge_id : '');
       setMagicLinkSent(true);
     } catch {
       setError(SIGNIN_SEND_FAILED);
+    }
+  };
+
+  // F-43.2 — the six digits finish sign-in in THIS tab: the confirm sets the
+  // session cookie server-side, and refresh() makes the session appear — which
+  // is exactly what the send-gate's held-send poll and RequireAuth key on, so
+  // every continuation the link runs happens here without a tab switch.
+  const confirmCode = async () => {
+    if (!/^\d{6}$/.test(codeInput.trim())) return;
+    setError('');
+    try {
+      const result = await apiPost<{ ok?: boolean; email?: string }>('/v1/auth/code', {
+        challenge_id: challengeId,
+        code: codeInput.trim(),
+      });
+      if (result.ok && result.email) {
+        broadcastAuthEvent({ type: 'signed-in', email: result.email });
+        void refresh();
+      } else {
+        setError(GENERIC_ERROR);
+      }
+    } catch (e) {
+      setError(friendlyCodeError(e));
     }
   };
 
@@ -594,6 +625,36 @@ export function SignInScreen({
           <p className="text-sm text-gray-700">
             Check your email at <span className="font-medium">{emailInput}</span>. Click the sign-in link.
           </p>
+          {challengeId && (
+            // F-43.2 — the same email carries a 6-digit code; typing it here
+            // finishes sign-in in THIS tab (no tab switch, held draft intact).
+            <div className="space-y-2" data-testid="signin-code-entry">
+              <p className="text-sm font-medium text-gray-900">
+                Or type the 6-digit code from that email — you finish right here:
+              </p>
+              <div className="flex gap-2 justify-center">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  value={codeInput}
+                  onChange={(e) => setCodeInput(e.target.value.replace(/[^0-9]/g, ''))}
+                  onKeyDown={(e) => e.key === 'Enter' && confirmCode()}
+                  placeholder="123456"
+                  data-testid="signin-code"
+                  className="w-36 min-h-[44px] text-center text-lg tracking-[0.3em] border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-900"
+                />
+                <button
+                  onClick={confirmCode}
+                  data-testid="signin-code-confirm"
+                  className="min-h-[44px] px-5 bg-gray-900 text-white rounded-lg font-medium transition-colors duration-150 hover:bg-gray-700 active:bg-gray-950 cursor-pointer"
+                >
+                  Sign in
+                </button>
+              </div>
+            </div>
+          )}
           {telemetryTrigger === 'send' ? (
             // F-40 / AC-237 — the draft now lives on the service, so the link
             // works from anywhere. This used to shout ON THIS DEVICE, which was

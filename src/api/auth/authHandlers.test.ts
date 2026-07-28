@@ -7,6 +7,7 @@ import type { DbPool } from '../../db/pool.js';
 import {
   handleAuthMagicLink,
   handleAuthTokenExchange,
+  handleAuthCode,
   handleAuthUser,
   handleAuthSignout,
   type AuthHandlerCtx,
@@ -75,6 +76,133 @@ describe('handleAuthMagicLink', () => {
     const c2: AuthHandlerCtx = { ...ctx(fakePool().pool, f), appBaseUrl: 'https://kysigned.com/' };
     await handleAuthMagicLink(c2, { email: 'a@x.com' });
     assert.equal(seen[1], 'https://kysigned.com/dashboard');
+  });
+});
+
+describe('handleAuthMagicLink — the code beside the link (F-43.1 / AC-258)', () => {
+  function bothAwareFetch() {
+    const bodies: Array<Record<string, unknown>> = [];
+    const f: FImpl = async (url, init) => {
+      if (url.includes('/auth/v1/magic-link')) {
+        bodies.push(JSON.parse(init?.body ?? '{}') as Record<string, unknown>);
+        // REAL accepted wire for both-mode (fixture magic-link-both-accepted.json).
+        return { status: 200, ok: true, json: async () => ({ message: 'accepted', challenge_id: 'ch_42' }) };
+      }
+      return { status: 404, ok: false, json: async () => ({}) };
+    };
+    return { f, bodies };
+  }
+
+  it('requests both-mode and forwards challenge_id when the platform advertises email_code', async () => {
+    const { f, bodies } = bothAwareFetch();
+    const c: AuthHandlerCtx = { ...ctx(fakePool().pool, f), authMethods: async () => ({ google: true, email_code: true }) };
+    const r = await handleAuthMagicLink(c, { email: 'a@x.com' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { ok: true, challenge_id: 'ch_42' });
+    assert.equal(bodies[0]!.delivery, 'both');
+  });
+
+  it('sends the link-only request unchanged (no delivery field, no challenge_id) when email_code is not advertised', async () => {
+    const { f, bodies } = bothAwareFetch();
+    const c: AuthHandlerCtx = { ...ctx(fakePool().pool, f), authMethods: async () => ({ google: true, email_code: false }) };
+    const r = await handleAuthMagicLink(c, { email: 'a@x.com' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { ok: true });
+    assert.equal('delivery' in bodies[0]!, false);
+  });
+
+  it('a discovery FAILURE degrades to the link-only request — never an error, never a dangling both-mode ask', async () => {
+    const { f, bodies } = bothAwareFetch();
+    const c: AuthHandlerCtx = {
+      ...ctx(fakePool().pool, f),
+      authMethods: async () => { throw new Error('providers unreachable'); },
+    };
+    const r = await handleAuthMagicLink(c, { email: 'a@x.com' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { ok: true });
+    assert.equal('delivery' in bodies[0]!, false);
+  });
+});
+
+describe('handleAuthCode — the six digits finish sign-in in this tab (F-43.2 / AC-258..260)', () => {
+  /** run402 fetch stub for the code door: /auth/v1/token?grant_type=email_code. */
+  function codeFetch(resp: { status: number; body: unknown }) {
+    const calls: Array<{ url: string; body: unknown }> = [];
+    const f: FImpl = async (url, init) => {
+      calls.push({ url, body: init?.body ? JSON.parse(init.body) : undefined });
+      if (url.includes('grant_type=email_code')) {
+        return { status: resp.status, ok: resp.status < 300, json: async () => resp.body };
+      }
+      return { status: 404, ok: false, json: async () => ({}) };
+    };
+    return { f, calls };
+  }
+  const okBody = {
+    access_token: 'at',
+    refresh_token: 'rt',
+    user: { email: 'Code.User@x.com' },
+    magic_link: { client_state: JSON.stringify({ draft_id: 'ps_2ab9c1de-1111-4222-8333-444455556666.abcdefghijKLMNOPQRST' }) },
+  };
+
+  it('rejects malformed input locally (400, field-specific) without ANY upstream call', async () => {
+    const { f, calls } = codeFetch({ status: 200, body: okBody });
+    const c = ctx(fakePool().pool, f);
+    const noChallenge = await handleAuthCode(c, { code: '123456' });
+    assert.equal(noChallenge.status, 400);
+    assert.equal((noChallenge.body as { code: string }).code, 'validation_challenge');
+    const badCode = await handleAuthCode(c, { challenge_id: 'ch_1', code: '12345' });
+    assert.equal(badCode.status, 400);
+    assert.equal((badCode.body as { code: string }).code, 'validation_code');
+    const nonDigits = await handleAuthCode(c, { challenge_id: 'ch_1', code: 'abcdef' });
+    assert.equal(nonDigits.status, 400);
+    assert.equal(calls.length, 0, 'no upstream call for malformed input');
+  });
+
+  it('a correct code → 200 + the session cookie + the bound draft handle, exactly like the link exchange', async () => {
+    const { pool, sessions } = fakePool();
+    const { f } = codeFetch({ status: 200, body: okBody });
+    const r = await handleAuthCode(ctx(pool, f), { challenge_id: 'ch_1', code: '123456' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, {
+      ok: true,
+      email: 'code.user@x.com',
+      draft_id: 'ps_2ab9c1de-1111-4222-8333-444455556666.abcdefghijKLMNOPQRST',
+    });
+    assert.equal(sessions.size, 1);
+    assert.ok(r.setCookies?.[0]?.includes(SESSION_COOKIE));
+  });
+
+  it('records session_created with the SAME method value as the link (LUMPED, AC-260) and no link_opened', async () => {
+    const steps: Array<{ event: string; method?: string }> = [];
+    const { f } = codeFetch({ status: 200, body: okBody });
+    const c: AuthHandlerCtx = {
+      ...ctx(fakePool().pool, f),
+      telemetryStep: async (event, opts) => { steps.push({ event, method: opts?.method }); },
+    };
+    await handleAuthCode(c, { challenge_id: 'ch_1', code: '123456' });
+    assert.deepEqual(steps, [{ event: 'session_created', method: 'magic_link' }]);
+  });
+
+  it('a wrong code reads plain retry copy (auth_code_invalid); exhaustion reads its own copy (auth_code_exhausted); no vendor string', async () => {
+    const invalid = await handleAuthCode(
+      ctx(fakePool().pool, codeFetch({ status: 401, body: { error: 'R402 said no', code: 'R402_AUTH_EMAIL_CODE_INVALID' } }).f),
+      { challenge_id: 'ch_1', code: '111111' },
+    );
+    assert.equal(invalid.status, 401);
+    const invalidBody = invalid.body as { error: string; code: string };
+    assert.equal(invalidBody.code, 'auth_code_invalid');
+    assert.match(invalidBody.error, /didn.t match|try again/i);
+    assert.doesNotMatch(invalidBody.error, /R402|run402|status \d|_/);
+
+    const exhausted = await handleAuthCode(
+      ctx(fakePool().pool, codeFetch({ status: 401, body: { error: 'burned', code: 'R402_AUTH_EMAIL_CODE_EXHAUSTED' } }).f),
+      { challenge_id: 'ch_1', code: '111111' },
+    );
+    assert.equal(exhausted.status, 401);
+    const exhaustedBody = exhausted.body as { error: string; code: string };
+    assert.equal(exhaustedBody.code, 'auth_code_exhausted');
+    assert.match(exhaustedBody.error, /no longer works|new sign-in email/i);
+    assert.doesNotMatch(exhaustedBody.error, /R402|run402|status \d|_/);
   });
 });
 

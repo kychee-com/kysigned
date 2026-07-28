@@ -70,6 +70,7 @@ import { buildHostedSenderGate } from '../api/billingGate.js';
 import { handleHealth, handleDeepHealth } from '../api/health.js';
 import {
   handleAuthMagicLink,
+  handleAuthCode,
   handleAuthTokenExchange,
   handleAuthUser,
   handleAuthSignout,
@@ -453,6 +454,11 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
     }
     case 'authToken': {
       const r = await handleAuthTokenExchange(telemetryBoundAuthCtx(deps, req), await readJsonBody(req));
+      return json(r.body, r.status, r.setCookies);
+    }
+    case 'authCode': {
+      // F-43.2 — the six digits finish sign-in in the tab that asked.
+      const r = await handleAuthCode(telemetryBoundAuthCtx(deps, req), await readJsonBody(req));
       return json(r.body, r.status, r.setCookies);
     }
     // ── Google sign-in (F-41, DD-58..62) ──

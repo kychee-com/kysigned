@@ -58,6 +58,9 @@ export const API_ROUTES: RouteDef[] = [
   // link (Connect Google) attaches an identity to the CALLER's account, so it
   // requires the session whose stored run402 token becomes the upstream Bearer.
   { method: 'GET', pattern: '/v1/auth/methods', name: 'authMethods', auth: 'public' },
+  // F-43.2 — verify the emailed six-digit code (public pre-session, like the
+  // token exchange: the ceremony IS the auth and it issues the same cookie).
+  { method: 'POST', pattern: '/v1/auth/code', name: 'authCode', auth: 'public' },
   { method: 'POST', pattern: '/v1/auth/google/start', name: 'googleStart', auth: 'public' },
   { method: 'POST', pattern: '/v1/auth/google/exchange', name: 'googleExchange', auth: 'public' },
   { method: 'POST', pattern: '/v1/auth/google/link', name: 'googleLink', auth: 'session' },

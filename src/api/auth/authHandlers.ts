@@ -13,7 +13,8 @@
  * proxy whose verify route calls the same `startSession`).
  */
 import type { DbPool } from '../../db/pool.js';
-import { requestMagicLink, exchangeMagicLinkToken } from './dashboardAuth.js';
+import { requestMagicLink, exchangeMagicLinkToken, exchangeEmailCode } from './dashboardAuth.js';
+import type { AuthMethods } from './authMethods.js';
 import { startSession, endSession, type SessionConfig, type SessionActor } from './session.js';
 import { getCreatorName } from '../../db/creatorProfiles.js';
 import { getAuthSession } from '../../db/authSessions.js';
@@ -73,6 +74,13 @@ export interface AuthHandlerCtx {
     event: 'send_ok' | 'send_failed' | 'link_opened' | 'session_created',
     opts?: { paid?: boolean; country?: string; device?: string; method?: 'magic_link' | 'google' | 'passkey' },
   ) => Promise<void>;
+  /**
+   * F-43.1 — the cached provider-discovery resolver (authMethods.ts). When it
+   * advertises `email_code`, the magic-link request asks for BOTH-mode delivery
+   * and forwards the challenge handle. Absent or failing: the link-only request
+   * of today, unchanged — discovery must never break or delay a send.
+   */
+  authMethods?: () => Promise<AuthMethods>;
 }
 
 export interface AuthResult {
@@ -157,8 +165,20 @@ export async function handleAuthMagicLink(
   // paid mark comes ONLY from the attribution rider on this same request
   // (DD-50.6 — no email-join, the rail stays identifier-free end to end).
   const draftId = readDraftHandle(body.draft_id);
+  // F-43.1 — ask for the code beside the link iff the platform advertises it.
+  // Discovery is best-effort and cached (authMethods.ts); any failure reads
+  // link-only, so a discovery blip can never break or reshape the send.
+  let wantCode = false;
+  if (ctx.authMethods) {
+    try {
+      wantCode = (await ctx.authMethods()).email_code === true;
+    } catch {
+      wantCode = false;
+    }
+  }
   let sendOk = false;
   let sendResult429 = false;
+  let challengeId: string | undefined;
   try {
     const sendResult = await requestMagicLink({
       email,
@@ -167,9 +187,11 @@ export async function handleAuthMagicLink(
       run402BaseUrl: ctx.session.run402BaseUrl,
       fetchImpl: ctx.session.fetchImpl,
       ...(draftId ? { clientState: JSON.stringify({ draft_id: draftId }) } : {}),
+      ...(wantCode ? { delivery: 'both' as const } : {}),
     });
     sendOk = sendResult.ok;
     sendResult429 = sendResult.status === 429;
+    challengeId = sendResult.challengeId;
   } catch (err) {
     await recordStep(ctx, 'send_failed', { paid: riderIsPaid(ctx, body.attribution) });
     throw err;
@@ -200,7 +222,17 @@ export async function handleAuthMagicLink(
   // waiting state that would never resolve. Saying so leaks nothing about
   // account existence: it is a fact about the address the requester just typed
   // themselves, and it is the same answer whether or not an account exists.
-  return { status: 200, body: { ok: true, ...(sendResult429 ? { throttled: true } : {}) } };
+  // F-43.1 — the challenge handle rides the same non-enumerating 200 (the
+  // platform returns it regardless of account existence, so forwarding it
+  // reveals nothing). The SPA uses it to offer the code entry.
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      ...(challengeId ? { challenge_id: challengeId } : {}),
+      ...(sendResult429 ? { throttled: true } : {}),
+    },
+  };
 }
 
 export async function handleAuthTokenExchange(ctx: AuthHandlerCtx, body: { token?: unknown }): Promise<AuthResult> {
@@ -218,7 +250,84 @@ export async function handleAuthTokenExchange(ctx: AuthHandlerCtx, body: { token
   if (!r.ok || !r.accessToken || !r.refreshToken || !r.email) {
     return { status: 401, body: { error: 'Sign-in failed', code: 'auth_signin_failed', reason: r.reason } };
   }
-  const email = r.email.toLowerCase();
+  return completeEmailSignIn(ctx, {
+    email: r.email,
+    accessToken: r.accessToken,
+    refreshToken: r.refreshToken,
+    clientState: r.clientState,
+  });
+}
+
+/**
+ * F-43.2 — the six digits, verified in the tab that asked. Local shape checks
+ * fail fast with field-specific copy and NEVER reach upstream; a verified code
+ * runs `completeEmailSignIn` — the exact machinery the emailed link runs — so
+ * session, grant, attribution, draft claim and telemetry cannot drift between
+ * the two credentials of one challenge.
+ */
+export async function handleAuthCode(
+  ctx: AuthHandlerCtx,
+  body: { challenge_id?: unknown; code?: unknown },
+): Promise<AuthResult> {
+  const challengeId = typeof body.challenge_id === 'string' ? body.challenge_id.trim() : '';
+  if (!challengeId) {
+    return { status: 400, body: { error: 'challenge_id is required', code: 'validation_challenge' } };
+  }
+  const code = typeof body.code === 'string' ? body.code.trim() : '';
+  if (!/^\d{6}$/.test(code)) {
+    return { status: 400, body: { error: 'The code is the 6 digits from the email', code: 'validation_code' } };
+  }
+  const r = await exchangeEmailCode({
+    challengeId,
+    code,
+    projectAnonKey: ctx.session.projectAnonKey,
+    run402BaseUrl: ctx.session.run402BaseUrl,
+    fetchImpl: ctx.session.fetchImpl,
+  });
+  if (!r.ok || !r.accessToken || !r.refreshToken || !r.email) {
+    // F-43.3 — plain words, never a platform code or vendor string (the F-40.3
+    // standard). Exhaustion gets its own copy + recovery; everything else is
+    // the uniform retry (the platform deliberately does not say which).
+    if (r.errorCode === 'R402_AUTH_EMAIL_CODE_EXHAUSTED') {
+      return {
+        status: 401,
+        body: {
+          error: 'That code no longer works. Request a new sign-in email and use its code.',
+          code: 'auth_code_exhausted',
+          reason: r.reason,
+        },
+      };
+    }
+    return {
+      status: 401,
+      body: {
+        error: 'That code didn’t match. Check the digits and try again.',
+        code: 'auth_code_invalid',
+        reason: r.reason,
+      },
+    };
+  }
+  return completeEmailSignIn(ctx, {
+    email: r.email,
+    accessToken: r.accessToken,
+    refreshToken: r.refreshToken,
+    clientState: r.clientState,
+  });
+}
+
+/**
+ * The one post-verification path every email credential funnels into (link
+ * exchange AND code confirm): session start, session_created telemetry
+ * (method `magic_link` for BOTH — AC-260's deliberate lump), the trial grant
+ * with its internal-gated creator_signed_up, the F-37 attribution bind + ads
+ * enqueue, and the F-40 draft-handle passthrough.
+ */
+async function completeEmailSignIn(
+  ctx: AuthHandlerCtx,
+  verified: { email: string; accessToken: string; refreshToken: string; clientState?: string },
+): Promise<AuthResult> {
+  const email = verified.email.toLowerCase();
+  const r = verified;
   const { cookie } = await startSession(ctx.pool, ctx.session, {
     email,
     accessToken: r.accessToken,

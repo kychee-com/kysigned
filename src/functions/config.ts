@@ -641,6 +641,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     ...(telemetryStep ? { telemetryStep } : {}), // F-38.4 server-recorded steps
     createRun: runtime.createRun, // F-37 sign-up conversion enqueue
     ...(adsUploadFunction ? { adsUploadFunction } : {}),
+    authMethods, // F-43.1 — both-mode delivery iff the platform advertises it
   });
   const adminCtx = (operator: string): AdminContext => ({ pool, operator, internalIdentities });
   const signerCtx = (): SignerApiCtx => ({ pool, getPdf, signingEmail });

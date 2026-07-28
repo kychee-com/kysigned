@@ -17,11 +17,15 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMethodsResolver, METHODS_CACHE_TTL_MS } from './authMethods.js';
 
-/** The REAL run402 providers wire shape (routes/auth.ts:410.., read at 414cc643). */
-function providersBody(googleEnabled: boolean) {
+/** The REAL run402 providers wire shape (routes/auth.ts:425.., re-read at 436cb999;
+ *  live fixture toolbelt/fixtures/test-rail/providers.json — `magic_link` carries
+ *  `delivery_modes` since platform 4.12.0). */
+function providersBody(googleEnabled: boolean, deliveryModes: string[] | null = ['link', 'code', 'both']) {
+  // `null` = the field is ABSENT (an older gateway); an explicit `undefined`
+  // would silently take the default parameter — the trap this sentinel avoids.
   return {
     password: { enabled: true },
-    magic_link: { enabled: true },
+    magic_link: { enabled: true, ...(deliveryModes ? { delivery_modes: deliveryModes } : {}) },
     password_set: { enabled: false },
     passkey: { enabled: true, resident_key: 'preferred', user_verification: 'required' },
     settings: {
@@ -55,17 +59,17 @@ describe('createMethodsResolver', () => {
   it('reports google enabled from the platform providers surface, via the anon key', async () => {
     const { impl, calls } = fakeFetch([{ status: 200, body: providersBody(true) }]);
     const resolve = createMethodsResolver({ session: { ...SESSION, fetchImpl: impl } });
-    assert.deepEqual(await resolve(), { google: true });
+    assert.deepEqual(await resolve(), { google: true, email_code: true });
     assert.equal(calls[0], 'https://api.example/auth/v1/providers');
   });
 
   it('reports google false when the platform says disabled', async () => {
     const { impl } = fakeFetch([{ status: 200, body: providersBody(false) }]);
     const resolve = createMethodsResolver({ session: { ...SESSION, fetchImpl: impl } });
-    assert.deepEqual(await resolve(), { google: false });
+    assert.deepEqual(await resolve(), { google: false, email_code: true });
   });
 
-  it('fails to the email-only gate: network error, non-200, and malformed body all read {google:false}', async () => {
+  it('fails to the email-only gate: network error, non-200, and malformed body all read everything-off', async () => {
     for (const responses of [
       [new Error('offline')],
       [{ status: 503, body: { error: 'nope' } }],
@@ -73,7 +77,7 @@ describe('createMethodsResolver', () => {
     ] as Array<Array<{ status: number; body: unknown } | Error>>) {
       const { impl } = fakeFetch(responses);
       const resolve = createMethodsResolver({ session: { ...SESSION, fetchImpl: impl } });
-      assert.deepEqual(await resolve(), { google: false });
+      assert.deepEqual(await resolve(), { google: false, email_code: false });
     }
   });
 
@@ -84,20 +88,43 @@ describe('createMethodsResolver', () => {
       { status: 200, body: providersBody(false) },
     ]);
     const resolve = createMethodsResolver({ session: { ...SESSION, fetchImpl: impl }, now: () => t });
-    assert.deepEqual(await resolve(), { google: true });
+    assert.deepEqual(await resolve(), { google: true, email_code: true });
     t += METHODS_CACHE_TTL_MS - 1;
-    assert.deepEqual(await resolve(), { google: true }, 'inside the TTL: cached');
+    assert.deepEqual(await resolve(), { google: true, email_code: true }, 'inside the TTL: cached');
     assert.equal(calls.length, 1, 'no second upstream call inside the TTL');
     t += 2;
-    assert.deepEqual(await resolve(), { google: false }, 'past the TTL: refreshed');
+    assert.deepEqual(await resolve(), { google: false, email_code: true }, 'past the TTL: refreshed');
     assert.equal(calls.length, 2);
   });
 
   it('a FAILED probe is not cached as gospel: the next call retries upstream', async () => {
     const { impl, calls } = fakeFetch([new Error('offline'), { status: 200, body: providersBody(true) }]);
     const resolve = createMethodsResolver({ session: { ...SESSION, fetchImpl: impl } });
-    assert.deepEqual(await resolve(), { google: false });
-    assert.deepEqual(await resolve(), { google: true }, 'the outage answer expires immediately');
+    assert.deepEqual(await resolve(), { google: false, email_code: false });
+    assert.deepEqual(await resolve(), { google: true, email_code: true }, 'the outage answer expires immediately');
     assert.equal(calls.length, 2);
+  });
+
+  // F-43.1 / AC-258 — email-code capability discovery: we only ever request
+  // BOTH-mode (the email keeps its link), so the capability the gate needs is
+  // "both" being advertised, per the platform's managed-client rule.
+  it('advertises email_code when the platform lists both-mode delivery', async () => {
+    const { impl } = fakeFetch([{ status: 200, body: providersBody(true) }]);
+    const resolve = createMethodsResolver({ session: { ...SESSION, fetchImpl: impl } });
+    assert.equal((await resolve()).email_code, true);
+  });
+
+  it('email_code is false on a link-only platform AND when the field is absent (older gateway)', async () => {
+    for (const modes of [['link'], null] as Array<string[] | null>) {
+      const { impl } = fakeFetch([{ status: 200, body: providersBody(true, modes) }]);
+      const resolve = createMethodsResolver({ session: { ...SESSION, fetchImpl: impl } });
+      assert.equal((await resolve()).email_code, false, `modes=${JSON.stringify(modes)}`);
+    }
+  });
+
+  it('every failure mode reads email_code false beside google false (fail to the link-only gate)', async () => {
+    const { impl } = fakeFetch([new Error('offline')]);
+    const resolve = createMethodsResolver({ session: { ...SESSION, fetchImpl: impl } });
+    assert.deepEqual(await resolve(), { google: false, email_code: false });
   });
 });

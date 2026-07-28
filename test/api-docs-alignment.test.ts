@@ -86,6 +86,9 @@ const EXCLUDED_ENDPOINTS = [
   'POST /v1/auth/google/start',
   'POST /v1/auth/google/exchange',
   'POST /v1/auth/google/link',
+  // F-43 email-code confirm — the browser types the six digits from the email;
+  // same UI-internal ceremony class as the passkey/Google routes above.
+  'POST /v1/auth/code',
   // Internal inbound-mail webhook (run402 signature-gated).
   'POST /v1/webhooks/inbound',
   // kysigned.com-proprietary billing (the operator's private function); not in the forkable public API:

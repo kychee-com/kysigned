@@ -121,6 +121,27 @@ export function friendlyGoogleError(code: string | null | undefined): string {
   }
 }
 
+// ── F-43.3 (AC-259) — email-code copy. Plain words, next step named, no status
+// code, no vendor string (the F-40.3 language bar). ──────────────────────────
+
+/** Wrong / expired / already-used code — uniform on purpose (the platform
+ *  deliberately does not say which); retry stays open until exhaustion. */
+export const CODE_INVALID = 'That code didn’t match. Check the digits and try again.';
+
+/** Five wrong attempts burned the challenge; only a fresh email recovers. */
+export const CODE_EXHAUSTED =
+  'That code no longer works. Request a new sign-in email and use the code from the newest one.';
+
+/** Map a thrown code-confirm failure to actionable copy. */
+export function friendlyCodeError(e: unknown): string {
+  if (e instanceof ApiError) {
+    if (e.code === 'auth_code_exhausted') return CODE_EXHAUSTED;
+    if (e.code === 'auth_code_invalid' || e.status === 401) return CODE_INVALID;
+    return friendlyCreateError(e.status, e.message);
+  }
+  return GENERIC_ERROR;
+}
+
 /** Map a thrown token-exchange failure to actionable sign-in copy. */
 export function friendlySignInError(e: unknown): string {
   if (e instanceof ApiError) {

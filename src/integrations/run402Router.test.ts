@@ -72,6 +72,8 @@ describe('matchRoute', () => {
 
   it('routes Google sign-in (F-41): discovery/start/exchange public (the ceremony IS the auth), link is session', () => {
     assert.equal(matchRoute('GET', '/v1/auth/methods')?.name, 'authMethods');
+    // F-43.2 — the code confirm is public pre-session (the ceremony IS the auth).
+    assert.equal(matchRoute('POST', '/v1/auth/code')?.name, 'authCode');
     assert.equal(matchRoute('GET', '/v1/auth/methods')?.auth, 'public');
     assert.equal(matchRoute('POST', '/v1/auth/google/start')?.name, 'googleStart');
     assert.equal(matchRoute('POST', '/v1/auth/google/start')?.auth, 'public');
