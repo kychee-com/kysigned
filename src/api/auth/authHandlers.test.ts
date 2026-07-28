@@ -204,6 +204,111 @@ describe('handleAuthCode — the six digits finish sign-in in this tab (F-43.2 /
     assert.match(exhaustedBody.error, /no longer works|new sign-in email/i);
     assert.doesNotMatch(exhaustedBody.error, /R402|run402|status \d|_/);
   });
+
+  // ── FC28.4 / F-033 (AC-259) — the copy tells the visitor the TRUTH ─────────
+  //
+  // The platform keeps the error CODE uniform on purpose, but it publishes the
+  // classification beside it: `retryable` and the normative `next_actions[0]`.
+  // We used to discard both, so a link-consumed challenge and a spent attempt
+  // budget both rendered as "you mistyped" — advice that cannot work.
+  //
+  // The four bodies below are REAL envelopes harvested off the live gateway on
+  // 2026-07-28 and committed at
+  // kysigned-private/toolbelt/fixtures/test-rail/email-code-*.json.
+  // Note that the retryable and terminal 401s are byte-identical except for
+  // `retryable`/`safe_to_retry` and `next_actions[0].type` — which is precisely
+  // why the classification, not the code, has to drive the copy.
+  const REAL = {
+    retryable401: {
+      status: 401,
+      body: {
+        error: 'The email code is invalid, expired, superseded, or already used.',
+        message: 'The email code is invalid, expired, superseded, or already used.',
+        code: 'R402_AUTH_EMAIL_CODE_INVALID',
+        category: 'auth', source: 'gateway', retryable: true, safe_to_retry: true,
+        mutation_state: 'committed', details: {},
+        next_actions: [{ type: 'edit_request', method: 'POST', path: '/auth/v1/token?grant_type=email_code', why: 'Check the six-digit code and try again; verification is never retried automatically.' }],
+      },
+    },
+    terminal401: {
+      status: 401,
+      body: {
+        error: 'The email code is invalid, expired, superseded, or already used.',
+        message: 'The email code is invalid, expired, superseded, or already used.',
+        code: 'R402_AUTH_EMAIL_CODE_INVALID',
+        category: 'auth', source: 'gateway', retryable: false, safe_to_retry: false,
+        mutation_state: 'committed', details: {},
+        next_actions: [{ type: 'request_fresh_credential', method: 'POST', path: '/auth/v1/magic-link', why: 'Request a fresh email authentication challenge.' }],
+      },
+    },
+    exhausted410: {
+      status: 410,
+      body: {
+        error: 'This email code can no longer be used.',
+        message: 'This email code can no longer be used.',
+        code: 'R402_AUTH_EMAIL_CODE_EXHAUSTED',
+        category: 'auth', source: 'gateway', retryable: false, safe_to_retry: false,
+        mutation_state: 'committed', details: {},
+        next_actions: [{ type: 'request_fresh_credential', method: 'POST', path: '/auth/v1/magic-link', why: 'Request a fresh email authentication challenge.' }],
+      },
+    },
+    limited429: {
+      status: 429,
+      body: {
+        error: 'Too many email-code verification attempts',
+        message: 'Too many email-code verification attempts',
+        code: 'RATE_LIMITED',
+        category: 'rate_limit', source: 'gateway', retryable: true, safe_to_retry: true,
+        mutation_state: 'not_started',
+        details: { retry_after_seconds: 674, limited_subject: 'token' },
+        next_actions: [{ type: 'retry', method: 'POST', path: '/auth/v1/token?grant_type=email_code', why: 'Retry after the Retry-After interval.' }],
+      },
+    },
+  } as const;
+
+  const mapReal = async (envelope: { status: number; body: unknown }) =>
+    handleAuthCode(ctx(fakePool().pool, codeFetch(envelope).f), { challenge_id: 'ch_1', code: '111111' });
+
+  it('a LINK-consumed challenge reads as already-used, never as a typo (the cycle-28 reproduction)', async () => {
+    const r = await mapReal(REAL.terminal401);
+    const body = r.body as { error: string; code: string };
+    assert.equal(body.code, 'auth_code_used');
+    assert.doesNotMatch(body.error, /didn.t match|check the digits/i, 'retry advice here is advice that cannot work');
+    assert.match(body.error, /already been used|newer email/i);
+  });
+
+  it('a spent attempt budget reads as too-many, never as a typo (the 429 the limiter returns first)', async () => {
+    const r = await mapReal(REAL.limited429);
+    const body = r.body as { error: string; code: string };
+    assert.equal(body.code, 'auth_code_too_many');
+    assert.doesNotMatch(body.error, /didn.t match|check the digits/i);
+    assert.match(body.error, /too many|new sign-in email/i);
+  });
+
+  it('a genuinely wrong guess with attempts left still reads as the retry copy', async () => {
+    const r = await mapReal(REAL.retryable401);
+    assert.equal((r.body as { code: string }).code, 'auth_code_invalid');
+  });
+
+  it('the real 410 exhaustion keeps its own copy', async () => {
+    const r = await mapReal(REAL.exhausted410);
+    assert.equal((r.body as { code: string }).code, 'auth_code_exhausted');
+  });
+
+  it('no branch leaks a platform code, a vendor name or a status number (F-40.3)', async () => {
+    for (const [name, envelope] of Object.entries(REAL)) {
+      const r = await mapReal(envelope);
+      const { error } = r.body as { error: string };
+      assert.doesNotMatch(error, /R402|run402|status \d|_/, `${name} leaked a vendor string: ${error}`);
+      assert.doesNotMatch(error, /—/, `${name} used a dash-as-pause (outbound copy rule)`);
+    }
+  });
+
+  it('FAIL-SAFE: an envelope carrying neither next_actions nor retryable degrades to the retry copy', async () => {
+    const r = await mapReal({ status: 401, body: { error: 'something new', code: 'R402_AUTH_EMAIL_CODE_INVALID' } });
+    assert.equal((r.body as { code: string }).code, 'auth_code_invalid',
+      'an unrecognised envelope must read as today uniform copy, never crash and never claim terminal');
+  });
 });
 
 describe('handleAuthTokenExchange', () => {
@@ -733,6 +838,109 @@ describe('F-38.4 — server-recorded funnel steps (send_ok / send_failed / link_
     const c: AuthHandlerCtx = { ...ctx(fakePool().pool, okExchange), telemetryStep: rec.telemetryStep };
     const r = await handleAuthTokenExchange(c, { token: 'magic' });
     assert.equal(r.status, 200);
+  });
+});
+
+// ── FC28.1 / F-032 (AC-257) — the funnel excludes internal identities at WRITE time ──
+// The funnel rail is identifier-free by design (F-38.1), so `telemetry_events`
+// holds nothing a read-time filter could match on. The exclusion therefore has
+// to happen at EMISSION, over the SAME F-35.4 rule list the console and the
+// F-36.6 app-event gate already use.
+describe('F-42.4 — internal identities never reach the funnel (AC-257, write-time)', () => {
+  const INTERNAL = 'signin-probe@prj_1775546157922_0030.test.invalid';
+  const EXTERNAL = 'a-real-visitor@example.com';
+  const RULES = ['@prj_1775546157922_0030.test.invalid'];
+
+  function rig(rules: readonly string[] = RULES) {
+    const steps: string[] = [];
+    const logs: string[] = [];
+    return {
+      steps,
+      logs,
+      wire(c: AuthHandlerCtx): AuthHandlerCtx {
+        return {
+          ...c,
+          telemetryStep: async (event) => { steps.push(event); },
+          internalGate: createInternalSubjectGate({
+            internalIdentities: rules,
+            log: (m) => logs.push(m),
+          }),
+        };
+      },
+    };
+  }
+
+  const sendOk = fetchImpl({ status: 200, body: {} });
+  const exchangeAs = (email: string) =>
+    fetchImpl({ status: 200, body: { access_token: 'at', refresh_token: 'rt', user: { email } } });
+
+  it('an internal identity records ZERO funnel steps across the whole email ceremony', async () => {
+    const r = rig();
+    const send = r.wire(ctx(fakePool().pool, sendOk));
+    assert.equal((await handleAuthMagicLink(send, { email: INTERNAL })).status, 200);
+    const open = r.wire(ctx(fakePool().pool, exchangeAs(INTERNAL)));
+    assert.equal((await handleAuthTokenExchange(open, { token: 'magic' })).status, 200);
+    assert.deepEqual(r.steps, [], 'the probe identity must add nothing to the funnel');
+    assert.ok(r.logs.length >= 1, 'suppression is logged — the live observable that it is deliberate');
+    assert.match(r.logs[0]!, /suppressed: internal identity/);
+  });
+
+  // AC-217's standing property: these four steps are SERVER-recorded, so they
+  // land whether or not a browser can reach /v1/telemetry — there is no browser
+  // in this test at all. The write-time gate must not weaken that.
+  it('an EXTERNAL identity still records all four steps — the rail is unharmed (AC-217)', async () => {
+    const r = rig();
+    const send = r.wire(ctx(fakePool().pool, sendOk));
+    await handleAuthMagicLink(send, { email: EXTERNAL });
+    const open = r.wire(ctx(fakePool().pool, exchangeAs(EXTERNAL)));
+    await handleAuthTokenExchange(open, { token: 'magic' });
+    assert.deepEqual(r.steps, ['send_ok', 'link_opened', 'session_created']);
+    const failed = r.wire(ctx(fakePool().pool, async (url: string) =>
+      url.includes('/auth/v1/magic-link')
+        ? { status: 500, ok: false, json: async () => ({ error: 'smtp down' }) }
+        : { status: 404, ok: false, json: async () => ({}) }));
+    await handleAuthMagicLink(failed, { email: EXTERNAL });
+    assert.equal(r.steps.at(-1), 'send_failed', 'the fourth step still records');
+  });
+
+  it('a FAILED exchange still records the anonymous open — the re-order loses nothing', async () => {
+    const r = rig();
+    const c = r.wire(ctx(fakePool().pool, fetchImpl({ status: 401, body: { error: 'bad' } })));
+    const res = await handleAuthTokenExchange(c, { token: 'expired-or-superseded' });
+    assert.equal(res.status, 401);
+    assert.deepEqual(r.steps, ['link_opened'], 'a dead open is still a funnel fact');
+  });
+
+  it('link_opened still precedes session_created — the funnel order is unchanged', async () => {
+    const r = rig();
+    const c = r.wire(ctx(fakePool().pool, exchangeAs(EXTERNAL)));
+    await handleAuthTokenExchange(c, { token: 'magic' });
+    assert.deepEqual(r.steps, ['link_opened', 'session_created']);
+  });
+
+  it('a THROWN exchange still records the open (the guarantee the old ordering gave for free)', async () => {
+    const r = rig();
+    const c = r.wire(ctx(fakePool().pool, async () => { throw new Error('gateway down'); }));
+    await assert.rejects(() => handleAuthTokenExchange(c, { token: 'magic' }));
+    assert.deepEqual(r.steps, ['link_opened']);
+  });
+
+  it('an EMPTY rule list excludes nobody — the fork default (AC-192 posture)', async () => {
+    const r = rig([]);
+    const c = r.wire(ctx(fakePool().pool, sendOk));
+    await handleAuthMagicLink(c, { email: INTERNAL });
+    assert.deepEqual(r.steps, ['send_ok'], 'a fresh fork configures no rules, so it suppresses nothing');
+    assert.deepEqual(r.logs, []);
+  });
+
+  it('with NO gate wired at all, every step records (absent gate suppresses nothing)', async () => {
+    const steps: string[] = [];
+    const c: AuthHandlerCtx = {
+      ...ctx(fakePool().pool, sendOk),
+      telemetryStep: async (event) => { steps.push(event); },
+    };
+    await handleAuthMagicLink(c, { email: INTERNAL });
+    assert.deepEqual(steps, ['send_ok']);
   });
 });
 

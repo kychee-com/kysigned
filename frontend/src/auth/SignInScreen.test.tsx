@@ -365,6 +365,40 @@ describe('SignInScreen — passkey-first behavior', () => {
     });
   });
 
+  // UX-038 (cycle 28): the paste-URL fallback's submit lives inside a collapsed
+  // <details>, so no design pass ever opened it and it shipped at 36px (px-4
+  // py-2, no min-h). This is the cheap tripwire that catches a local edit; the
+  // BINDING check is real geometry, measured at a 390x844 mobile viewport by
+  // toolbelt/f42-signin-probe.mjs, which fails the publish under 44px.
+  it('the paste-URL fallback submit reserves the 44px tap target (UX-038)', async () => {
+    (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential = function () {};
+    const fetchSpy = vi.fn((url: string) => {
+      if (url.endsWith('/v1/auth/user')) {
+        return Promise.resolve(new Response(JSON.stringify({ error: 'no' }), { status: 401 }));
+      }
+      if (url.endsWith('/v1/auth/magic-link')) {
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <SignInScreen />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByTestId('signin-email')).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId('signin-email'), { target: { value: 'alice@example.com' } });
+    fireEvent.click(screen.getByTestId('signin-send-link'));
+    await waitFor(() => expect(screen.getByTestId('signin-check-email')).toBeInTheDocument());
+
+    // jsdom can't compute Tailwind px; assert the reserved utility.
+    expect(screen.getByTestId('signin-paste-submit').className).toContain('min-h-[44px]');
+  });
+
   // ── F-37 / AC-206 — the magic-link request rides the attribution capture ────
   async function submitMagicLink(fetchSpy: ReturnType<typeof vi.fn>) {
     vi.stubGlobal('fetch', fetchSpy);

@@ -46,6 +46,14 @@ export interface InternalSubjectGate {
   envelope(envelopeId: string, row?: EnvelopeInternalFields): Promise<boolean>;
   /** The one uniform suppression line every gated site logs. */
   logSuppressed(type: string, subjectIds: readonly string[]): void;
+  /**
+   * FC28.1 / AC-257 — the F-38.4 funnel form of the same discipline. Separate
+   * from `logSuppressed` on purpose: a funnel step is not an app event (the
+   * publish battery greps the `app-event ` prefix to audit the feed), and the
+   * funnel rail is identifier-free by design, so this line names the STEP and
+   * never the address.
+   */
+  logSuppressedStep(event: string): void;
 }
 
 /** The console's envelope classification: `internal_test` OR rule-matched creator. */
@@ -80,6 +88,10 @@ export function createInternalSubjectGate(deps: InternalSubjectGateDeps): Intern
 
     logSuppressed: (type, subjectIds) => {
       deps.log(`app-event ${type} [${subjectIds.join(':')}] suppressed: internal identity`);
+    },
+
+    logSuppressedStep: (event) => {
+      deps.log(`funnel step ${event} suppressed: internal identity`);
     },
   };
 }

@@ -47,7 +47,7 @@ vi.mock('../lib/telemetry', () => ({
 import { SignInScreen } from './SignInScreen';
 import { resetAuthMethodsCache } from './google';
 import { ApiError } from '../lib/api';
-import { CODE_INVALID, CODE_EXHAUSTED } from '../lib/friendlyError';
+import { CODE_INVALID, CODE_EXHAUSTED, CODE_ALREADY_USED, CODE_TOO_MANY } from '../lib/friendlyError';
 
 function renderScreen(props: Record<string, unknown> = {}) {
   return render(
@@ -160,5 +160,112 @@ describe('failures read like a person wrote them (AC-259 / F-43.3)', () => {
     fireEvent.click(screen.getByTestId('signin-code-confirm'));
     const alert = await screen.findByText(CODE_EXHAUSTED);
     expect(alert.textContent).not.toMatch(/R402|status \d|_/);
+  });
+});
+
+// ── FC28.5 / F-033 (AC-259) — the screen REMEMBERS that the challenge is dead ─
+//
+// The screen held one flat `error` string that every submit overwrote, so the
+// terminal state was forgotten the instant the visitor tried again: they saw
+// "that code no longer works", pressed Sign in once more, and got "that code
+// didn't match" — the product talking itself out of the truth it had just told.
+// A dead challenge must also stop consuming the platform's verification budget.
+describe('a terminal outcome latches, and offers the one way out (AC-259)', () => {
+  const terminalCases = [
+    ['auth_code_exhausted', CODE_EXHAUSTED],
+    ['auth_code_used', CODE_ALREADY_USED],
+    ['auth_code_too_many', CODE_TOO_MANY],
+  ] as const;
+
+  /**
+   * `code` is the terminal outcome the first submit gets. `thenCode` is what a
+   * SECOND submit would get — defaulting to the retry copy, which is exactly
+   * the degradation the cycle reproduced (the screen talking itself out of the
+   * truth it just told). With the latch, that second request is never sent.
+   */
+  async function reachTerminal(code: string, thenCode = 'auth_code_invalid') {
+    let confirms = 0;
+    apiPostMock.mockImplementation(async (path: string) => {
+      if (path === '/v1/auth/magic-link') return { ok: true, challenge_id: 'ch_1' };
+      if (path === '/v1/auth/code') {
+        confirms += 1;
+        throw new ApiError('x', 401, { code: confirms === 1 ? code : thenCode });
+      }
+      return { ok: true };
+    });
+    renderScreen();
+    await submitEmail();
+    fireEvent.change(screen.getByTestId('signin-code'), { target: { value: '111111' } });
+    fireEvent.click(screen.getByTestId('signin-code-confirm'));
+    return { confirmCount: () => confirms };
+  }
+
+  it.each(terminalCases)('%s latches: the copy survives a further submit attempt', async (code, copy) => {
+    const { confirmCount } = await reachTerminal(code);
+    await screen.findByText(copy);
+    expect(confirmCount()).toBe(1);
+
+    // The visitor presses Sign in again. The copy must NOT flip to "didn't
+    // match" — and the request that would have produced it is never issued.
+    fireEvent.click(screen.getByTestId('signin-code-confirm'));
+    await waitFor(() => expect(screen.getByTestId('signin-error').textContent).toBe(copy));
+    expect(screen.queryByText(CODE_INVALID)).toBeNull();
+    expect(confirmCount()).toBe(1);
+  });
+
+  it('while latched, the entry and its submit are disabled and no further confirm is issued', async () => {
+    const { confirmCount } = await reachTerminal('auth_code_used');
+    await screen.findByText(CODE_ALREADY_USED);
+    expect((screen.getByTestId('signin-code') as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByTestId('signin-code-confirm') as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(screen.getByTestId('signin-code-confirm'));
+    fireEvent.keyDown(screen.getByTestId('signin-code'), { key: 'Enter' });
+    await waitFor(() => expect(confirmCount()).toBe(1));
+  });
+
+  it('the resend control appears ONLY on a terminal state', async () => {
+    routeApi({ ok: true, challenge_id: 'ch_1' }, async () => {
+      throw new ApiError('nope', 401, { code: 'auth_code_invalid' });
+    });
+    renderScreen();
+    await submitEmail();
+    expect(screen.queryByTestId('signin-code-resend')).toBeNull();
+    fireEvent.change(screen.getByTestId('signin-code'), { target: { value: '111111' } });
+    fireEvent.click(screen.getByTestId('signin-code-confirm'));
+    await screen.findByText(CODE_INVALID);
+    expect(screen.queryByTestId('signin-code-resend')).toBeNull();
+    expect((screen.getByTestId('signin-code') as HTMLInputElement).disabled).toBe(false);
+  });
+
+  it('resend re-sends to the address already on screen and a NEW challenge clears the latch', async () => {
+    const sends: Array<Record<string, unknown>> = [];
+    let challengeSeq = 0;
+    apiPostMock.mockImplementation(async (path: string, body?: Record<string, unknown>) => {
+      if (path === '/v1/auth/magic-link') {
+        sends.push(body ?? {});
+        challengeSeq += 1;
+        return { ok: true, challenge_id: `ch_${challengeSeq}` };
+      }
+      if (path === '/v1/auth/code') {
+        if (challengeSeq === 1) throw new ApiError('x', 401, { code: 'auth_code_used' });
+        return { ok: true, email: 'a@x.com' };
+      }
+      return { ok: true };
+    });
+    renderScreen();
+    await submitEmail();
+    fireEvent.change(screen.getByTestId('signin-code'), { target: { value: '111111' } });
+    fireEvent.click(screen.getByTestId('signin-code-confirm'));
+    await screen.findByText(CODE_ALREADY_USED);
+
+    fireEvent.click(await screen.findByTestId('signin-code-resend'));
+
+    // No address re-entry: the resend reuses the address already on screen.
+    await waitFor(() => expect(sends.length).toBe(2));
+    expect(sends[1].email).toBe('a@x.com');
+    // The fresh challenge re-opens entry and clears the terminal copy.
+    await waitFor(() => expect((screen.getByTestId('signin-code') as HTMLInputElement).disabled).toBe(false));
+    expect(screen.queryByText(CODE_ALREADY_USED)).toBeNull();
   });
 });

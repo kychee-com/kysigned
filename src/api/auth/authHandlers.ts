@@ -102,15 +102,36 @@ function riderIsPaid(ctx: AuthHandlerCtx, attribution: unknown): boolean {
   }
 }
 
-/** F-38.4 — fire a server-recorded funnel step; never throws, never gates. */
-async function recordStep(
+/**
+ * F-38.4 — fire a server-recorded funnel step; never throws, never gates.
+ *
+ * FC28.1 / AC-257 — this is also the ONE write-time choke point where internal
+ * identities are kept out of the funnel. The funnel rail is identifier-free by
+ * design (F-38.1): `telemetry_events` stores no address, so no read-time filter
+ * could ever exclude the operator's own traffic the way the console and the
+ * F-36.6 app-event gate do. The exclusion therefore happens HERE, at emission,
+ * over the same F-35.4 rule list (`KYSIGNED_INTERNAL_IDENTITIES`) those two use.
+ *
+ * `email` is the visitor this step is about; `null`/absent is an anonymous step
+ * (a dead link open), which `isInternalIdentity` already classifies external.
+ * An absent gate (fork default before config wiring) suppresses nothing, and an
+ * empty rule list matches nobody — AC-192's posture, unchanged.
+ */
+export async function recordStep(
   ctx: AuthHandlerCtx,
   event: 'send_ok' | 'send_failed' | 'link_opened' | 'session_created',
-  opts?: { paid?: boolean; method?: 'magic_link' | 'google' | 'passkey' },
+  opts?: { paid?: boolean; method?: 'magic_link' | 'google' | 'passkey'; email?: string | null },
 ): Promise<void> {
   if (!ctx.telemetryStep) return;
+  const { email, ...step } = opts ?? {};
+  if (ctx.internalGate?.account(email)) {
+    // The same shape and the same sink as the F-36.6 suppression line — the
+    // live observable that the funnel is quiet on purpose rather than broken.
+    ctx.internalGate.logSuppressedStep(event);
+    return;
+  }
   try {
-    await ctx.telemetryStep(event, opts);
+    await ctx.telemetryStep(event, step);
   } catch (err) {
     console.error(`telemetry step ${event} failed (auth unaffected):`, err);
   }
@@ -193,10 +214,10 @@ export async function handleAuthMagicLink(
     sendResult429 = sendResult.status === 429;
     challengeId = sendResult.challengeId;
   } catch (err) {
-    await recordStep(ctx, 'send_failed', { paid: riderIsPaid(ctx, body.attribution) });
+    await recordStep(ctx, 'send_failed', { paid: riderIsPaid(ctx, body.attribution), email });
     throw err;
   }
-  await recordStep(ctx, sendOk ? 'send_ok' : 'send_failed', { paid: riderIsPaid(ctx, body.attribution) });
+  await recordStep(ctx, sendOk ? 'send_ok' : 'send_failed', { paid: riderIsPaid(ctx, body.attribution), email });
 
   // F-37 — the attribution rider: the email submit happens in the browser that
   // holds the gclid capture (the link may be opened elsewhere), so the capture
@@ -240,13 +261,28 @@ export async function handleAuthTokenExchange(ctx: AuthHandlerCtx, body: { token
   if (!token) return { status: 400, body: { error: 'token is required', code: 'validation_token' } };
   // F-38.4 — the emailed link was OPENED (browser-independent: this request IS
   // the open, whatever device it lands on and whatever happens next).
-  await recordStep(ctx, 'link_opened');
-  const r = await exchangeMagicLinkToken({
-    magicLinkToken: token,
-    projectAnonKey: ctx.session.projectAnonKey,
-    run402BaseUrl: ctx.session.run402BaseUrl,
-    fetchImpl: ctx.session.fetchImpl,
-  });
+  //
+  // FC28.1 / AC-257 — recorded AFTER the exchange attempt, because this is the
+  // one funnel site that does not know WHOSE open it is until the exchange
+  // resolves the address, and the write-time internal gate needs that address.
+  // The two properties the old ordering gave for free are preserved explicitly:
+  // a dead/expired/superseded open still records (anonymously — that is a real
+  // funnel fact), and a THROWN exchange still records before it propagates.
+  // Order is unchanged too: link_opened is written before completeEmailSignIn
+  // writes session_created.
+  let r: Awaited<ReturnType<typeof exchangeMagicLinkToken>>;
+  try {
+    r = await exchangeMagicLinkToken({
+      magicLinkToken: token,
+      projectAnonKey: ctx.session.projectAnonKey,
+      run402BaseUrl: ctx.session.run402BaseUrl,
+      fetchImpl: ctx.session.fetchImpl,
+    });
+  } catch (err) {
+    await recordStep(ctx, 'link_opened', { email: null });
+    throw err;
+  }
+  await recordStep(ctx, 'link_opened', { email: r.ok ? r.email ?? null : null });
   if (!r.ok || !r.accessToken || !r.refreshToken || !r.email) {
     return { status: 401, body: { error: 'Sign-in failed', code: 'auth_signin_failed', reason: r.reason } };
   }
@@ -285,15 +321,46 @@ export async function handleAuthCode(
     fetchImpl: ctx.session.fetchImpl,
   });
   if (!r.ok || !r.accessToken || !r.refreshToken || !r.email) {
-    // F-43.3 — plain words, never a platform code or vendor string (the F-40.3
-    // standard). Exhaustion gets its own copy + recovery; everything else is
-    // the uniform retry (the platform deliberately does not say which).
+    // F-43.3 / FC28.4 — plain words, never a platform code or vendor string
+    // (the F-40.3 standard), and never advice that cannot work. The platform's
+    // error CODE is uniform on purpose, so the branch reads the classification
+    // it publishes alongside: the status, and the terminal next-action.
+    //
+    //   410 EXHAUSTED  the fifth wrong guess burned the challenge
+    //   429            the per-challenge verify limiter fired BEFORE
+    //                  verification (5 attempts / 15 min). The digits were
+    //                  never even checked, so "check the digits" is a lie;
+    //                  only a fresh email recovers.
+    //   terminal       the challenge is already spent — most often because its
+    //                  LINK was clicked (one challenge backs both credentials,
+    //                  and either one kills the other).
+    //   otherwise      a real wrong guess, with tries remaining.
     if (r.errorCode === 'R402_AUTH_EMAIL_CODE_EXHAUSTED') {
       return {
         status: 401,
         body: {
           error: 'That code no longer works. Request a new sign-in email and use its code.',
           code: 'auth_code_exhausted',
+          reason: r.reason,
+        },
+      };
+    }
+    if (r.status === 429) {
+      return {
+        status: 401,
+        body: {
+          error: 'Too many tries on this code. Request a new sign-in email and use the code from the newest one.',
+          code: 'auth_code_too_many',
+          reason: r.reason,
+        },
+      };
+    }
+    if (r.terminal) {
+      return {
+        status: 401,
+        body: {
+          error: 'This code has already been used or was replaced by a newer email. Open the newest email, or request a fresh one.',
+          code: 'auth_code_used',
           reason: r.reason,
         },
       };
@@ -335,7 +402,7 @@ async function completeEmailSignIn(
   });
   // F-38.4 — the session exists: the funnel's last step. F-41.5 — it names
   // its method, so the operator's method split can read google beside email.
-  await recordStep(ctx, 'session_created', { method: 'magic_link' });
+  await recordStep(ctx, 'session_created', { method: 'magic_link', email });
 
   // F-13.4 / F-18.4 — new-account trial credit. The magic-link click is the
   // mailbox-control proof, and the grant is idempotent + deduped on the

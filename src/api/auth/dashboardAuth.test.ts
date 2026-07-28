@@ -183,15 +183,52 @@ describe('exchangeEmailCode — POST /auth/v1/token?grant_type=email_code', () =
   });
 
   it('surfaces the platform error code so the handler can tell exhausted from invalid', async () => {
+    // Statuses are the REAL ones: invalid is 401, exhausted is 410 (harvested
+    // 2026-07-28 — the previous 401/401 pairing here was an invented shape).
     for (const [platformCode, status] of [
       ['R402_AUTH_EMAIL_CODE_INVALID', 401],
-      ['R402_AUTH_EMAIL_CODE_EXHAUSTED', 401],
+      ['R402_AUTH_EMAIL_CODE_EXHAUSTED', 410],
     ] as const) {
       const { f } = fakeFetch({ status, body: { error: 'nope', code: platformCode } });
       const result = await exchangeEmailCode({ ...baseOpts, challengeId: 'ch_1', code: '000000', fetchImpl: f });
       assert.equal(result.ok, false);
       assert.equal(result.errorCode, platformCode);
     }
+  });
+
+  // ── FC28.4 — the classification the platform publishes beside the code ─────
+  // The error CODE is uniform by design, but `retryable` + the normative
+  // `next_actions[0].type` are NOT: they say whether this challenge can still
+  // be tried. Discarding them is what made a dead challenge read as a typo.
+  it('carries the HTTP status and the terminal classification off the REAL envelopes', async () => {
+    const cases = [
+      { name: 'wrong guess, attempts left', status: 401, retryable: true, next: 'edit_request', terminal: false },
+      { name: 'link already consumed', status: 401, retryable: false, next: 'request_fresh_credential', terminal: true },
+      { name: 'fifth wrong guess burned it', status: 410, retryable: false, next: 'request_fresh_credential', terminal: true },
+      { name: 'verify budget spent', status: 429, retryable: true, next: 'retry', terminal: false },
+    ] as const;
+    for (const c of cases) {
+      const { f } = fakeFetch({
+        status: c.status,
+        body: { error: 'x', code: 'X', retryable: c.retryable, next_actions: [{ type: c.next }] },
+      });
+      const r = await exchangeEmailCode({ ...baseOpts, challengeId: 'ch_1', code: '000000', fetchImpl: f });
+      assert.equal(r.status, c.status, c.name);
+      assert.equal(r.terminal, c.terminal, c.name);
+    }
+  });
+
+  it('defaults terminal to false when the envelope carries neither signal (contract drift is not terminal)', async () => {
+    const { f } = fakeFetch({ status: 401, body: { error: 'x', code: 'X' } });
+    const r = await exchangeEmailCode({ ...baseOpts, challengeId: 'ch_1', code: '000000', fetchImpl: f });
+    assert.equal(r.terminal, false);
+    assert.equal(r.status, 401);
+  });
+
+  it('falls back to retryable === false when next_actions is absent (partial drift still classifies)', async () => {
+    const { f } = fakeFetch({ status: 401, body: { error: 'x', code: 'X', retryable: false } });
+    const r = await exchangeEmailCode({ ...baseOpts, challengeId: 'ch_1', code: '000000', fetchImpl: f });
+    assert.equal(r.terminal, true);
   });
 });
 

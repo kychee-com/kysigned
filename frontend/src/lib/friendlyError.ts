@@ -132,14 +132,44 @@ export const CODE_INVALID = 'That code didn’t match. Check the digits and try 
 export const CODE_EXHAUSTED =
   'That code no longer works. Request a new sign-in email and use the code from the newest one.';
 
+/**
+ * FC28.4 / AC-259 — the challenge is already spent. Usually because its LINK
+ * was clicked (one challenge backs both credentials and either kills the
+ * other), sometimes because a newer email superseded it. Deliberately worded to
+ * mirror SIGNIN_LINK_STALE, so AC-259's "the same friendly copy" is literally
+ * true whichever credential the visitor reached for.
+ */
+export const CODE_ALREADY_USED =
+  'This code has already been used or was replaced by a newer email. Open the newest email, or request a fresh one below.';
+
+/**
+ * FC28.4 / AC-259 — the platform caps verification attempts per challenge and
+ * enforces that cap BEFORE it ever looks at the digits. So the digits were not
+ * judged at all: "check the digits and try again" would be advice that cannot
+ * work. The only way forward is a fresh email.
+ */
+export const CODE_TOO_MANY =
+  'Too many tries on this code. Request a new sign-in email and use the code from the newest one.';
+
 /** Map a thrown code-confirm failure to actionable copy. */
 export function friendlyCodeError(e: unknown): string {
   if (e instanceof ApiError) {
     if (e.code === 'auth_code_exhausted') return CODE_EXHAUSTED;
+    if (e.code === 'auth_code_used') return CODE_ALREADY_USED;
+    if (e.code === 'auth_code_too_many') return CODE_TOO_MANY;
     if (e.code === 'auth_code_invalid' || e.status === 401) return CODE_INVALID;
     return friendlyCreateError(e.status, e.message);
   }
   return GENERIC_ERROR;
+}
+
+/** FC28.5 — the three outcomes that make a challenge unusable. Once one of
+ *  these comes back, retrying the same challenge can only fail (and burns more
+ *  of the platform's verification budget), so the screen latches. */
+export const TERMINAL_CODE_ERRORS = ['auth_code_exhausted', 'auth_code_used', 'auth_code_too_many'] as const;
+
+export function isTerminalCodeError(code: string | undefined): boolean {
+  return code !== undefined && (TERMINAL_CODE_ERRORS as readonly string[]).includes(code);
 }
 
 /** Map a thrown token-exchange failure to actionable sign-in copy. */

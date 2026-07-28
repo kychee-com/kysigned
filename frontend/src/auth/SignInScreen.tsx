@@ -14,8 +14,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { telemetryEvent, telemetryEventOnce } from '../lib/telemetry';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { apiPost } from '../lib/api';
-import { friendlySignInError, friendlyGoogleError, friendlyCodeError, GENERIC_ERROR, GOOGLE_FAILED, SIGNIN_SEND_FAILED, SIGNIN_THROTTLED } from '../lib/friendlyError';
+import { apiPost, ApiError } from '../lib/api';
+import { friendlySignInError, friendlyGoogleError, friendlyCodeError, isTerminalCodeError, GENERIC_ERROR, GOOGLE_FAILED, SIGNIN_SEND_FAILED, SIGNIN_THROTTLED } from '../lib/friendlyError';
 import {
   fetchAuthMethods,
   startGoogleSignIn,
@@ -107,6 +107,16 @@ export function SignInScreen({
   // screen of today, with no code UI at all.
   const [challengeId, setChallengeId] = useState('');
   const [codeInput, setCodeInput] = useState('');
+  // FC28.5 / AC-259 — the per-challenge terminal latch. `error` alone is a flat
+  // string that the next submit overwrites, so a dead challenge was forgotten
+  // the moment the visitor tried again and the screen fell back to "that code
+  // didn't match" — advice that cannot work. Once the platform says this
+  // challenge is spent, that verdict STICKS until a fresh challenge exists: the
+  // entry closes, no further confirm is issued (a dead challenge must not burn
+  // more of the platform's verification budget), and the recovery its own
+  // terminal next-action names is offered as one button.
+  const [codeTerminal, setCodeTerminal] = useState('');
+  const [resending, setResending] = useState(false);
   const [error, setError] = useState('');
   const [exchanging, setExchanging] = useState(false);
   // null = probing; true = the browser offers passkey AUTOFILL (so no explicit
@@ -413,7 +423,14 @@ export function SignInScreen({
       if (sent?.throttled) setError(SIGNIN_THROTTLED);
       // F-43.2 — a minted challenge means the email carries a code too; the
       // check-email state then offers typing it right here.
-      setChallengeId(typeof sent?.challenge_id === 'string' ? sent.challenge_id : '');
+      const fresh = typeof sent?.challenge_id === 'string' ? sent.challenge_id : '';
+      setChallengeId(fresh);
+      // FC28.5 — a NEW challenge is the one thing that revives the entry: drop
+      // the terminal latch and the digits typed against the dead challenge.
+      if (fresh) {
+        setCodeTerminal('');
+        setCodeInput('');
+      }
       setMagicLinkSent(true);
     } catch {
       setError(SIGNIN_SEND_FAILED);
@@ -425,6 +442,9 @@ export function SignInScreen({
   // is exactly what the send-gate's held-send poll and RequireAuth key on, so
   // every continuation the link runs happens here without a tab switch.
   const confirmCode = async () => {
+    // FC28.5 — a spent challenge can only fail again, so the screen stops
+    // asking. This is the guard that keeps the terminal verdict true.
+    if (codeTerminal) return;
     if (!/^\d{6}$/.test(codeInput.trim())) return;
     setError('');
     try {
@@ -439,7 +459,23 @@ export function SignInScreen({
         setError(GENERIC_ERROR);
       }
     } catch (e) {
-      setError(friendlyCodeError(e));
+      const copy = friendlyCodeError(e);
+      setError(copy);
+      if (e instanceof ApiError && isTerminalCodeError(e.code)) setCodeTerminal(copy);
+    }
+  };
+
+  // FC28.5 — the recovery the platform's own terminal next-action names
+  // (`request_fresh_credential`). The address is already on screen, so asking
+  // for it again would be busywork: this re-runs the existing send for it and,
+  // on success, the new challenge_id clears the latch and re-opens entry.
+  const resendForCode = async () => {
+    if (resending) return;
+    setResending(true);
+    try {
+      await requestMagicLink();
+    } finally {
+      setResending(false);
     }
   };
 
@@ -643,16 +679,31 @@ export function SignInScreen({
                   onKeyDown={(e) => e.key === 'Enter' && confirmCode()}
                   placeholder="123456"
                   data-testid="signin-code"
-                  className="w-36 min-h-[44px] text-center text-lg tracking-[0.3em] border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-900"
+                  disabled={Boolean(codeTerminal)}
+                  className="w-36 min-h-[44px] text-center text-lg tracking-[0.3em] border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
                 />
                 <button
                   onClick={confirmCode}
                   data-testid="signin-code-confirm"
-                  className="min-h-[44px] px-5 bg-gray-900 text-white rounded-lg font-medium transition-colors duration-150 hover:bg-gray-700 active:bg-gray-950 cursor-pointer"
+                  disabled={Boolean(codeTerminal)}
+                  className="min-h-[44px] px-5 bg-gray-900 text-white rounded-lg font-medium transition-colors duration-150 hover:bg-gray-700 active:bg-gray-950 cursor-pointer disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed"
                 >
                   Sign in
                 </button>
               </div>
+              {codeTerminal && (
+                // FC28.5 / AC-259 — the recovery the platform's own terminal
+                // next-action names, as one button. The address is already on
+                // screen, so there is nothing to re-type.
+                <button
+                  onClick={resendForCode}
+                  disabled={resending}
+                  data-testid="signin-code-resend"
+                  className="w-full min-h-[44px] px-4 border border-gray-300 rounded-lg text-sm font-medium text-gray-900 transition-colors duration-150 hover:bg-gray-50 active:bg-gray-100 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {resending ? 'Sending…' : 'Send a new sign-in email'}
+                </button>
+              )}
             </div>
           )}
           {telemetryTrigger === 'send' ? (
@@ -697,9 +748,14 @@ export function SignInScreen({
                 className="w-full min-h-[44px] border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
                 onKeyDown={(e) => e.key === 'Enter' && exchangePastedToken()}
               />
+              {/* UX-038 — this submit is inside a collapsed <details>, so the
+                  Phase-75 design pass never opened it and it shipped at 36px:
+                  px-4 py-2 with no min-h. It is a real tap target on a phone,
+                  and it matches the primary code controls above at 44px. */}
               <button
                 onClick={exchangePastedToken}
-                className="w-full px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium transition-colors duration-150 hover:bg-gray-700 active:bg-gray-950 cursor-pointer"
+                data-testid="signin-paste-submit"
+                className="w-full min-h-[44px] px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium transition-colors duration-150 hover:bg-gray-700 active:bg-gray-950 cursor-pointer"
               >
                 Sign In
               </button>

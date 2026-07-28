@@ -25,6 +25,7 @@ import {
   handleGoogleDisconnect,
   type GoogleHandlerCtx,
 } from './googleHandlers.js';
+import { createInternalSubjectGate } from '../../integrations/internalSubject.js';
 
 const CEREMONY_ID = 'gc_00000000-0000-4000-8000-000000000001';
 const HANDLE = 'ps_00000000-0000-4000-8000-000000000000.' + 'S'.repeat(43);
@@ -242,6 +243,43 @@ describe('handleGoogleExchange (F-41.2/73.4) — the magic-link downstream, Goog
     assert.deepEqual(events, [
       { type: 'creator_signed_up', meta: { grant_usd_micros: 1_000_000, source: 'google' } },
     ]);
+  });
+
+  // FC28.1 / AC-257 — the Google site goes through the SAME write-time gate as
+  // the email sites, so no sign-in path can bypass the funnel exclusion.
+  it('an internal identity signing in with Google records NO funnel step (AC-257)', async () => {
+    const { impl } = run402Fake({ userEmail: 'signin-probe@prj_1775546157922_0030.test.invalid' });
+    const { pool } = fakePool();
+    const steps: string[] = [];
+    const logs: string[] = [];
+    const ctx = baseCtx(pool, impl);
+    ctx.auth.telemetryStep = async (event) => { steps.push(event); };
+    ctx.auth.internalGate = createInternalSubjectGate({
+      internalIdentities: ['@prj_1775546157922_0030.test.invalid'],
+      log: (m) => logs.push(m),
+    });
+    ctx.grantSignupCredit = async () => ({ granted: false, reason: 'already_granted' });
+
+    const r = await handleGoogleExchange(ctx, { code: 'authcode-1', ceremony: CEREMONY_ID });
+    assert.equal(r.status, 200, 'suppression must never disturb the sign-in itself');
+    assert.deepEqual(steps, [], 'the Google path must not be a funnel back door');
+    assert.match(logs.join('\n'), /suppressed: internal identity/);
+  });
+
+  it('an external Google identity still records session_created (the gate is not a mute switch)', async () => {
+    const { impl } = run402Fake();
+    const { pool } = fakePool();
+    const steps: string[] = [];
+    const ctx = baseCtx(pool, impl);
+    ctx.auth.telemetryStep = async (event) => { steps.push(event); };
+    ctx.auth.internalGate = createInternalSubjectGate({
+      internalIdentities: ['@prj_1775546157922_0030.test.invalid'],
+      log: () => {},
+    });
+    ctx.grantSignupCredit = async () => ({ granted: false, reason: 'already_granted' });
+
+    await handleGoogleExchange(ctx, { code: 'authcode-1', ceremony: CEREMONY_ID });
+    assert.deepEqual(steps, ['session_created']);
   });
 
   it('an email Google does not attest verified passes google_unverified (account yes, freebie no)', async () => {

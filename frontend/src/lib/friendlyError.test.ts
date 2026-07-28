@@ -2,10 +2,15 @@ import { describe, it, expect } from 'vitest';
 import {
   friendlyCreateError,
   friendlySignInError,
+  friendlyCodeError,
   GENERIC_ERROR,
   SIGNIN_LINK_STALE,
   SESSION_EXPIRED,
   SIGNIN_SEND_FAILED,
+  CODE_INVALID,
+  CODE_EXHAUSTED,
+  CODE_ALREADY_USED,
+  CODE_TOO_MANY,
 } from './friendlyError';
 import { ApiError } from './api';
 
@@ -60,7 +65,10 @@ describe('friendlySignInError', () => {
   });
 
   it('no user-facing copy in this module uses a dash-as-pause (outbound style rule)', () => {
-    for (const s of [GENERIC_ERROR, SIGNIN_LINK_STALE, SIGNIN_SEND_FAILED, SESSION_EXPIRED]) {
+    for (const s of [
+      GENERIC_ERROR, SIGNIN_LINK_STALE, SIGNIN_SEND_FAILED, SESSION_EXPIRED,
+      CODE_INVALID, CODE_EXHAUSTED, CODE_ALREADY_USED, CODE_TOO_MANY,
+    ]) {
       expect(s).not.toMatch(/—|–| - /);
     }
   });
@@ -73,5 +81,40 @@ describe('friendlySignInError', () => {
     expect(SESSION_EXPIRED).toMatch(/sign in again/i);
     expect(SESSION_EXPIRED).toMatch(/nothing was lost/i);
     expect(SESSION_EXPIRED).not.toMatch(/401|run402|authentication required|session token/i);
+  });
+});
+
+// FC28.4 / AC-259 — the code-failure copy has to distinguish three outcomes the
+// server now classifies: the challenge is dead (its link was clicked, or it was
+// superseded), the verification budget is spent, and a plain wrong guess. Only
+// the last one is the visitor's fault, so only the last one may say "try again".
+describe('friendlyCodeError — the code failure reads like what actually happened', () => {
+  it('an already-used challenge reads as the stale-email guidance, not as a typo', () => {
+    const copy = friendlyCodeError(new ApiError('x', 401, { code: 'auth_code_used' }));
+    expect(copy).toBe(CODE_ALREADY_USED);
+    expect(copy).not.toMatch(/didn.t match|check the digits/i);
+    expect(copy).toMatch(/newest email|fresh/i);
+  });
+
+  it('a spent verification budget reads as too-many, and names the one recovery', () => {
+    const copy = friendlyCodeError(new ApiError('x', 401, { code: 'auth_code_too_many' }));
+    expect(copy).toBe(CODE_TOO_MANY);
+    expect(copy).not.toMatch(/didn.t match|check the digits/i);
+    expect(copy).toMatch(/new sign-in email/i);
+  });
+
+  it('exhaustion and a plain wrong guess keep their existing copy', () => {
+    expect(friendlyCodeError(new ApiError('x', 401, { code: 'auth_code_exhausted' }))).toBe(CODE_EXHAUSTED);
+    expect(friendlyCodeError(new ApiError('x', 401, { code: 'auth_code_invalid' }))).toBe(CODE_INVALID);
+  });
+
+  it('an unmapped 401 still falls back to the retry copy (never a crash, never a false terminal)', () => {
+    expect(friendlyCodeError(new ApiError('x', 401))).toBe(CODE_INVALID);
+  });
+
+  it('no code-failure copy names a status, a platform code or a vendor', () => {
+    for (const s of [CODE_INVALID, CODE_EXHAUSTED, CODE_ALREADY_USED, CODE_TOO_MANY]) {
+      expect(s).not.toMatch(/R402|run402|401|410|429|status/i);
+    }
   });
 });

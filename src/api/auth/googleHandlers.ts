@@ -40,7 +40,7 @@ import {
   type BindOutcome,
 } from '../attributionCapture.js';
 import { enqueueAdsConversion } from '../adsConversions.js';
-import type { AuthHandlerCtx, AuthResult } from './authHandlers.js';
+import { recordStep, type AuthHandlerCtx, type AuthResult } from './authHandlers.js';
 import type { AuthMethods } from './authMethods.js';
 
 /** Same shape as the magic-link path's handle guard (authHandlers.ts). */
@@ -249,11 +249,10 @@ export async function handleGoogleExchange(
     refreshToken: exchanged.refresh_token,
   });
 
-  try {
-    await ctx.auth.telemetryStep?.('session_created', { method: 'google' });
-  } catch (err) {
-    console.error('telemetry step session_created failed (sign-in unaffected):', err);
-  }
+  // FC28.1 / AC-257 — through the SHARED helper, never `telemetryStep` direct:
+  // it carries the never-throw discipline AND the write-time internal-identity
+  // gate, so the Google path cannot become a funnel back door around it.
+  await recordStep(ctx.auth, 'session_created', { method: 'google', email });
 
   // F-13.4 / F-41.3 — DD-62: Google's attestation is the mailbox proof.
   const grant = ctx.grantSignupCredit ?? ((e: string, c: SignupGrantConfig) => grantSignupCreditIfEligible(ctx.auth.pool, e, c));

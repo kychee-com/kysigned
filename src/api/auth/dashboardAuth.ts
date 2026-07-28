@@ -191,6 +191,24 @@ export interface ExchangeEmailCodeResult {
    * handler maps these to friendly copy; they are never rendered.
    */
   errorCode?: string;
+  /**
+   * FC28.4 — the HTTP status, so the handler can tell a spent verification
+   * budget (429, the per-challenge limiter firing BEFORE verification) from a
+   * wrong guess. Both arrive as failures; only one is the visitor's fault.
+   */
+  status?: number;
+  /**
+   * FC28.4 — the platform's own terminal classification. The error CODE is
+   * uniform on purpose (it never says WHICH of wrong/expired/superseded/
+   * consumed happened), but the envelope publishes whether this challenge can
+   * still be tried: the normative `next_actions[0].type` and, corroborating it,
+   * `retryable`. Terminal means only a FRESH email recovers, so telling the
+   * visitor to check the digits would be advice that cannot work.
+   *
+   * Absent both signals → `false`: an unrecognised envelope degrades to today's
+   * uniform retry copy rather than falsely declaring the challenge dead.
+   */
+  terminal?: boolean;
 }
 
 /**
@@ -213,14 +231,25 @@ export async function exchangeEmailCode(opts: ExchangeEmailCodeOpts): Promise<Ex
   if (res.status < 200 || res.status >= 300) {
     let reason = `run402 returned status ${res.status}`;
     let errorCode: string | undefined;
+    let terminal = false;
     try {
-      const body = (await res.json()) as { error?: string; code?: string };
+      const body = (await res.json()) as {
+        error?: string;
+        code?: string;
+        retryable?: boolean;
+        next_actions?: Array<{ type?: string }>;
+      };
       if (body?.error) reason = `${reason}: ${body.error}`;
       if (typeof body?.code === 'string') errorCode = body.code;
+      // The normative signal first (`request_fresh_credential` means exactly
+      // "this credential is dead, get a new one"); `retryable` corroborates and
+      // covers a gateway that stops sending next_actions. Neither → false.
+      const nextAction = Array.isArray(body?.next_actions) ? body.next_actions[0]?.type : undefined;
+      terminal = nextAction !== undefined ? nextAction === 'request_fresh_credential' : body?.retryable === false;
     } catch {
       // ignore
     }
-    return { ok: false, reason, ...(errorCode ? { errorCode } : {}) };
+    return { ok: false, reason, status: res.status, terminal, ...(errorCode ? { errorCode } : {}) };
   }
   const body = (await res.json()) as {
     access_token?: string;
