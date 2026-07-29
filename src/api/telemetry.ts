@@ -35,6 +35,11 @@ const BROWSER_EVENTS = new Set([
   // label can ride them.
   'draft_started',
   'send_clicked',
+  // F-44.4 (0.70.0) — the create-page affordance facts: sample tried, cover
+  // details expanded. Diagnostics beside the funnel, never steps (DD-67);
+  // element-less like the editor steps.
+  'sample_doc_clicked',
+  'cover_details_expanded',
 ]);
 
 /** Server-recorded funnel steps (F-38.4) — never accepted from a browser. */
@@ -159,6 +164,8 @@ function validElement(event: string, element: unknown): string | null | undefine
     case 'signin_submit':
     case 'draft_started':
     case 'send_clicked':
+    case 'sample_doc_clicked':
+    case 'cover_details_expanded':
       return null; // element ignored on element-less events
     case 'scroll':
       return el !== null && SCROLL_THRESHOLDS.has(el) ? el : undefined;

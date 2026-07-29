@@ -358,6 +358,31 @@ describe('AdminConsolePage — Funnel tab (F-38.6)', () => {
     expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/v1/telemetry/summary') && String(c[0]).includes('days=30'))).toBe(true);
   });
 
+  it('renders the create-page interaction counts beside the funnel (F-44.4 / AC-264)', async () => {
+    const withInteractions = { ...summary, create_interactions: { sample_doc_clicked: 5, cover_details_expanded: 3 } };
+    const fetchMock = mockFetchByPath({ '/v1/admin/overview': overview, '/v1/telemetry/summary': withInteractions });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<MemoryRouter><AdminConsolePage /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId('admin-tab-funnel')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('admin-tab-funnel'));
+    await waitFor(() => expect(screen.getByTestId('admin-funnel')).toBeInTheDocument());
+    const block = screen.getByTestId('admin-funnel-create-interactions');
+    expect(block).toHaveTextContent('sample_doc_clicked');
+    expect(block).toHaveTextContent('5');
+    expect(block).toHaveTextContent('cover_details_expanded');
+    expect(block).toHaveTextContent('3');
+  });
+
+  it('a payload without create_interactions renders the funnel with no interactions block', async () => {
+    const fetchMock = mockFetchByPath({ '/v1/admin/overview': overview, '/v1/telemetry/summary': summary });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<MemoryRouter><AdminConsolePage /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId('admin-tab-funnel')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('admin-tab-funnel'));
+    await waitFor(() => expect(screen.getByTestId('admin-funnel')).toBeInTheDocument());
+    expect(screen.queryByTestId('admin-funnel-create-interactions')).toBeNull();
+  });
+
   it('window selection re-fetches with the mapped days', async () => {
     const fetchMock = mockFetchByPath({ '/v1/admin/overview': overview, '/v1/telemetry/summary': summary });
     vi.stubGlobal('fetch', fetchMock);

@@ -222,4 +222,27 @@ describe('F-41.5 (73.7) — the chose-Google step + the sign-in method split (AC
     assert.equal(s.by_method!.unknown[stepIndex('session_created')], 1, 'a methodless historical row reads unknown');
   });
 });
+
+describe('F-44.4 (76.5) — create-page affordance counts BESIDE the funnel (AC-264 / DD-67)', () => {
+  it('counts the two affordance facts, and the ordered steps stay untouched', async () => {
+    const { pool } = seededPool([
+      r('page_view'),
+      r('sample_doc_clicked', { page: 'create' }),
+      r('sample_doc_clicked', { page: 'create', device: 'mobile' }),
+      r('cover_details_expanded', { page: 'create' }),
+    ]);
+    const s = await summarizeTelemetry(pool, { windowDays: 7, now: NOW });
+    assert.deepEqual(s.create_interactions, { sample_doc_clicked: 2, cover_details_expanded: 1 });
+    // The affordance facts are DIAGNOSTICS, not steps: exactly one landing
+    // counts, every other step stays zero, and the step list stays 12.
+    assert.equal(s.steps.length, 12);
+    assert.deepEqual(s.steps.map((x) => x.count), [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+  });
+
+  it('an empty window returns an empty interactions map', async () => {
+    const { pool } = seededPool([]);
+    const s = await summarizeTelemetry(pool, { windowDays: 7, now: NOW });
+    assert.deepEqual(s.create_interactions, {});
+  });
+});
 });

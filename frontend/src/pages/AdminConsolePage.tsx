@@ -567,6 +567,8 @@ interface FunnelSummary {
   /** F-41.5 (AC-250) — the sign-in method split over the gate-to-session steps. */
   by_method?: Record<string, number[]>;
   home_clicks: Record<string, number>;
+  /** F-44.4 (AC-264) — create-page affordance counts, beside the funnel (DD-67). */
+  create_interactions?: Record<string, number>;
 }
 
 function FunnelSplitTable({ title, testId, split, steps }: {
@@ -660,6 +662,23 @@ function FunnelTab({ window }: { window: WindowKey }) {
           <table className="text-xs border-collapse">
             <tbody>
               {Object.entries(data.home_clicks).sort((a, b) => b[1] - a[1]).map(([el, n]) => (
+                <tr key={el} className="border-t border-gray-100">
+                  <td className="py-1 pr-6 font-mono">{el}</td>
+                  <td className="py-1 tabular-nums text-right">{n}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {/* F-44.4 (AC-264) — the create-page affordance counts, beside the
+          funnel like the home clicks (DD-67: diagnostics, never steps). */}
+      {Object.keys(data.create_interactions ?? {}).length > 0 && (
+        <div className="mb-6" data-testid="admin-funnel-create-interactions">
+          <h3 className="text-sm font-medium mb-2">Create-page interactions</h3>
+          <table className="text-xs border-collapse">
+            <tbody>
+              {Object.entries(data.create_interactions!).sort((a, b) => b[1] - a[1]).map(([el, n]) => (
                 <tr key={el} className="border-t border-gray-100">
                   <td className="py-1 pr-6 font-mono">{el}</td>
                   <td className="py-1 tabular-nums text-right">{n}</td>

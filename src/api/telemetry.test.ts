@@ -331,3 +331,25 @@ describe('handleTelemetryCollect — per-source rate limit (AC-220)', () => {
     assert.ok(!JSON.stringify(calls.flatMap((c) => c.values)).includes('203.0.113.99'));
   });
 });
+
+describe('0.70.0 vocabulary — the create-page affordance facts (F-44.4 / AC-264)', () => {
+  it('sample_doc_clicked and cover_details_expanded are accepted element-less; an unknown sibling still drops', async () => {
+    const { pool, calls } = capturePool();
+    await collect(ctx(pool), batch({
+      page: '/dashboard/create',
+      records: [
+        { event: 'sample_doc_clicked', seq: 1 },
+        { event: 'cover_details_expanded', element: 'ignored-junk', seq: 2 },
+        { event: 'sample_doc_hovered', seq: 3 }, // not vocabulary — F-38.7 unchanged
+      ],
+    }));
+    assert.equal(calls.length, 1);
+    const vals = calls[0].values;
+    assert.ok(vals.includes('sample_doc_clicked'), 'sample fact must store');
+    assert.ok(vals.includes('cover_details_expanded'), 'cover fact must store');
+    assert.ok(!vals.includes('sample_doc_hovered'), 'an unknown name must still drop');
+    assert.ok(!vals.includes('ignored-junk'), 'the affordance facts are element-less');
+    // Exactly the two rows stored: nine columns each.
+    assert.equal(vals.length, 18);
+  });
+});

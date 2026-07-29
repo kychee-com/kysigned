@@ -121,7 +121,16 @@ export interface TelemetryFunnelSummary {
   by_method?: Record<string, number[]>;
   /** Home-page per-element click counts (F-38.2's named + catch-all buckets). */
   home_clicks: Record<string, number>;
+  /**
+   * F-44.4 (AC-264) — the create-page affordance counts (sample tried, cover
+   * details expanded): diagnostics BESIDE the funnel, never steps (DD-67), so
+   * the ordered step list and every split stay untouched.
+   */
+  create_interactions: Record<string, number>;
 }
+
+/** F-44.4 — the affordance facts counted into `create_interactions`. */
+const CREATE_INTERACTION_EVENTS = new Set(['sample_doc_clicked', 'cover_details_expanded']);
 
 interface SummaryRow {
   event: string;
@@ -180,6 +189,7 @@ export async function summarizeTelemetry(
   const bySourceDevice: Record<string, number[]> = {};
   const byMethod: Record<string, number[]> = {};
   const homeClicks: Record<string, number> = {};
+  const createInteractions: Record<string, number> = {};
 
   const bump = (map: Record<string, number[]>, key: string, stepIndex: number) => {
     if (!map[key]) map[key] = TELEMETRY_FUNNEL_STEPS.map(() => 0);
@@ -202,6 +212,9 @@ export async function summarizeTelemetry(
     if (row.event === 'click' && row.page === 'home' && row.element) {
       homeClicks[row.element] = (homeClicks[row.element] ?? 0) + 1;
     }
+    if (CREATE_INTERACTION_EVENTS.has(row.event)) {
+      createInteractions[row.event] = (createInteractions[row.event] ?? 0) + 1;
+    }
   }
 
   return {
@@ -214,5 +227,6 @@ export async function summarizeTelemetry(
     by_source_device: bySourceDevice,
     by_method: byMethod,
     home_clicks: homeClicks,
+    create_interactions: createInteractions,
   };
 }
