@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# derived at build from ../docs/test-assets — never commit a second copy
+public/samples/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
