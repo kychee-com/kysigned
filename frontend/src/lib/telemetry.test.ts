@@ -10,7 +10,13 @@
  * paid after its landing page (AC-235).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createTelemetryRail, normalizeDestination, type TelemetryBatch } from './telemetry';
+import {
+  createTelemetryRail,
+  isEditorPage,
+  normalizeDestination,
+  FLUSH_DEBOUNCE_MS,
+  type TelemetryBatch,
+} from './telemetry';
 import { initStaticTelemetry } from '../../public/telemetry.mjs';
 
 function harness(over: Partial<Parameters<typeof createTelemetryRail>[0]> = {}) {
@@ -33,7 +39,10 @@ beforeEach(() => {
   window.localStorage.clear();
   window.sessionStorage.clear();
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.useRealTimers();
+});
 
 describe('normalizeDestination — catch-all dest mirror of the server page set', () => {
   it('maps same-origin paths to page names, unknown to other, off-origin to external', () => {
@@ -274,6 +283,192 @@ describe('delegated clicks — registry + catch-all (AC-215)', () => {
   });
 });
 
+describe('delivery does not wait for page teardown (BT-30.1 / FC30.1, AC-215)', () => {
+  // Before FC30.1 the queue's ONLY exits were `pagehide`, `visibilitychange →
+  // hidden`, and a 25-record batch. A page load that ended without a delivered
+  // pagehide (tab discard, OS kill, crash, an automated ceremony that just
+  // closes the context) lost its WHOLE batch, page_view included — which is
+  // what cycle 30 measured and read as a missing event name.
+  it('a single queued record leaves the page with NO pagehide, NO visibilitychange and far fewer than 25 records', () => {
+    vi.useFakeTimers();
+    const { rail, sent } = harness();
+    rail.pageView('/dashboard/create');
+    rail.attach(document);
+    rail.event('sample_doc_clicked');
+    expect(sent).toHaveLength(0); // nothing has left yet — batching is intact
+    vi.advanceTimersByTime(FLUSH_DEBOUNCE_MS + 50);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].page).toBe('/dashboard/create');
+    expect(sent[0].records).toEqual([
+      { event: 'page_view', seq: 1 },
+      { event: 'sample_doc_clicked', seq: 2 },
+    ]);
+  });
+
+  it('the batch shape is byte-unchanged — a debounced POST is the same wire shape as a pagehide POST', () => {
+    vi.useFakeTimers();
+    const debounced = harness({ search: '?gclid=x&utm_campaign=Summer_Launch' });
+    debounced.rail.pageView('/pricing');
+    vi.advanceTimersByTime(FLUSH_DEBOUNCE_MS + 50);
+
+    const teardown = harness({ search: '?gclid=x&utm_campaign=Summer_Launch' });
+    teardown.rail.pageView('/pricing');
+    teardown.rail.flush();
+
+    expect(JSON.stringify(debounced.sent[0])).toBe(JSON.stringify(teardown.sent[0]));
+  });
+
+  it('several records inside one window coalesce into ONE batch (the per-source limiter must not be approached)', () => {
+    vi.useFakeTimers();
+    const { rail, sent } = harness();
+    rail.pageView('/dashboard/create');
+    vi.advanceTimersByTime(FLUSH_DEBOUNCE_MS / 2);
+    rail.event('draft_started');
+    vi.advanceTimersByTime(FLUSH_DEBOUNCE_MS / 2);
+    rail.event('sample_doc_clicked');
+    vi.advanceTimersByTime(FLUSH_DEBOUNCE_MS + 50);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].records.map((r) => r.event)).toEqual(['page_view', 'draft_started', 'sample_doc_clicked']);
+  });
+
+  it('an ordinary page load stays cheap: a full home visit (view + scroll depth + a click) is a single POST', () => {
+    vi.useFakeTimers();
+    const { rail, sent } = harness();
+    document.body.innerHTML = `<a id="cta" data-telemetry="cta_create:hero" href="/dashboard/create">Create</a>`;
+    rail.pageView('/');
+    rail.attach(document);
+    Object.defineProperty(document.documentElement, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(window, 'innerHeight', { value: 100, configurable: true });
+    Object.defineProperty(window, 'scrollY', { value: 900, configurable: true });
+    window.dispatchEvent(new Event('scroll'));
+    (document.getElementById('cta') as HTMLElement).click();
+    vi.advanceTimersByTime(FLUSH_DEBOUNCE_MS + 50);
+    expect(sent).toHaveLength(1);
+  });
+
+  it('the DISABLED (fresh-fork) rail arms no timer and sends nothing, ever (AC-221)', () => {
+    vi.useFakeTimers();
+    const sent: TelemetryBatch[] = [];
+    const rail = createTelemetryRail({ enabled: false, send: (b) => (sent.push(b), true) });
+    rail.pageView('/');
+    rail.event('click', 'cta_create:hero');
+    expect(vi.getTimerCount()).toBe(0); // nothing scheduled at all
+    vi.advanceTimersByTime(60_000);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('pagehide still flushes immediately, and does not re-send what the timer already sent', () => {
+    vi.useFakeTimers();
+    const { rail, sent } = harness();
+    rail.pageView('/pricing');
+    rail.attach(document);
+    window.dispatchEvent(new Event('pagehide'));
+    expect(sent).toHaveLength(1); // immediate, not debounced
+    vi.advanceTimersByTime(FLUSH_DEBOUNCE_MS * 4);
+    expect(sent).toHaveLength(1); // the pending timer found an empty queue
+    expect(vi.getTimerCount()).toBe(0); // and disarmed itself
+  });
+
+  it('the 25-record batch cap still sends immediately (the backstops are kept, not replaced)', () => {
+    vi.useFakeTimers();
+    const { rail, sent } = harness();
+    rail.pageView('/');
+    for (let i = 0; i < 24; i++) rail.event('click', 'signin:header');
+    expect(sent).toHaveLength(1);
+    expect(sent[0].records).toHaveLength(25);
+  });
+});
+
+describe('the editor is outside the every-clickable rule (BT-30.2 / FC30.2, AC-227)', () => {
+  const EDITOR = '/dashboard/create';
+
+  function editorHarness() {
+    const h = harness();
+    document.body.innerHTML = `
+      <a id="named" data-telemetry="how_it_works:header" href="/how-it-works">How it works</a>
+      <a id="anon" href="/how-it-works">how this works &rarr;</a>`;
+    h.rail.pageView(EDITOR);
+    h.rail.attach(document);
+    return h;
+  }
+
+  it('an UNNAMED link on the editor records no click (the catch-all bucket)', () => {
+    const { rail, sent } = editorHarness();
+    (document.getElementById('anon') as HTMLElement).click();
+    rail.flush();
+    expect(sent.flatMap((b) => b.records).filter((r) => r.event === 'click')).toEqual([]);
+  });
+
+  it('a NAMED [data-telemetry] element on the editor records no click either (the header sits on this page)', () => {
+    const { rail, sent } = editorHarness();
+    (document.getElementById('named') as HTMLElement).click();
+    rail.flush();
+    expect(sent.flatMap((b) => b.records).filter((r) => r.event === 'click')).toEqual([]);
+  });
+
+  it('the editor still records its OWN closed set: draft_started, send_clicked, and both F-44.4 facts', () => {
+    const { rail, sent } = editorHarness();
+    rail.event('draft_started');
+    rail.eventOnce('cover_details_expanded');
+    rail.eventOnce('sample_doc_clicked');
+    rail.event('send_clicked');
+    (document.getElementById('anon') as HTMLElement).click(); // still suppressed
+    rail.flush();
+    expect(sent.flatMap((b) => b.records).map((r) => r.event)).toEqual([
+      'page_view',
+      'draft_started',
+      'cover_details_expanded',
+      'sample_doc_clicked',
+      'send_clicked',
+    ]);
+  });
+
+  it('the guard is EXACT: /dashboard and deeper /dashboard/* paths keep the F-38.2 promise', () => {
+    for (const page of ['/dashboard', '/dashboard/env_123', '/dashboard/create/extra']) {
+      const { rail, sent } = harness();
+      document.body.innerHTML = `<a id="anon" href="/faq">FAQ</a>`;
+      rail.pageView(page);
+      rail.attach(document);
+      (document.getElementById('anon') as HTMLElement).click();
+      rail.flush();
+      expect(sent.flatMap((b) => b.records).filter((r) => r.event === 'click').map((r) => r.element), page).toEqual([
+        'other:faq',
+      ]);
+    }
+  });
+
+  it('public pages are untouched collateral: home still records both buckets (F-38.2)', () => {
+    const { rail, sent } = harness();
+    document.body.innerHTML = `
+      <a id="named" data-telemetry="cta_create:hero" href="/dashboard/create">Create</a>
+      <a id="anon" href="/faq">FAQ</a>`;
+    rail.pageView('/');
+    rail.attach(document);
+    (document.getElementById('named') as HTMLElement).click();
+    (document.getElementById('anon') as HTMLElement).click();
+    rail.flush();
+    expect(sent.flatMap((b) => b.records).filter((r) => r.event === 'click').map((r) => r.element)).toEqual([
+      'cta_create:hero',
+      'other:faq',
+    ]);
+  });
+
+  it('PIN against the SEGMENT_TO_PAGE trap: the client normalizer never answers "create", so the guard cannot be written against it', () => {
+    // The SERVER splits /dashboard/create out of dashboard
+    // (`normalizeTelemetryPage`); the CLIENT's own SEGMENT_TO_PAGE has no
+    // `create` entry at all. A guard written as
+    // `normalizeDestination(state.page) === 'create'` therefore silently never
+    // fires. This asserts both halves so the trap cannot be re-entered.
+    expect(normalizeDestination(EDITOR, 'kysigned.com')).toBe('dashboard');
+    expect(normalizeDestination(EDITOR, 'kysigned.com')).not.toBe('create');
+    expect(isEditorPage(EDITOR)).toBe(true);
+    const { rail, sent } = editorHarness();
+    (document.getElementById('anon') as HTMLElement).click();
+    rail.flush();
+    expect(sent.flatMap((b) => b.records).filter((r) => r.event === 'click')).toEqual([]);
+  });
+});
+
 describe('scroll depth — home only, once per threshold (AC-215)', () => {
   function fakeScrollTo(fraction: number) {
     Object.defineProperty(document.documentElement, 'scrollHeight', { value: 1000, configurable: true });
@@ -338,6 +533,39 @@ describe('static-page mirror (telemetry.mjs) — interop with the SPA rail', () 
     expect(anonPrevented).toBe(false);
     expect(window.localStorage.length).toBe(0);
     expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it('is held to the IDENTICAL timing contract, not just the identical wire shape (FC30.1)', () => {
+    // The two implementations must agree on WHEN a record leaves, or a static
+    // page keeps the lost-batch defect the SPA just fixed.
+    vi.useFakeTimers();
+
+    const spaSent: TelemetryBatch[] = [];
+    const spa = createTelemetryRail({ enabled: true, send: (b) => (spaSent.push(b), true), search: '', referrer: '' });
+    spa.pageView('/pricing.html');
+
+    const staticSent: TelemetryBatch[] = [];
+    initStaticTelemetry({
+      send: (b: TelemetryBatch) => (staticSent.push(b), true),
+      path: '/pricing.html',
+      referrer: '',
+      search: '',
+      doc: document,
+    });
+
+    vi.advanceTimersByTime(FLUSH_DEBOUNCE_MS - 1);
+    expect(spaSent, 'SPA rail must still be batching').toHaveLength(0);
+    expect(staticSent, 'static mirror must still be batching').toHaveLength(0);
+
+    vi.advanceTimersByTime(2);
+    expect(spaSent, 'SPA rail delivered without any teardown').toHaveLength(1);
+    expect(staticSent, 'static mirror delivered without any teardown').toHaveLength(1);
+    expect(JSON.stringify(staticSent[0].records)).toBe(JSON.stringify(spaSent[0].records));
+
+    // And a later pagehide re-sends nothing that already left.
+    window.dispatchEvent(new Event('pagehide'));
+    expect(staticSent).toHaveLength(1);
+    expect(spaSent).toHaveLength(1);
   });
 
   it('reports the SAME paid answer as the SPA rail for every state of the F-37 record (AC-235)', () => {

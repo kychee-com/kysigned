@@ -20,8 +20,17 @@ import { deriveCountry, deriveDevice, deriveSourceBucket } from './telemetryDeri
 
 // ── vocabulary ──────────────────────────────────────────────────────────────
 
-/** Events the browser rail may submit. */
-const BROWSER_EVENTS = new Set([
+/**
+ * Events the browser rail may submit.
+ *
+ * FC30.3 — this set and the client's `CLIENT_TELEMETRY_EVENTS`
+ * (`frontend/src/lib/telemetryEvents.ts`) are held to each other by
+ * `telemetryVocabulary.test.ts`. The collection door always answers 204, so a
+ * name added on ONLY one side is dropped silently and invisibly on the wire;
+ * that invariant used to be guaranteed only by a live publish probe. Add an
+ * event to both lists (plus a `validElement` rule) in the same change.
+ */
+export const BROWSER_EVENTS = new Set([
   'page_view',
   'click',
   'scroll',

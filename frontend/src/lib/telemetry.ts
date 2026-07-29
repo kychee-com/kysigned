@@ -23,12 +23,37 @@
  */
 import { getOperatorConfig } from '../config/operator';
 import { readStoredAttribution } from './attribution';
+import { CLIENT_TELEMETRY_EVENTS, type ClientTelemetryEvent } from './telemetryEvents';
+
+export { CLIENT_TELEMETRY_EVENTS };
+export type { ClientTelemetryEvent };
 
 export const TELEMETRY_ENDPOINT = '/v1/telemetry';
 /** Per-page-load record cap — mirrors the server's TELEMETRY_MAX_PAGE_SEQ. */
 export const TELEMETRY_PAGE_CAP = 60;
 /** Records per POST — mirrors the server's TELEMETRY_MAX_RECORDS_PER_POST. */
 const BATCH_CAP = 25;
+/**
+ * How long a queued record may wait before it is sent anyway (FC30.1/BT-30.1).
+ *
+ * The rail used to reach `flush()` from exactly three places — `pagehide`,
+ * `visibilitychange → hidden`, and the 25-record batch cap — so a page load
+ * that ended without a DELIVERED `pagehide` lost its whole batch, `page_view`
+ * included: a discarded tab, an OS kill on mobile, a crash, or an automated
+ * ceremony that just closes its context. That is measurement loss for exactly
+ * the abandoning-visitor cohort these diagnostics exist to count.
+ *
+ * This is a delivery fix, not a chattiness regression: the debounce re-arms on
+ * every queued record, so a burst (page view → a click → the click's follow-on
+ * fact) coalesces into ONE POST, and a visitor who navigates inside the window
+ * still leaves on the `pagehide` backstop with no extra POST at all. An
+ * ordinary page load therefore stays at ~1–3 posts, nowhere near the server's
+ * per-source limiter (`createTelemetryLimiter`, 30 posts / 60 s).
+ *
+ * `frontend/public/telemetry.mjs` MUST use the same value — the interop tests
+ * hold the two implementations to one timing contract, not just one wire shape.
+ */
+export const FLUSH_DEBOUNCE_MS = 2000;
 
 export interface TelemetryRecord {
   event: string;
@@ -94,6 +119,31 @@ export function normalizeDestination(href: string, ownHost: string): string {
   }
   const seg = href.split('?')[0].split('#')[0].replace(/^\/+/, '').split('/')[0].toLowerCase().replace(/\.html$/, '');
   return SEGMENT_TO_PAGE[seg] ?? 'other';
+}
+
+/**
+ * True on the EDITOR (`/dashboard/create`) — F-39.5 / AC-227.
+ *
+ * The editor's measured events are exactly the funnel steps it fires by hand
+ * (`draft_started`, `send_clicked`) plus the two F-44.4 affordance facts. The
+ * F-38.2 every-clickable rule does NOT extend to it, so neither click bucket
+ * may record here — not the catch-all, and not a named `[data-telemetry]`
+ * element either (the site header renders above this page and carries several).
+ *
+ * TRAP (this is why the guard is its own function): it mirrors the SERVER's
+ * `normalizeTelemetryPage` editor rule, NOT the client's `SEGMENT_TO_PAGE` —
+ * that map has no `create` entry at all, because only the server splits
+ * `/dashboard/create` out of `dashboard`. A guard written as
+ * `normalizeDestination(page) === 'create'` therefore silently never fires.
+ * Exactly like the server rule, it matches `/dashboard/create` and nothing
+ * deeper, so an envelope id under `/dashboard/*` is unaffected.
+ */
+export function isEditorPage(page: string): boolean {
+  if (typeof page !== 'string') return false;
+  const path = page.split('?')[0].split('#')[0];
+  if (path === 'create') return true; // an already-normalized page name
+  const segs = path.replace(/^\/+/, '').replace(/\/+$/, '').split('/');
+  return segs.length === 2 && segs[0].toLowerCase() === 'dashboard' && segs[1].toLowerCase() === 'create';
 }
 
 export interface TelemetryRailOptions {
@@ -167,7 +217,39 @@ export function createTelemetryRail(opts: TelemetryRailOptions = {}) {
     return readStoredAttribution() !== null;
   }
 
+  /**
+   * FC30.1 — the bounded debounce that lets a record leave a page that is still
+   * alive. Armed only from `push()` (so a disabled rail schedules nothing, and
+   * a fresh fork stays inert — AC-221), re-armed on each new record, and
+   * disarmed by every flush so a teardown flush is never double-sent.
+   */
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function cancelScheduledFlush(): void {
+    if (flushTimer === null) return;
+    try {
+      clearTimeout(flushTimer);
+    } catch {
+      // Silent.
+    }
+    flushTimer = null;
+  }
+
+  function scheduleFlush(): void {
+    if (!enabled) return;
+    cancelScheduledFlush();
+    try {
+      flushTimer = setTimeout(() => {
+        flushTimer = null;
+        flush();
+      }, FLUSH_DEBOUNCE_MS);
+    } catch {
+      // Silent — a host without timers still delivers on the teardown backstops.
+    }
+  }
+
   function flush(): void {
+    cancelScheduledFlush();
     if (!enabled || !state || state.queue.length === 0) return;
     const records = state.queue.splice(0, state.queue.length);
     try {
@@ -191,7 +273,10 @@ export function createTelemetryRail(opts: TelemetryRailOptions = {}) {
     state.seq += 1;
     const rec: TelemetryRecord = element === undefined ? { event, seq: state.seq } : { event, element, seq: state.seq };
     state.queue.push(rec);
+    // The batch cap and the teardown listeners are kept as backstops (defence
+    // in depth); the debounce is what makes delivery independent of them.
     if (state.queue.length >= BATCH_CAP) flush();
+    else scheduleFlush();
   }
 
   function pageView(page: string): void {
@@ -210,6 +295,11 @@ export function createTelemetryRail(opts: TelemetryRailOptions = {}) {
 
   function handleClick(target: EventTarget | null): void {
     if (!enabled || !state) return;
+    // F-39.5 / AC-227 (FC30.2) — the editor is outside the every-clickable
+    // rule: neither the named nor the catch-all bucket records here. Its
+    // hand-fired funnel steps and the two F-44.4 facts are untouched — they
+    // never come through this listener.
+    if (isEditorPage(state.page)) return;
     try {
       const el = target instanceof Element ? target : null;
       if (!el) return;
@@ -300,10 +390,15 @@ export function telemetryPageView(page: string): void {
   getTelemetryRail().pageView(page);
 }
 
-export function telemetryEvent(event: string, element?: string): void {
+/**
+ * FC30.3 — the emit helpers are typed against the DECLARED vocabulary, so a
+ * name the server does not know cannot even be written at a call site: the
+ * always-204 collection door would otherwise drop it silently.
+ */
+export function telemetryEvent(event: ClientTelemetryEvent, element?: string): void {
   getTelemetryRail().event(event, element);
 }
 
-export function telemetryEventOnce(event: string, element?: string): void {
+export function telemetryEventOnce(event: ClientTelemetryEvent, element?: string): void {
   getTelemetryRail().eventOnce(event, element);
 }

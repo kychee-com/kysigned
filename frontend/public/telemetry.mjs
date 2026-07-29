@@ -21,6 +21,14 @@
 const ENDPOINT = '/v1/telemetry';
 const PAGE_CAP = 60;
 const BATCH_CAP = 25;
+/**
+ * FC30.1 — the bounded debounce that lets a record leave a page that is still
+ * alive, instead of waiting for a `pagehide` that a discarded tab, an OS kill,
+ * a crash, or a closed automation context never delivers. MUST equal
+ * `FLUSH_DEBOUNCE_MS` in frontend/src/lib/telemetry.ts — the interop tests hold
+ * the two implementations to one TIMING contract, not just one wire shape.
+ */
+const FLUSH_DEBOUNCE_MS = 2000;
 
 // F-37 first-party ad-click record — the ONE key this rail reads (presence and
 // freshness only). Mirrors attribution-capture.mjs; deliberately INLINED
@@ -144,7 +152,32 @@ export function initStaticTelemetry(opts) {
   const scrollFired = {};
   const isHome = (SEGMENT_TO_PAGE[segOf(path)] || 'other') === 'home';
 
+  let flushTimer = null;
+
+  function cancelScheduledFlush() {
+    if (flushTimer === null) return;
+    try {
+      clearTimeout(flushTimer);
+    } catch {
+      /* silent */
+    }
+    flushTimer = null;
+  }
+
+  function scheduleFlush() {
+    cancelScheduledFlush();
+    try {
+      flushTimer = setTimeout(function () {
+        flushTimer = null;
+        flush();
+      }, FLUSH_DEBOUNCE_MS);
+    } catch {
+      /* silent — a host without timers still delivers on the teardown backstops */
+    }
+  }
+
   function flush() {
+    cancelScheduledFlush();
     if (queue.length === 0) return;
     const records = queue.splice(0, queue.length);
     try {
@@ -163,12 +196,19 @@ export function initStaticTelemetry(opts) {
     seq += 1;
     const rec = element === undefined ? { event: event, seq: seq } : { event: event, element: element, seq: seq };
     queue.push(rec);
+    // The batch cap and the teardown listeners stay as backstops; the debounce
+    // is what makes delivery independent of them (FC30.1).
     if (queue.length >= BATCH_CAP) flush();
+    else scheduleFlush();
   }
 
   push('page_view');
 
   try {
+    // No editor guard here, deliberately: F-39.5/AC-227 closes the event set on
+    // `/dashboard/create`, which is an SPA-only route — this mirror never runs
+    // there. The two implementations stay wire-identical on every page that CAN
+    // run both.
     doc.addEventListener(
       'click',
       function (e) {
