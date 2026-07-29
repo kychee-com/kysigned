@@ -1071,12 +1071,14 @@ export function CreateEnvelopePage() {
                 picker: guest and signed-in alike. Lives with the picker, so a
                 restored draft (no picker, F-40.4) never shows it. */}
             <div className="mt-3">
+              {/* 76.9 (Barry 2026-07-29) — emphasized: green frame + bold label
+                  so the researcher's path stands out against the zone above. */}
               <button
                 type="button"
                 data-testid="sample-doc-btn"
                 onClick={() => void loadSampleDocument()}
                 disabled={sampleLoading}
-                className="inline-flex items-center min-h-[44px] px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 cursor-pointer"
+                className="inline-flex items-center min-h-[44px] px-4 py-2 border-2 border-green-600 rounded-lg text-sm font-bold text-gray-900 hover:bg-green-50 disabled:opacity-40 cursor-pointer"
               >
                 {sampleLoading ? 'Loading the sample…' : 'Try it with a sample document'}
               </button>
