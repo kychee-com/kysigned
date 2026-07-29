@@ -228,9 +228,27 @@ describe('CreateEnvelopePage — QA fixes (Barry 2026-06-18)', () => {
     window.scrollTo = vi.fn() as unknown as typeof window.scrollTo;
   });
 
-  it('autofocuses the first signer Name field on open (Issue 1)', () => {
-    renderPage();
-    expect(nameInputs()[0]).toHaveFocus();
+  it('autofocuses the first signer Name field on open where the form fits (Issue 1; F-44/AC-265 gates it to min-width: 768px)', () => {
+    // The Issue-1 nicety is now viewport-conditional: on a phone the same
+    // autofocus SCROLLED the first screen past the upload zone (measured by
+    // the 76.7 probe), so it only fires at md+. The mobile branch is pinned
+    // in CreateEnvelopePage.dropzone.test.tsx.
+    vi.stubGlobal('matchMedia', (q: string) => ({
+      matches: q.includes('min-width: 768px'),
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      onchange: null,
+      dispatchEvent: () => false,
+    }));
+    try {
+      renderPage();
+      expect(nameInputs()[0]).toHaveFocus();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('signer name/email suppress browser + password-manager autofill so the user identity is never injected (Issue 1/2, Barry QA)', () => {

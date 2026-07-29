@@ -158,6 +158,32 @@ describe('CreateEnvelopePage — the drop zone + trust line (F-44.3 / AC-263)', 
     expect(screen.getByTestId('retention-trust-line').textContent).toBe(TRUST_LINE);
   });
 
+  // F-44 (AC-265) — the 76.7 probe caught the first-signer autofocus scrolling
+  // a 390×844 phone 647px past the Document card on load. The focus is now
+  // gated to viewports where the form can fit (min-width: 768px), decided once
+  // at mount, so a phone's first screen stays the upload zone.
+  it('does NOT autofocus the signer name on a small viewport — the first screen stays the zone', () => {
+    renderPage();
+    const firstName = screen.getAllByPlaceholderText('e.g., Jane Smith')[0] as HTMLInputElement;
+    expect(document.activeElement).not.toBe(firstName);
+  });
+
+  it('still autofocuses the signer name where the form fits (min-width: 768px)', () => {
+    vi.stubGlobal('matchMedia', (q: string) => ({
+      matches: q.includes('min-width: 768px'),
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      onchange: null,
+      dispatchEvent: () => false,
+    }));
+    renderPage();
+    const firstName = screen.getAllByPlaceholderText('e.g., Jane Smith')[0] as HTMLInputElement;
+    expect(document.activeElement).toBe(firstName);
+  });
+
   it('the input keeps its id, bound label, and 44px class inside the zone (AC-231/F-026)', () => {
     renderPage();
     const input = fileInput();

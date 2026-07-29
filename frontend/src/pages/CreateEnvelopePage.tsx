@@ -328,6 +328,17 @@ export function CreateEnvelopePage() {
     if (isPdfTooLarge(f.size)) { setError(pdfTooLargeMessage(f.size)); setFirstError('file') }
     else if (firstError === 'file') { setFirstError(null); setError('') }
   }
+  // F-44 (AC-265) — autofocusing the first signer SCROLLS a phone past the
+  // Document card on load (the 76.7 probe measured scrollY 647 at 390×844):
+  // the visitor lands mid-form and never meets the upload zone or the sample
+  // button. Keep the desktop nicety (Barry QA), never the mobile scroll:
+  // focus only where the form has a chance to fit, decided once at mount.
+  const [autoFocusFirstSigner] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(min-width: 768px)').matches,
+  )
   const [dragActive, setDragActive] = useState(false)
   const handlePdfDrop = (e: React.DragEvent) => {
     e.preventDefault()
@@ -1165,7 +1176,7 @@ export function CreateEnvelopePage() {
                       kept autofilling Signer 1). autoFocus the first name on open. */}
                   <input
                     type="text" autoComplete="off" data-1p-ignore="true" data-lpignore="true" data-form-type="other"
-                    autoFocus={i === 0} placeholder="e.g., Jane Smith" value={s.name}
+                    autoFocus={i === 0 && autoFocusFirstSigner} placeholder="e.g., Jane Smith" value={s.name}
                     onChange={(e) => { patchSigner(i, { name: e.target.value }); if (firstError === 'signers') setFirstError(null) }}
                     className={`w-full min-h-[44px] border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 ${firstError === 'signers' && !s.name ? 'border-red-400 ring-1 ring-red-400' : 'border-gray-300'}`}
                   />
