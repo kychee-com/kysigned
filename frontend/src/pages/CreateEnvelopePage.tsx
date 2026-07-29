@@ -313,6 +313,38 @@ export function CreateEnvelopePage() {
   // reads). The signer fields stay untouched on purpose: sending it to
   // yourself is the aha the microcopy sells. A failed fetch shows the
   // standard inline error and leaves the button live for a retry.
+  // F-44.3 (AC-263, DD-68) — ONE pick path for the picker's onChange and the
+  // drop zone, so re-pick refresh, name prefill, and the oversize guard can
+  // never drift between the two ways in. (The sample keeps its own explicit
+  // display name, F-44.2.)
+  const acceptPickedFile = (f: File) => {
+    markDraftStarted() // F-39.5 — the fact of the pick, never the file
+    setFile(f)
+    // Always reflect the chosen file in the display name, overwriting a
+    // prior value — so re-picking a file refreshes the name. The user can
+    // still tweak it afterward (Barry QA).
+    setDocName(f.name.replace(/\.pdf$/i, ''))
+    // Instant feedback: flag an oversize PDF the moment it's picked.
+    if (isPdfTooLarge(f.size)) { setError(pdfTooLargeMessage(f.size)); setFirstError('file') }
+    else if (firstError === 'file') { setFirstError(null); setError('') }
+  }
+  const [dragActive, setDragActive] = useState(false)
+  const handlePdfDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setDragActive(false)
+    const f = e.dataTransfer?.files?.[0]
+    if (!f) return
+    // The picker's accept=".pdf" cannot filter a DROP — check here, with the
+    // same standard copy the empty-Send validation uses.
+    if (f.type !== 'application/pdf' && !/\.pdf$/i.test(f.name)) {
+      setError('Please upload a PDF')
+      setFirstError('file')
+      scrollToTop()
+      return
+    }
+    acceptPickedFile(f)
+  }
+
   const [sampleLoading, setSampleLoading] = useState(false)
   const loadSampleDocument = async () => {
     telemetryEventOnce('sample_doc_clicked')
@@ -972,29 +1004,58 @@ export function CreateEnvelopePage() {
             {/* F-023 (AC-231) — the label is BOUND so the file input has an
                 accessible name (it was the sweep's unlabeled-control finding). */}
             <label htmlFor="pdf-file-input" className="block text-sm text-gray-600 mb-1">PDF file</label>
-            <input
-              id="pdf-file-input"
-              type="file" accept=".pdf"
-              // Clear the value before the picker opens so re-selecting the SAME
-              // file still counts as a change — otherwise the browser fires no
-              // onChange on an identical re-pick and the name never refreshes
-              // (Barry QA). State keeps the File, so the picker just re-derives.
-              onClick={(e) => { e.currentTarget.value = '' }}
-              onChange={(e) => {
-                const f = e.target.files?.[0] ?? null
-                if (f) markDraftStarted() // F-39.5 — the fact of the pick, never the file
-                setFile(f)
-                // Always reflect the chosen file in the display name, overwriting a
-                // prior value — so re-picking a file refreshes the name. The user can
-                // still tweak it afterward (Barry QA).
-                if (f) setDocName(f.name.replace(/\.pdf$/i, ''))
-                // Instant feedback: flag an oversize PDF the moment it's picked.
-                if (f && isPdfTooLarge(f.size)) { setError(pdfTooLargeMessage(f.size)); setFirstError('file') }
-                else if (f && firstError === 'file') { setFirstError(null); setError('') }
-              }}
-              className={`w-full min-h-[44px] flex items-center text-sm text-gray-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200 ${firstError === 'file' ? 'ring-2 ring-red-400 rounded-lg' : ''}`}
-            />
+            {/* F-44.3 (AC-263, DD-68) — the drop zone: the SAME native input,
+                stretched transparent over the whole zone. Every click/tap/
+                keyboard activation IS the native browse (no proxy click), so
+                the F-026 44px tap surface stays literally true and the AC-231
+                label binding is untouched. Drag events ride the wrapper and
+                feed the exact pick path the picker uses; focus-within draws
+                the keyboard ring the invisible input cannot. */}
+            <div
+              data-testid="pdf-drop-zone"
+              onDragOver={(e) => { e.preventDefault(); setDragActive(true) }}
+              onDragLeave={() => setDragActive(false)}
+              onDrop={handlePdfDrop}
+              className={`relative rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors focus-within:ring-2 focus-within:ring-gray-900 ${
+                dragActive ? 'border-gray-900 bg-gray-50' : firstError === 'file' ? 'border-red-400' : 'border-gray-300 hover:border-gray-500'
+              }`}
+            >
+              <input
+                id="pdf-file-input"
+                type="file" accept=".pdf"
+                // Clear the value before the picker opens so re-selecting the SAME
+                // file still counts as a change — otherwise the browser fires no
+                // onChange on an identical re-pick and the name never refreshes
+                // (Barry QA). State keeps the File, so the picker just re-derives.
+                onClick={(e) => { e.currentTarget.value = '' }}
+                onChange={(e) => {
+                  const f = e.target.files?.[0] ?? null
+                  if (f) acceptPickedFile(f)
+                  else setFile(null)
+                }}
+                className="absolute inset-0 h-full w-full min-h-[44px] cursor-pointer opacity-0"
+              />
+              {file ? (
+                <div data-testid="chosen-file-display">
+                  <div className="flex items-center justify-center gap-3">
+                    <span className="text-sm text-gray-900 font-medium truncate">{file.name}</span>
+                    <span className="text-xs text-gray-500 shrink-0">{(file.size / 1024).toFixed(0)} KB</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">Drop another PDF here, or click to replace it.</p>
+                </div>
+              ) : (
+                <div>
+                  <p className="text-sm font-medium text-gray-700">Drag and drop your PDF here</p>
+                  <p className="text-xs text-gray-500 mt-1">or click to browse</p>
+                </div>
+              )}
+            </div>
             <p className="text-xs text-gray-500 mt-1">Max 3 MB per PDF.</p>
+            {/* F-44.3 — the retention trust line: exactly the F-9.3 claim
+                (deleted shortly after delivery to all parties), never more. */}
+            <p className="text-xs text-gray-500 mt-0.5" data-testid="retention-trust-line">
+              Your PDF is deleted from our servers shortly after everyone receives the signed record. Your inbox keeps the proof.
+            </p>
             {/* F-44.2 (AC-262) — the researcher's path, directly under the
                 picker: guest and signed-in alike. Lives with the picker, so a
                 restored draft (no picker, F-40.4) never shows it. */}
