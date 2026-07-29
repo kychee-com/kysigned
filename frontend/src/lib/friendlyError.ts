@@ -58,6 +58,14 @@ export const RESTORE_LINK_FAILED =
 export const RESTORE_DRAFT_GONE =
   'This document is no longer available. Drafts are kept for 7 days, and this one has been removed. Please start a new one.';
 
+/**
+ * F-44.2 (AC-262) — the sample-document fetch failed (same-origin static
+ * asset; a failure here is connectivity or a broken deploy). Standard inline
+ * error, no transport detail, and the button stays live for a retry.
+ */
+export const SAMPLE_LOAD_FAILED =
+  "We couldn't load the sample document. Check your connection and try again.";
+
 /** A restore failure → copy. Anything that is not a clean "gone" reads as a stale link. */
 export function friendlyRestoreError(e: unknown): string {
   if (e instanceof ApiError && (e.status === 404 || e.code === 'not_found')) return RESTORE_DRAFT_GONE;

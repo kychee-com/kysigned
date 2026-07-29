@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ApiError, apiGet, apiPatch, apiPost, formatUsd, type CreditBalance } from '../lib/api'
-import { CEREMONY_ABANDONED_NOTICE, friendlyCreateError, friendlyGoogleError, friendlyRestoreError, RESTORE_LINK_FAILED, SESSION_EXPIRED } from '../lib/friendlyError'
+import { CEREMONY_ABANDONED_NOTICE, friendlyCreateError, friendlyGoogleError, friendlyRestoreError, RESTORE_LINK_FAILED, SAMPLE_LOAD_FAILED, SESSION_EXPIRED } from '../lib/friendlyError'
 import { isPdfTooLarge, pdfTooLargeMessage } from '../lib/pdfSize'
 import { useAuth } from '../auth/auth-core'
 import { SignInScreen } from '../auth/SignInScreen'
@@ -305,6 +305,34 @@ export function CreateEnvelopePage() {
     const next = !coverDetailsOpen
     if (next) telemetryEventOnce('cover_details_expanded')
     setCoverDetailsOpen(next)
+  }
+
+  // F-44.2 (AC-262) — the researcher's path: load the demo waiver from OUR
+  // origin into the SAME state a hand-picked file enters (a native file input
+  // cannot be programmatically filled; React state is the truth the form
+  // reads). The signer fields stay untouched on purpose: sending it to
+  // yourself is the aha the microcopy sells. A failed fetch shows the
+  // standard inline error and leaves the button live for a retry.
+  const [sampleLoading, setSampleLoading] = useState(false)
+  const loadSampleDocument = async () => {
+    telemetryEventOnce('sample_doc_clicked')
+    setSampleLoading(true)
+    try {
+      const res = await fetch('/samples/acme-anvil-waiver.pdf')
+      if (!res.ok) throw new Error(`sample fetch ${res.status}`)
+      const blob = await res.blob()
+      const f = new File([blob], 'acme-anvil-waiver.pdf', { type: 'application/pdf' })
+      markDraftStarted() // F-39.5 — a sample draft is a started draft
+      setFile(f)
+      setDocName('ACME Anvil Liability Waiver')
+      setError('')
+      if (firstError === 'file') setFirstError(null)
+    } catch {
+      setError(SAMPLE_LOAD_FAILED)
+      scrollToTop()
+    } finally {
+      setSampleLoading(false)
+    }
   }
   const patchSigner = (i: number, patch: Partial<SignerInput>) => {
     markDraftStarted()
@@ -967,6 +995,23 @@ export function CreateEnvelopePage() {
               className={`w-full min-h-[44px] flex items-center text-sm text-gray-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200 ${firstError === 'file' ? 'ring-2 ring-red-400 rounded-lg' : ''}`}
             />
             <p className="text-xs text-gray-500 mt-1">Max 3 MB per PDF.</p>
+            {/* F-44.2 (AC-262) — the researcher's path, directly under the
+                picker: guest and signed-in alike. Lives with the picker, so a
+                restored draft (no picker, F-40.4) never shows it. */}
+            <div className="mt-3">
+              <button
+                type="button"
+                data-testid="sample-doc-btn"
+                onClick={() => void loadSampleDocument()}
+                disabled={sampleLoading}
+                className="inline-flex items-center min-h-[44px] px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 cursor-pointer"
+              >
+                {sampleLoading ? 'Loading the sample…' : 'Try it with a sample document'}
+              </button>
+              <p className="text-xs text-gray-500 mt-1">
+                No PDF handy? Use our demo waiver and send it to yourself to see exactly what your signers get.
+              </p>
+            </div>
           </div>
           )}
           <div>
