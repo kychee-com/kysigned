@@ -297,6 +297,15 @@ export function CreateEnvelopePage() {
   // deduped per page load by the rail's eventOnce. The FACT only — no filename,
   // address, or any other draft value ever rides a telemetry call.
   const markDraftStarted = () => telemetryEventOnce('draft_started')
+  // F-44.1 (AC-261) — the cover-page disclosure's expand state: per page load
+  // only, collapsed default for guest and signed-in alike, never persisted.
+  // The expand FACT rides the once-rail exactly like draft_started (DD-52).
+  const [coverDetailsOpen, setCoverDetailsOpen] = useState(false)
+  const toggleCoverDetails = () => {
+    const next = !coverDetailsOpen
+    if (next) telemetryEventOnce('cover_details_expanded')
+    setCoverDetailsOpen(next)
+  }
   const patchSigner = (i: number, patch: Partial<SignerInput>) => {
     markDraftStarted()
     setSigners((prev) => prev.map((s, idx) => (idx === i ? { ...s, ...patch } : s)))
@@ -908,25 +917,6 @@ export function CreateEnvelopePage() {
           </div>
         )}
 
-        {/* F22.7.1 — Cover-page disclosure. Before the file picker, tell the
-            envelope creator we'll add a one-page cover. Keeps the canonical-
-            PDF semantics from being a surprise + sets up the "verify this
-            envelope" reproduce.sh path on the envelope detail page (F22.7.2). */}
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-900">
-          <p className="font-medium mb-1">kysigned adds a one-page cover before sending</p>
-          <p className="text-xs text-blue-800 mb-1">
-            Every document you send ships with a kysigned-generated cover page (page 1) before your content. The cover carries:
-          </p>
-          <ul className="text-xs text-blue-800 list-disc ml-5 space-y-0.5">
-            <li>The document name, your email (shown to signers as &ldquo;Sender&rdquo;), the envelope ID (the document&rsquo;s technical reference), and timestamp</li>
-            <li>The signer&rsquo;s consent to sign electronically instead of with a wet-ink signature, and to be legally bound, satisfying US (ESIGN, UETA) and EU (eIDAS) e-signature law in a single reply (<a href="/how-it-works" target="_blank" rel="noopener noreferrer" className="text-blue-900 underline">how this works &rarr;</a>)</li>
-            <li>Instructions so the signer can independently verify the document hash before replying</li>
-          </ul>
-          <p className="text-xs text-blue-700 mt-2">
-            Keep your original PDF: you can re-check it later from the document&rsquo;s detail page to confirm we didn&rsquo;t tamper with your upload.
-          </p>
-        </div>
-
         {/* Document */}
         <div
           className={`bg-white border rounded-xl p-6 space-y-4 ${firstError === 'file' || firstError === 'docName' ? 'border-red-300 ring-1 ring-red-300' : 'border-gray-200'}`}
@@ -991,6 +981,41 @@ export function CreateEnvelopePage() {
               Shown to signers in the email subject and signing page. Auto-filled from the filename, edit if you want something nicer.
             </p>
           </div>
+        </div>
+
+        {/* F-44.1 (AC-261) — the cover-page disclosure, demoted from the
+            always-open box that used to stand ABOVE the picker. One calm line;
+            every fact stays reachable pre-send via the inline expand. Document
+            vocabulary only (AC-234) — the moved content may not say "envelope". */}
+        <div className="text-sm text-gray-600" data-testid="cover-disclosure">
+          <p>
+            We add a one-page cover with the signer&rsquo;s legal consent record.{' '}
+            <button
+              type="button"
+              data-testid="cover-disclosure-toggle"
+              aria-expanded={coverDetailsOpen}
+              aria-controls="cover-disclosure-details"
+              onClick={toggleCoverDetails}
+              className="inline-flex items-center min-h-[44px] text-gray-900 underline hover:text-gray-600 cursor-pointer"
+            >
+              {coverDetailsOpen ? 'Hide details' : 'What’s on it →'}
+            </button>
+          </p>
+          {coverDetailsOpen && (
+            <div id="cover-disclosure-details" className="mt-2 bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-900">
+              <p className="text-xs text-blue-800 mb-1">
+                Every document you send ships with a kysigned-generated cover page (page 1) before your content. The cover carries:
+              </p>
+              <ul className="text-xs text-blue-800 list-disc ml-5 space-y-0.5">
+                <li>The document name, your email (shown to signers as &ldquo;Sender&rdquo;), the document&rsquo;s technical reference ID, and timestamp</li>
+                <li>The signer&rsquo;s consent to sign electronically instead of with a wet-ink signature, and to be legally bound, satisfying US (ESIGN, UETA) and EU (eIDAS) e-signature law in a single reply (<a href="/how-it-works" target="_blank" rel="noopener noreferrer" className="text-blue-900 underline">how this works &rarr;</a>)</li>
+                <li>Instructions so the signer can independently verify the document hash before replying</li>
+              </ul>
+              <p className="text-xs text-blue-700 mt-2">
+                Keep your original PDF: you can re-check it later from the document&rsquo;s detail page to confirm we didn&rsquo;t tamper with your upload.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Signers */}
