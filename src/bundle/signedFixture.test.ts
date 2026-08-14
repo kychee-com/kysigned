@@ -33,6 +33,21 @@ const rfc3161Only = async (proof: TimestampProof, hash: Uint8Array): Promise<Ver
   verifyWith([createRfc3161Provider({})], proof, hash);
 
 describe('signed bundle fixture — stays PROVEN offline on both engines', () => {
+  it('AC-268: the pre-statement fixture embeds NO archive statements and keeps its tier via the live-fallback posture', async () => {
+    const files = await extractEmbeddedFileMapWeb(bundle);
+    assert.ok(
+      ![...files.keys()].some((p) => p.includes('-statement.')),
+      'this committed fixture predates F-32.9 — it is the old-bundles-keep-working regression case',
+    );
+    const v = await verifyBundleWeb(bundle);
+    assert.equal(v.proven, true, 'still PROVEN offline under the statement-aware verifier');
+    assert.equal(
+      v.signers[0].assurance.keyProvenance,
+      'pending',
+      'offline: provenance stays pending → the LIVE archive path confirms it (the pre-statement posture, unchanged)',
+    );
+  });
+
   it('web engine (powers /verify): PROVEN despite the d=amazonses.com co-signature', async () => {
     const v = await verifyBundleWeb(bundle);
     assert.equal(v.proven, true, `web reasons: ${JSON.stringify(v.signers?.[0]?.reasons)}`);

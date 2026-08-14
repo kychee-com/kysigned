@@ -41,7 +41,10 @@ export function buildKeysJson(signers: BundleSignerInput[]): KeysJson {
       selector: s.selector,
       record: s.dkimKey ?? null,
       observedAt: s.dkimObservedAt ? s.dkimObservedAt.toISOString() : null,
-      archive: { status: s.archiveStatus ?? null, source: 'archive.prove.email' },
+      // The attribution label follows the archive's settled issuer name (both host
+      // names serve one deployment; statements pin `archive.zk.email`). A label,
+      // not the observation-channel enum — the verifier never compares it.
+      archive: { status: s.archiveStatus ?? null, source: 'archive.zk.email' },
     })),
   };
 }

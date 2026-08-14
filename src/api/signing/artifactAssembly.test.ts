@@ -317,3 +317,119 @@ describe('assembleSignatureArtifact — bounded external tail (F-6.9 hang-proofi
     assert.equal(artifact.archive_confirmation, 'outage');
   });
 });
+
+// ── F-32.9 statement capture at receipt (spec 0.71.0, zkemail/archive#46) ──
+
+describe('assembleSignatureArtifact — archive statement capture (F-32.9)', () => {
+  const OBSERVED_KEY = 'v=DKIM1; k=rsa; p=MIIBIjANBgkqTESTKEY';
+
+  /** Sign a statement over `record` with a fresh Ed25519 key; returns { jws, jwks }. */
+  async function makeStatement(record: Record<string, unknown>, over: Record<string, unknown> = {}) {
+    const { CompactSign, generateKeyPair, exportJWK } = await import('jose');
+    const { publicKey, privateKey } = await generateKeyPair('EdDSA', { extractable: true });
+    const jwk = { ...(await exportJWK(publicKey)), kid: 'test-arch-1', alg: 'EdDSA', use: 'sig' };
+    const payload = { v: 1, iss: 'archive.zk.email', iat: 1789000000, record, ...over };
+    const jws = await new CompactSign(new TextEncoder().encode(JSON.stringify(payload)))
+      .setProtectedHeader({ alg: 'EdDSA', kid: 'test-arch-1' })
+      .sign(privateKey);
+    return { jws, jwks: { keys: [jwk] } };
+  }
+
+  const STMT_RECORD = {
+    id: '1428710',
+    domain: 'example.com',
+    selector: 'sel',
+    value: OBSERVED_KEY,
+    source: 'live_dns',
+    first_seen_at: '2026-06-01T00:00:00Z',
+    last_seen_at: '2026-08-09T00:00:00Z',
+  };
+
+  function archiveDeps(statements: string[], fetchImpl?: typeof fetch) {
+    const fetchFn = fetchImpl ?? ((async (url: string) => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => (String(url).includes('/api/key/statement') ? statements : { records: 0 }),
+    })) as unknown as typeof fetch);
+    return { fetchFn };
+  }
+
+  function keyResolver() {
+    return async () => ({ value: OBSERVED_KEY, observedAt: new Date('2026-08-14T10:00:00Z') });
+  }
+
+  it('captures the matching statement with BOTH anchor proofs at receipt', async () => {
+    const { pool } = createSignatureArtifactsMemoryPool();
+    const { jws, jwks } = await makeStatement(STMT_RECORD);
+    const fake = createFakeProvider();
+    const artifact = await assembleSignatureArtifact(pool, baseInput(), {
+      timestampProvider: fake,
+      tsaProvider: fake,
+      resolveDkimKey: keyResolver(),
+      archive: archiveDeps([jws]),
+      statementJwks: jwks,
+    } as never);
+    assert.equal(artifact.archive_statement, jws, 'the EXACT captured bytes persist');
+    assert.ok(artifact.archive_statement_tsa, 'TSA anchor over the statement bytes');
+    assert.ok(artifact.archive_statement_ots, 'OTS anchor over the statement bytes');
+    assert.ok(artifact.archive_statement_captured_at, 'captured-at recorded');
+    // both proofs genuinely verify over sha256(utf8(jws))
+    const digest = new Uint8Array(createHash('sha256').update(jws, 'utf8').digest());
+    assert.equal((await fake.verify(artifact.archive_statement_ots!, digest)).ok, true);
+  });
+
+  it('a statement for a DIFFERENT key is not captured (exact-key match required)', async () => {
+    const { pool } = createSignatureArtifactsMemoryPool();
+    const { jws, jwks } = await makeStatement({ ...STMT_RECORD, value: 'v=DKIM1; k=rsa; p=OTHERKEY' });
+    const artifact = await assembleSignatureArtifact(pool, baseInput(), {
+      timestampProvider: createFakeProvider(),
+      resolveDkimKey: keyResolver(),
+      archive: archiveDeps([jws]),
+      statementJwks: jwks,
+    } as never);
+    assert.equal(artifact.archive_statement, null);
+  });
+
+  it('a statement that fails verification (stranger signer) is skipped', async () => {
+    const { pool } = createSignatureArtifactsMemoryPool();
+    const good = await makeStatement(STMT_RECORD);
+    const evil = await makeStatement(STMT_RECORD); // different keypair, kid not in `good.jwks`
+    const artifact = await assembleSignatureArtifact(pool, baseInput(), {
+      timestampProvider: createFakeProvider(),
+      resolveDkimKey: keyResolver(),
+      archive: archiveDeps([evil.jws]),
+      statementJwks: good.jwks,
+    } as never);
+    assert.equal(artifact.archive_statement, null);
+  });
+
+  it('a GCD-only pair (200 []) captures nothing; receipt still proceeds', async () => {
+    const { pool } = createSignatureArtifactsMemoryPool();
+    const artifact = await assembleSignatureArtifact(pool, baseInput(), {
+      timestampProvider: createFakeProvider(),
+      resolveDkimKey: keyResolver(),
+      archive: archiveDeps([]),
+      statementJwks: { keys: [] },
+    } as never);
+    assert.equal(artifact.archive_statement, null);
+    assert.equal(artifact.sha256_eml, createHash('sha256').update(RAW_EML).digest('hex'));
+  });
+
+  it('a hanging statement endpoint degrades at the deadline — receipt never blocks', async () => {
+    const { pool } = createSignatureArtifactsMemoryPool();
+    const hangingFetch = ((url: string) =>
+      String(url).includes('/api/key/statement')
+        ? new Promise(() => undefined)
+        : Promise.resolve({ ok: true, status: 200, headers: { get: () => null }, json: async () => ({ records: 0 }) })
+    ) as unknown as typeof fetch;
+    const artifact = await assembleSignatureArtifact(pool, baseInput(), {
+      timestampProvider: createFakeProvider(),
+      resolveDkimKey: keyResolver(),
+      archive: archiveDeps([], hangingFetch),
+      statementJwks: { keys: [] },
+      timeoutsMs: { statement: 50 },
+    } as never);
+    assert.equal(artifact.archive_statement, null);
+  });
+});

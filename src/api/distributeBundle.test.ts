@@ -105,6 +105,7 @@ function deps(over: Partial<DistributeBundleDeps> = {}): DistributeBundleDeps {
       over.prepareBundle ?? (async (): Promise<PreparedBundle> => ({ bytes: BUNDLE, fingerprint: FINGERPRINT })),
     ...(over.createRun ? { createRun: over.createRun } : {}),
     ...(over.emitAppEvent ? { emitAppEvent: over.emitAppEvent } : {}),
+    ...(over.statementGate ? { statementGate: over.statementGate } : {}),
   };
 }
 
@@ -371,5 +372,52 @@ describe('distributeBundle — F-36 app events (60.3)', () => {
     assert.equal(r.action, 'distributed');
     assert.equal(events.length, 0, 'internal_test suppression needs no configured rules');
     assert.equal(lines.length, 1);
+  });
+});
+
+describe('statement gate wiring — F-32.10 (spec 0.71.0)', () => {
+  it('a waiting gate defers distribution: waiting_statements, nothing completed, nothing sent', async () => {
+    const { pool, envelopes } = makePool({
+      senderEmail: 'carol@acme.com',
+      signers: [{ id: 's1', email: 'alice@x.com', name: 'Alice' }],
+    });
+    const { provider, sent } = fakeEmail();
+    const r = await distributeEnvelopeBundle(
+      pool,
+      ENV,
+      deps({ emailProvider: provider, statementGate: async () => ({ action: 'waiting', missing: 1 }) } as never),
+    );
+    assert.equal(r.action, 'waiting_statements');
+    assert.equal(sent.length, 0, 'no completion emails while waiting');
+    assert.equal(envelopes[0].completion_distributed_at, null);
+    assert.equal(envelopes[0].status, 'active', 'completion not stamped while waiting');
+  });
+
+  it('a ready gate distributes exactly as before; a waived gate distributes too', async () => {
+    for (const action of ['ready', 'waived'] as const) {
+      const { pool } = makePool({
+        senderEmail: 'carol@acme.com',
+        signers: [{ id: 's1', email: 'alice@x.com', name: 'Alice' }],
+      });
+      const { provider, sent } = fakeEmail();
+      const r = await distributeEnvelopeBundle(
+        pool,
+        ENV,
+        deps({ emailProvider: provider, statementGate: async () => ({ action, missing: 0 }) } as never),
+      );
+      assert.equal(r.action, 'distributed', `gate ${action} must distribute`);
+      assert.equal(sent.length, 2);
+    }
+  });
+
+  it('no gate wired (fork without run402 statements) distributes exactly as today', async () => {
+    const { pool } = makePool({
+      senderEmail: 'carol@acme.com',
+      signers: [{ id: 's1', email: 'alice@x.com', name: 'Alice' }],
+    });
+    const { provider, sent } = fakeEmail();
+    const r = await distributeEnvelopeBundle(pool, ENV, deps({ emailProvider: provider }));
+    assert.equal(r.action, 'distributed');
+    assert.equal(sent.length, 2);
   });
 });

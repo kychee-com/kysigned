@@ -46,14 +46,17 @@ node --import tsx scripts/verification-tools/verify-independent.mjs <bundle.pdf>
 node --import tsx scripts/verification-tools/self-test.mjs
 ```
 
-Both run **fully offline**, so this toolkit's ceiling is the **INTEGRITY VERIFIED** tier
-(F-32): it settles the four hard checks (DKIM, document match, intent line, embedded
-`.tsr` timestamp) from the bundle alone. The two higher tiers — **PROVIDER KEY CONFIRMED**
-and **PROVEN (DURABLE)** — require ONLINE evidence (the public key-archive provenance gate
-and a confirmed Bitcoin anchor) that a deliberately-offline reproduction does not fetch; the
-web verifier and the reference CLI settle those. Offline, all three surfaces agree at
-INTEGRITY VERIFIED for a genuine bundle (the AC-152 parity, under the same offline
-conditions) and at FAILED for a tampered one.
+Both run **fully offline**: the toolkit settles the four hard checks (DKIM, document
+match, intent line, embedded `.tsr` timestamp) from the bundle alone, and when the
+bundle embeds the archive's **signed observation statement**
+(`proofs/signer-<n>-statement.jws`), it also settles the key-provenance gate offline by
+verifying that statement against the archive's pinned statement keys and matching the
+signer's exact key. Such a record reaches **PROVIDER KEY CONFIRMED** with no network at
+all. A record without a statement caps at **INTEGRITY VERIFIED** offline, exactly as
+before. **PROVEN (DURABLE)** additionally needs a confirmed Bitcoin anchor, which a
+deliberately-offline reproduction does not fetch; the web verifier and the reference CLI
+settle that. Under the same conditions all three surfaces agree on the same tier for a
+genuine bundle (the AC-152 parity) and on FAILED for a tampered one.
 
 ## The algorithm, step by step
 
@@ -78,26 +81,33 @@ Given a signing-record (bundle) PDF, the toolkit:
    - **Intent line** — the first non-empty line of the forward (text/plain, or the
      text/html part for HTML-only forwards) is exactly `I sign this document`.
    - **Timestamp** — the RFC 3161 `.tsr` token commits to `SHA-256(signer-<n>.eml)`.
-   - A signer reaches **INTEGRITY VERIFIED** (this toolkit's offline ceiling) iff all four
-     hold; any hard-check failure is **FAILED**.
+   - **Embedded statement (when present)** — verify `proofs/signer-<n>-statement.jws`
+     against the archive's pinned statement keys, require issuer `archive.zk.email`,
+     and require its record to carry this signer's exact `(domain, selector, key)`
+     from a live-DNS observation. Confirms key provenance offline; the F-32.4 window
+     (signing time at or before last-observed-live plus 90 days) is recomputed here
+     from scratch.
+   - A signer with all four hard checks reaches **INTEGRITY VERIFIED**, and **PROVIDER
+     KEY CONFIRMED** when its embedded statement verifies; any hard-check failure is
+     **FAILED**.
 5. The bundle's tier is the weakest signer's tier: **INTEGRITY VERIFIED** iff there are no
    structural errors, the fingerprint matches, and every signer is INTEGRITY VERIFIED;
    **FAILED** otherwise.
 
-### The online tiers (settled by the web verifier / CLI, not this offline toolkit)
+### The online legs (settled by the web verifier / CLI, not this offline toolkit)
 
-These upgrade a genuine bundle ABOVE INTEGRITY VERIFIED. This toolkit is offline (AC-114), so
-it does not fetch them; the web and CLI verifiers do, and they are the reason a genuine record
-reaches the top tier.
+This toolkit is offline (AC-114), so it does not fetch these; the web and CLI verifiers
+do.
 
-- **Provider-key gate (archive)** — look up the bundle's EXACT `(domain, selector, key)` in
-  the public DKIM archive (`archive.prove.email`, which fetches the provider's DNS itself). An
-  exact match confirms provenance → **PROVIDER KEY CONFIRMED**. A DIFFERENT key recorded for
-  that `(domain, selector)` is a forged key and makes the verdict **FAILED** — this step CAN
-  change the verdict; it is not merely additive. Unreachable / not-yet-recorded is `pending`
-  and never fails.
+- **Provider-key gate (live archive fallback)** — for a record WITHOUT an embedded
+  statement: look up the bundle's EXACT `(domain, selector, key)` in the public DKIM
+  archive (`archive.zk.email`, which fetches the provider's DNS itself). An exact match
+  against a live-DNS observation confirms provenance → **PROVIDER KEY CONFIRMED**. A
+  DIFFERENT key recorded for that `(domain, selector)` is a forged key and makes the
+  verdict **FAILED** — this step CAN change the verdict; it is not merely additive.
+  Unreachable / not-yet-recorded is `pending` and never fails.
 - **Bitcoin anchor (OpenTimestamps)** — confirm `proofs/signer-<n>.ots` in a real Bitcoin
-  block; with a signing time within the key's last-seen window (the archive's last-seen
+  block; with a signing time within the key's live-observed window (last-observed-live
   plus grace) this reaches **PROVEN (DURABLE)**. Pending/offline never fails the verdict.
 
 kysigned is **not** in the trust set: the verdict comes only from the embedded

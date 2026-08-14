@@ -22,6 +22,8 @@ import type { DbPool } from './pool.js';
 const ENV = '18267982-ca76-45dc-a294-e86039a6343d';
 const OTS_PENDING: TimestampProof = { provider: 'ots', version: 1, status: 'pending', data: 'AAEC', meta: { calendars: ['https://a.pool.opentimestamps.org'] } };
 const OTS_COMPLETE: TimestampProof = { provider: 'ots', version: 1, status: 'complete', data: 'AAED' };
+const TSA_TOKEN: TimestampProof = { provider: 'rfc3161', version: 1, status: 'complete', data: 'AAEE' };
+const STATEMENT_JWS = 'eyJhbGciOiJFZERTQSIsImtpZCI6ImFyY2hpdmUtc3RhdGVtZW50LTEifQ.eyJ2IjoxfQ.c2lnbmF0dXJl';
 
 function baseInput(over: Record<string, unknown> = {}) {
   return {
@@ -239,5 +241,46 @@ describe('listOutstandingArchiveConfirmations — F-35.3 exclude-internal (AC-19
   it('defaults to ON when no opts are passed (matches the console default)', async () => {
     const out = await listOutstandingArchiveConfirmations(pool, { internalIdentities: RULES });
     assert.deepEqual(out.map((a) => a.id).sort(), ['sa-ext']);
+  });
+});
+
+describe('archive statement capture (F-32.9, migration 021)', () => {
+  it('round-trips statement bytes + both anchor proofs + captured-at through upsert', async () => {
+    const { pool } = createSignatureArtifactsMemoryPool();
+    const { artifact } = await upsertSignatureArtifact(pool, baseInput({
+      archive_statement: STATEMENT_JWS,
+      archive_statement_tsa: TSA_TOKEN,
+      archive_statement_ots: OTS_PENDING,
+      archive_statement_captured_at: new Date('2026-08-14T12:00:00Z'),
+    }) as never);
+    assert.equal(artifact.archive_statement, STATEMENT_JWS);
+    assert.deepEqual(artifact.archive_statement_tsa, TSA_TOKEN);
+    assert.deepEqual(artifact.archive_statement_ots, OTS_PENDING);
+    assert.equal(artifact.archive_statement_captured_at?.toISOString(), '2026-08-14T12:00:00.000Z');
+  });
+
+  it('an artifact created without a statement reads all four capture fields as null', async () => {
+    const { pool } = createSignatureArtifactsMemoryPool();
+    const { artifact } = await upsertSignatureArtifact(pool, baseInput());
+    assert.equal(artifact.archive_statement, null);
+    assert.equal(artifact.archive_statement_tsa, null);
+    assert.equal(artifact.archive_statement_ots, null);
+    assert.equal(artifact.archive_statement_captured_at, null);
+  });
+
+  it('updateArtifactArchiveStatement captures post-receipt (the F-32.10 wait-path retry)', async () => {
+    const mod = (await import('./signatureArtifacts.js')) as Record<string, unknown>;
+    const updateArtifactArchiveStatement = mod.updateArtifactArchiveStatement as
+      | ((pool: DbPool, id: string, u: { statement: string; tsa: TimestampProof | null; ots: TimestampProof | null; capturedAt: Date }) => Promise<{ archive_statement: string | null; archive_statement_ots: TimestampProof | null; archive_statement_captured_at: Date | null } | null>)
+      | undefined;
+    assert.ok(updateArtifactArchiveStatement, 'updateArtifactArchiveStatement is exported');
+    const { pool } = createSignatureArtifactsMemoryPool();
+    const { artifact } = await upsertSignatureArtifact(pool, baseInput());
+    const updated = await updateArtifactArchiveStatement!(pool, artifact.id, {
+      statement: STATEMENT_JWS, tsa: TSA_TOKEN, ots: OTS_PENDING, capturedAt: new Date('2026-08-14T13:00:00Z'),
+    });
+    assert.equal(updated?.archive_statement, STATEMENT_JWS);
+    assert.deepEqual(updated?.archive_statement_ots, OTS_PENDING);
+    assert.equal(updated?.archive_statement_captured_at?.toISOString(), '2026-08-14T13:00:00.000Z');
   });
 });

@@ -58,6 +58,10 @@ function mapRow(r: Row): SignatureArtifact {
     key_obs_proof: coerceProof(r.key_obs_proof),
     key_obs_ots_proof: coerceProof(r.key_obs_ots_proof),
     archive_status: (r.archive_status as string | null) ?? null,
+    archive_statement: (r.archive_statement as string | null) ?? null,
+    archive_statement_tsa: coerceProof(r.archive_statement_tsa),
+    archive_statement_ots: coerceProof(r.archive_statement_ots),
+    archive_statement_captured_at: coerceDate(r.archive_statement_captured_at),
     archive_confirmation: (r.archive_confirmation as 'confirmed' | 'unconfirmed' | 'outage' | null) ?? null,
     archive_confirmation_checked_at: coerceDate(r.archive_confirmation_checked_at),
     archive_confirmation_healed_at: coerceDate(r.archive_confirmation_healed_at),
@@ -83,9 +87,11 @@ export async function upsertSignatureArtifact(
         spf_verdict, dkim_verdict, dmarc_verdict,
         dkim_domain, dkim_selector, dkim_key, dkim_observed_at,
         ots_proof, tsa_token, key_obs_proof, archive_status, ts_status,
-        archive_confirmation, archive_confirmation_checked_at, key_obs_ots_proof)
+        archive_confirmation, archive_confirmation_checked_at, key_obs_ots_proof,
+        archive_statement, archive_statement_tsa, archive_statement_ots, archive_statement_captured_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
-             $12::jsonb,$13::jsonb,$14::jsonb,$15,COALESCE($16,'pending'),$17,$18,$19::jsonb)
+             $12::jsonb,$13::jsonb,$14::jsonb,$15,COALESCE($16,'pending'),$17,$18,$19::jsonb,
+             $20,$21::jsonb,$22::jsonb,$23)
      ON CONFLICT (envelope_id, signer_email) DO NOTHING
      RETURNING *`,
     [
@@ -97,6 +103,8 @@ export async function upsertSignatureArtifact(
       input.archive_status ?? null, input.ts_status ?? null,
       input.archive_confirmation ?? null, input.archive_confirmation_checked_at ?? null,
       jsonParam(input.key_obs_ots_proof),
+      input.archive_statement ?? null, jsonParam(input.archive_statement_tsa),
+      jsonParam(input.archive_statement_ots), input.archive_statement_captured_at ?? null,
     ],
   );
   if (res.rows.length > 0) {
@@ -232,10 +240,39 @@ export async function updateArtifactArchiveConfirmation(
   return res.rows.length ? mapRow(res.rows[0] as Row) : null;
 }
 
+/**
+ * Persist a captured archive statement + its two anchor proofs (F-32.9). Used by the
+ * receipt path when capture succeeds after the artifact row exists, and by the
+ * F-32.10 wait-path retries. Write-once by contract: the captured bytes are the
+ * anchored artifact, so callers only invoke this when `archive_statement` is NULL.
+ */
+export async function updateArtifactArchiveStatement(
+  pool: DbPool,
+  id: string,
+  update: { statement: string; tsa: TimestampProof | null; ots: TimestampProof | null; capturedAt: Date },
+): Promise<SignatureArtifact | null> {
+  const res = await pool.query(
+    `UPDATE signature_artifacts
+       SET archive_statement = $2,
+           archive_statement_tsa = $3::jsonb,
+           archive_statement_ots = $4::jsonb,
+           archive_statement_captured_at = $5,
+           updated_at = now()
+     WHERE id = $1 AND archive_statement IS NULL
+     RETURNING *`,
+    [id, update.statement, jsonParam(update.tsa), jsonParam(update.ots), update.capturedAt],
+  );
+  return res.rows.length ? mapRow(res.rows[0] as Row) : null;
+}
+
 export interface ArtifactTimestampUpdate {
   otsProof?: TimestampProof;
   keyObsProof?: TimestampProof;
   tsStatus?: 'pending' | 'complete';
+  /** The AC-169 key-observation Bitcoin anchor (advanced by the same upgrade pass). */
+  keyObsOtsProof?: TimestampProof;
+  /** The F-32.9 statement Bitcoin anchor (advanced by the same upgrade pass). */
+  archiveStatementOts?: TimestampProof;
 }
 
 /** Advance an artifact's timestamps (the OTS-upgrade reconciler: pending → complete). */
@@ -249,10 +286,15 @@ export async function updateArtifactTimestamps(
        SET ots_proof = COALESCE($2::jsonb, ots_proof),
            key_obs_proof = COALESCE($3::jsonb, key_obs_proof),
            ts_status = COALESCE($4, ts_status),
+           key_obs_ots_proof = COALESCE($5::jsonb, key_obs_ots_proof),
+           archive_statement_ots = COALESCE($6::jsonb, archive_statement_ots),
            updated_at = now()
      WHERE id = $1
      RETURNING *`,
-    [id, jsonParam(update.otsProof), jsonParam(update.keyObsProof), update.tsStatus ?? null],
+    [
+      id, jsonParam(update.otsProof), jsonParam(update.keyObsProof), update.tsStatus ?? null,
+      jsonParam(update.keyObsOtsProof), jsonParam(update.archiveStatementOts),
+    ],
   );
   return res.rows.length ? mapRow(res.rows[0] as Row) : null;
 }

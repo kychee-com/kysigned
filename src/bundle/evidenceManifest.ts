@@ -56,7 +56,11 @@ export function buildEvidenceManifest(input: AssembleBundleInput): EmbeddedFile[
     });
   }
 
-  // 3. The timestamp proofs (tsr then ots per signer; omit a proof that's absent).
+  // 3. The timestamp proofs (tsr then ots per signer; omit a proof that's absent),
+  //    then that signer's archive statement + its anchors (F-32.9, spec 0.71.0):
+  //    the EXACT captured JWS bytes as `-statement.jws` and the operator's two
+  //    proofs over sha256(utf8(jws)). All fingerprinted; all omitted for a signer
+  //    whose capture was waived/blocked (the live-fallback bundle shape).
   for (const s of input.signers) {
     if (s.tsaToken) {
       files.push({
@@ -73,6 +77,30 @@ export function buildEvidenceManifest(input: AssembleBundleInput): EmbeddedFile[
         mimeType: 'application/octet-stream',
         inFingerprint: true,
       });
+    }
+    if (s.archiveStatement) {
+      files.push({
+        path: `proofs/signer-${s.index}-statement.jws`,
+        bytes: new TextEncoder().encode(s.archiveStatement),
+        mimeType: 'application/jose',
+        inFingerprint: true,
+      });
+      if (s.archiveStatementTsa) {
+        files.push({
+          path: `proofs/signer-${s.index}-statement.tsr`,
+          bytes: proofBytes(s.archiveStatementTsa),
+          mimeType: 'application/timestamp-reply',
+          inFingerprint: true,
+        });
+      }
+      if (s.archiveStatementOts) {
+        files.push({
+          path: `proofs/signer-${s.index}-statement.ots`,
+          bytes: proofBytes(s.archiveStatementOts),
+          mimeType: 'application/octet-stream',
+          inFingerprint: true,
+        });
+      }
     }
   }
 

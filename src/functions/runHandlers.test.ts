@@ -35,6 +35,52 @@ function depsWith(
   };
 }
 
+describe('runHandlers — statement_wait_recheck (F-32.10, spec 0.71.0)', () => {
+  it('re-drives distribution DIRECTLY — never the manual notify fork (a sealed-manual envelope must distribute)', async () => {
+    const h = createInboundRepliesMemoryPool();
+    h.envelopes.push({ id: 'env-1', status: 'active', auto_close: false });
+    let seen = '';
+    const handlers = buildRunHandlers(depsWith(h.pool), {
+      distribute: async (_p, id): Promise<DistributeResult> => {
+        seen = id;
+        return { envelopeId: id, action: 'distributed', recipients: 2, sent: 2 };
+      },
+      notifySeal: async (): Promise<{ envelopeId: string; action: AwaitingSealAction }> => {
+        throw new Error('recheck must never take the manual notify fork');
+      },
+    });
+    assert.ok((handlers as Record<string, unknown>).statement_wait_recheck, 'handler registered');
+    const out = await (handlers as any).statement_wait_recheck({ envelopeId: 'env-1' });
+    assert.equal(seen, 'env-1');
+    assert.equal(out.action, 'distributed');
+  });
+
+  it('still waiting → success (the gate scheduled the next link); deferred/partial → RetryableRunError', async () => {
+    const h = createInboundRepliesMemoryPool();
+    h.envelopes.push({ id: 'env-1', status: 'active', auto_close: true });
+    const mk = (action: DistributeResult['action']) =>
+      buildRunHandlers(depsWith(h.pool), {
+        distribute: async (_p, id): Promise<DistributeResult> => ({ envelopeId: id, action, recipients: 0, sent: 0 }),
+      }) as any;
+    const waiting = await mk('waiting_statements').statement_wait_recheck({ envelopeId: 'env-1' });
+    assert.equal(waiting.action, 'waiting_statements');
+    await assert.rejects(() => mk('deferred').statement_wait_recheck({ envelopeId: 'env-1' }), RetryableRunError);
+    await assert.rejects(() => mk('partial').statement_wait_recheck({ envelopeId: 'env-1' }), RetryableRunError);
+  });
+
+  it('missing envelopeId → PermanentRunError; a gone envelope is terminal', async () => {
+    const h = createInboundRepliesMemoryPool();
+    const handlers = buildRunHandlers(depsWith(h.pool), {
+      distribute: async (): Promise<DistributeResult> => {
+        throw new Error('must not distribute a gone envelope');
+      },
+    }) as any;
+    await assert.rejects(() => handlers.statement_wait_recheck({}), PermanentRunError);
+    const out = await handlers.statement_wait_recheck({ envelopeId: 'missing-env' });
+    assert.equal(out.action, 'gone');
+  });
+});
+
 describe('runHandlers — completion_distribute (F-29 / F-24)', () => {
   it('auto-close: distributes and returns the auto summary', async () => {
     const h = createInboundRepliesMemoryPool();
@@ -69,6 +115,16 @@ describe('runHandlers — completion_distribute (F-29 / F-24)', () => {
       distribute: async (_p, id): Promise<DistributeResult> => ({ envelopeId: id, action: 'partial', recipients: 2, sent: 1 }),
     });
     await assert.rejects(() => handlers.completion_distribute({ envelopeId: 'env-1' }), RetryableRunError);
+  });
+
+  it('auto-close: waiting_statements returns success — the gate owns the retry cadence (F-32.10)', async () => {
+    const h = createInboundRepliesMemoryPool();
+    h.envelopes.push({ id: 'env-1', status: 'active', auto_close: true });
+    const handlers = buildRunHandlers(depsWith(h.pool), {
+      distribute: async (_p, id): Promise<DistributeResult> => ({ envelopeId: id, action: 'waiting_statements', recipients: 0, sent: 0 }),
+    });
+    const out = await handlers.completion_distribute({ envelopeId: 'env-1' });
+    assert.equal(out.action, 'waiting_statements'); // no throw — run402 must NOT retry this run
   });
 
   it('manual (auto_close=false): notifies + parks, returns the manual summary', async () => {

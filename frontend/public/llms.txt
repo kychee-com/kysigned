@@ -269,10 +269,13 @@ The bundle is an ordinary PDF anyone can verify with no account and no server:
 - **CLI**: a reference verifier ships in the public repository.
 
 The verdict is one of four honest assurance tiers, not a yes/no. Offline, anyone reaches INTEGRITY
-VERIFIED (valid signatures, matching document, intent line, timestamp present). Going online confirms
-the exact provider key against the public archive (PROVIDER KEY CONFIRMED) and a Bitcoin-anchored,
-un-back-datable time within the key's recorded lifetime window (PROVEN DURABLE). A key an operator merely
-claimed was the provider's fails the archive gate instead of passing as proven.
+VERIFIED (valid signatures, matching document, intent line, timestamp present), and a record that embeds
+the archive's own signed observation statement confirms the exact provider key fully offline (PROVIDER
+KEY CONFIRMED, no server needed). Going online settles the rest: the live archive lookup covers records
+without a statement, and a Bitcoin-anchored, un-back-datable time within the key's live-observed lifetime
+window completes PROVEN DURABLE. A key an operator merely claimed was the provider's fails the archive
+gate instead of passing as proven. Forging that confirmation would take the operator and the independent
+archive colluding at the Bitcoin-pinned signing moment, and even that stays permanently falsifiable.
 
 ## Fork your own
 

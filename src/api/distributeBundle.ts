@@ -38,6 +38,7 @@ import { scheduleCompletionRetention, RETENTION_INITIAL_DELAY } from './retentio
 import { scheduleCompletionWebhook } from './webhookDeliver.js';
 import type { EmitAppEvent } from '../integrations/appEvents.js';
 import type { InternalSubjectGate } from '../integrations/internalSubject.js';
+import type { StatementGateResult } from './statementGate.js';
 
 export interface PreparedBundle {
   bytes: Uint8Array;
@@ -65,6 +66,13 @@ export interface DistributeBundleDeps {
   /** F-36.6 — the DD-49 internal-subject gate: an internal envelope distributes
    *  normally but its `envelope_completed` is suppressed (logged, never emitted). */
   internalGate?: InternalSubjectGate;
+  /**
+   * F-32.10 — the bounded statement wait (spec 0.71.0). `waiting` defers
+   * distribution (the gate schedules its own re-check); `ready`/`waived` proceed.
+   * Prod wires `evaluateStatementGate` (config.ts); unwired (a fork without the
+   * statement machinery) distributes exactly as before.
+   */
+  statementGate?: (pool: DbPool, envelope: Envelope) => Promise<StatementGateResult>;
 }
 
 export type DistributeAction =
@@ -72,7 +80,8 @@ export type DistributeAction =
   | 'already_distributed' // completion_distributed_at was already set
   | 'not_ready' // missing / not all signed yet
   | 'deferred' // bundle inputs not ready — retry next tick
-  | 'partial'; // some sends failed — left undistributed for retry
+  | 'partial' // some sends failed — left undistributed for retry
+  | 'waiting_statements'; // F-32.10 bounded wait — the gate's re-check run resumes it
 
 export interface DistributeResult {
   envelopeId: string;
@@ -134,6 +143,16 @@ export async function distributeEnvelopeBundle(
   const signers = await getEnvelopeSigners(pool, envelopeId);
   if (signers.length === 0 || !signers.every((s) => s.status === 'signed')) {
     return { envelopeId, action: 'not_ready', recipients: 0, sent: 0 };
+  }
+
+  // F-32.10 — the bounded statement wait, BEFORE the completion stamp so the
+  // completed_at (and the retention clock) starts when distribution proceeds.
+  // The gate owns its own retry cadence, interim email, and expiry alert.
+  if (deps.statementGate) {
+    const gate = await deps.statementGate(pool, envelope);
+    if (gate.action === 'waiting') {
+      return { envelopeId, action: 'waiting_statements', recipients: 0, sent: 0 };
+    }
   }
 
   // Stamp a stable completion time first, then assemble against that envelope.

@@ -23,6 +23,8 @@ import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { inflateSync } from 'node:zlib';
 import { extractEmbeddedFileMap } from './extract.js';
+import { applyOnlineConfirmations } from './applyConfirmations.js';
+import { confirmStatementsOffline } from './statementProvenance.js';
 import { computeBundleFingerprint } from './fingerprint.js';
 import type { EmbeddedFile } from './types.js';
 import type { KeysJson } from './keysJson.js';
@@ -287,5 +289,14 @@ export async function verifyBundle(pdfBytes: Uint8Array, deps: VerifyBundleDeps 
   const structurallySound = errors.length === 0 && matchesPrinted && signers.length > 0;
   const tier = structurallySound ? computeBundleTier(signers.map((s) => s.tier)) : 'FAILED';
   const proven = tier !== 'FAILED';
-  return { proven, tier, fingerprint: { computed, matchesPrinted }, originalDocSha256, signers, errors };
+  const verdict: BundleVerdict = { proven, tier, fingerprint: { computed, matchesPrinted }, originalDocSha256, signers, errors };
+
+  // F-32.9 (spec 0.71.0) — fold OFFLINE provenance from any embedded archive
+  // statements (zero network; the verifier's pinned keys). Recomputes tiers
+  // deterministically; an empty map is a no-op (pre-statement bundles unchanged,
+  // AC-268). Mirrors verifyWeb.ts so the two engines stay in parity (AC-152).
+  const statements = await confirmStatementsOffline(files, deps.statementJwks);
+  return Object.keys(statements).length > 0
+    ? applyOnlineConfirmations(verdict, { keyArchive: statements })
+    : verdict;
 }

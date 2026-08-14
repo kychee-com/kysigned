@@ -35,9 +35,11 @@ const FORBIDDEN = [
   { re: /defeat \*?both\*?\b/i, why: 'timestamp "defeat both" framing — superseded by graded durability' },
   { re: /never (?:change|gate)s? the [^.]*\bverdict/i, why: 'archive/Bitcoin described as additive "never changes the verdict" — the provenance gate CAN fail it' },
   { re: /additive online steps/i, why: 'the pre-F-32 "additive online steps" section' },
-  // Spec 0.44.0 (#147): the window consumes archive times AS RECORDED — the API exposes
-  // no live-vs-GCD label, so a surface claiming live-only semantics overclaims.
-  { re: /observed[- ]live window|observed live \(plus/i, why: 'the retired live-only window claim — the window uses the archive times AS RECORDED (F-32.4, spec 0.44.0)' },
+  // RETIRED ENTRY (spec 0.71.0, #147-A delivered): "observed-live window" was forbidden
+  // while the window consumed archive times as recorded (spec 0.44.0 — claiming live-only
+  // semantics overclaimed). The archive now exposes per-channel observations and signs
+  // only live-DNS ones, and F-32.4 consumes the live channel exclusively — the live-only
+  // claim is TRUE, so surfaces may (and should) state it.
   // Spec 0.44.2 (AC-161, Barry 2026-07-15): GCD / recovery-corpus mechanics are an INTERNAL
   // engineering note (keyValidityWindow.ts + the spec), never public trust copy — the public
   // window rule is the plain last-seen upper bound. Forbid the mechanics from leaking into any

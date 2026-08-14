@@ -33,7 +33,7 @@ import { runSignupGrantMonitor } from '../api/signupGrantMonitor.js';
 import { runArchiveReconciliation } from '../api/signing/archiveReconciliation.js';
 import type { EmitAppEvent } from '../integrations/appEvents.js';
 import { getSignatureArtifactById } from '../db/signatureArtifacts.js';
-import { upgradeOneArtifact, scheduleTimestampUpgrade, TIMESTAMP_UPGRADE_MAX_ATTEMPTS } from '../api/signing/timestampSchedule.js';
+import { upgradeOneArtifact, scheduleTimestampUpgrade, artifactHasPendingOts, TIMESTAMP_UPGRADE_MAX_ATTEMPTS } from '../api/signing/timestampSchedule.js';
 import type { TimestampProvider } from '../timestamp/contract.js';
 import { RetryableRunError, PermanentRunError, type CreateRun } from './runs.js';
 
@@ -123,6 +123,30 @@ export function buildRunHandlers(
         throw new RetryableRunError(`distribute ${r.action} for ${envelopeId}`);
       }
       return { envelopeId, mode: 'auto', action: r.action, recipients: r.recipients, sent: r.sent };
+    },
+
+    /**
+     * F-32.10 — one link of the bounded statement wait (scheduled by the gate,
+     * idempotency = `<envelopeId>:stmt-wait:<slot>`). Calls distribute DIRECTLY —
+     * never the manual notify fork: a manual envelope only ever enters the wait
+     * AFTER its creator's Seal action reached distribution, so the seal intent is
+     * already expressed; an auto envelope re-checks the same way. `waiting` is
+     * SUCCESS for this run (the gate scheduled the next link); `waived`/`ready`
+     * distribute; a not-all-signed envelope reports not_ready (terminal for the
+     * link — a fresh completion enqueue owns any later re-completion).
+     */
+    statement_wait_recheck: async (payload) => {
+      const envelopeId = typeof payload.envelopeId === 'string' ? payload.envelopeId : '';
+      if (!envelopeId) throw new PermanentRunError('statement_wait_recheck: payload.envelopeId is required');
+
+      const envelope = await getEnvelope(deps.pool, envelopeId);
+      if (!envelope) return { envelopeId, action: 'gone' };
+
+      const r = await distribute(deps.pool, envelopeId, deps.distributeDeps());
+      if (r.action === 'deferred' || r.action === 'partial') {
+        throw new RetryableRunError(`statement-wait distribute ${r.action} for ${envelopeId}`);
+      }
+      return { envelopeId, action: r.action, recipients: r.recipients, sent: r.sent };
     },
 
     /**
@@ -259,7 +283,9 @@ export function buildRunHandlers(
       if (!artifactId) throw new PermanentRunError('timestamp_upgrade: payload.artifactId is required');
 
       const artifact = await loadArtifact(deps.pool, artifactId);
-      if (!artifact || artifact.ts_status !== 'pending') return { artifactId, action: 'done' }; // gone / already complete
+      // Pending work = ANY OTS anchor still pending (.eml, key-obs, statement) —
+      // the aux anchors keep the chain alive past the .eml completion (AC-169 fix).
+      if (!artifact || !artifactHasPendingOts(artifact)) return { artifactId, action: 'done' }; // gone / all complete
 
       const action = await upgradeArtifact(deps.pool, artifact, deps.timestampProvider());
       if (action === 'upgraded' || action === 'restamped') return { artifactId, action }; // complete → terminal

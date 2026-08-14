@@ -467,6 +467,29 @@ export const templates = {
     };
   },
 
+  /**
+   * F-32.10 / AC-270 — the interim "finalizing" notice, sent ONLY when sealing
+   * actually enters the statement wait (never on the immediate path), at most
+   * once per envelope. No action for the creator — it sets expectations while
+   * the record finishes.
+   */
+  finalizingWait(vars: { recipientName: string; documentName: string; signerCount: number; operatorDomain: string }) {
+    const signedVerb = vars.signerCount === 1 ? 'signer has' : 'signers have';
+    return {
+      subject: `Everyone has signed "${vars.documentName}": finalizing the signed record`,
+      html: wrap(`Finalizing`, `
+        <p style="margin:0 0 15px;">Hi ${vars.recipientName},</p>
+        <p style="margin:0 0 15px;">All <strong>${vars.signerCount}</strong> ${signedVerb} signed <strong>"${vars.documentName}"</strong>.</p>
+        <p style="margin:0 0 15px;">We are finalizing the signed record. This can take a little while when we are completing the independent evidence that backs each signature. Everyone receives the signed record by email the moment it is ready. Nothing is needed from you.</p>
+      `),
+      text: textWrap(
+        `Hi ${vars.recipientName},\n\nAll ${vars.signerCount} ${signedVerb} signed "${vars.documentName}".\n\nWe are finalizing the signed record. This can take a little while when we are completing the independent evidence that backs each signature. Everyone receives the signed record by email the moment it is ready. Nothing is needed from you.`
+      ),
+      from: `notifications@${vars.operatorDomain}`,
+      replyTo: `info@${vars.operatorDomain}`,
+    };
+  },
+
   expiryNotification(vars: { recipientName: string; documentName: string; operatorDomain: string }) {
     return {
       subject: `"${vars.documentName}" has expired`,

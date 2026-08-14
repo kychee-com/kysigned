@@ -17,8 +17,16 @@ import { upsertSignatureArtifact } from '../../db/signatureArtifacts.js';
 import type { SignatureArtifact } from '../../db/types.js';
 import type { TimestampProof, TimestampProvider } from '../../timestamp/contract.js';
 import type { ReceiptVerdicts } from './senderAuthGate.js';
-import { confirmKeyAtSigning, type DkimArchiveDeps, type SigningKeyConfirmation } from './dkimArchive.js';
+import {
+  confirmKeyAtSigning,
+  extractPublicKey,
+  fetchArchiveStatements,
+  type DkimArchiveDeps,
+  type SigningKeyConfirmation,
+} from './dkimArchive.js';
 import { keyRecordDigest, type ResolveDkimKey } from './dkimKeyResolver.js';
+import { verifyArchiveStatement, type ArchiveJwks } from '../../bundle/archiveStatement.js';
+import { ARCHIVE_STATEMENT_JWKS } from '../../bundle/archiveStatementJwks.js';
 
 /**
  * Per-call deadlines (ms) for the fail-proof external tail. F-6.9 degrades a
@@ -38,6 +46,13 @@ export const DEFAULT_ASSEMBLY_TIMEOUTS_MS = {
   resolveKey: 4_000,
   /** The archive.prove.email check-and-contribute (F-6.7 / AC-60). */
   archive: 4_000,
+  /**
+   * The statement fetch + verify + select envelope (F-32.9) — bounds the whole
+   * capture pipe except the two anchor stamps, which run in PARALLEL under one
+   * `stamp` budget after it. Worst-case assembly tail stays ≈40s, inside the 60s
+   * run lease (the 2026-07-05 incident's constraint).
+   */
+  statement: 8_000,
 } as const;
 
 export type AssemblyTimeoutsMs = Partial<Record<keyof typeof DEFAULT_ASSEMBLY_TIMEOUTS_MS, number>>;
@@ -51,6 +66,12 @@ export interface ArtifactAssemblyDeps {
   resolveDkimKey?: ResolveDkimKey;
   /** archive.prove.email deps — check-and-contribute-on-receipt (F-6.7 / AC-60). Omit to skip. */
   archive?: DkimArchiveDeps;
+  /**
+   * Statement-verification key set override (tests sign with throwaway keys).
+   * Real-default DI (DD-17): unset runs the PINNED production set — the trust
+   * anchor is always the verifier's committed keys, never caller data.
+   */
+  statementJwks?: ArchiveJwks;
   /** Override the external-call deadlines (tests use tiny budgets). */
   timeoutsMs?: AssemblyTimeoutsMs;
 }
@@ -104,6 +125,58 @@ function safeStamp(
   deadlineMs: number,
 ): Promise<TimestampProof | null> {
   return settleWithin(provider.stamp(digest), deadlineMs, null);
+}
+
+/** A captured archive statement: the EXACT bytes + the operator's two anchors (F-32.9). */
+export interface StatementCapture {
+  statement: string;
+  tsa: TimestampProof | null;
+  ots: TimestampProof | null;
+  capturedAt: Date;
+}
+
+/**
+ * Fetch + verify + select + anchor the signer's archive statement (F-32.9). Selects
+ * the statement whose record matches the EXACT observed key bytes (the DD-36
+ * canonical `p=` compare) for the signer's pair, verified against the pinned
+ * archive JWKS BEFORE anchoring; then dual-anchors `sha256(utf8(jws))` with the
+ * two providers in parallel (each fail-proof — a null proof mirrors the `.eml`
+ * anchors' degradation; the OTS-upgrade reconciler advances it later). Returns
+ * null when nothing captures (GCD-only pair, outage, no match, deadline) — the
+ * F-32.10 wait path retries via this same function. Never throws.
+ */
+export async function captureArchiveStatement(
+  domain: string,
+  selector: string,
+  observedKey: string,
+  deps: Pick<ArtifactAssemblyDeps, 'timestampProvider' | 'tsaProvider' | 'archive' | 'statementJwks'>,
+  budgets: { statement: number; stamp: number },
+): Promise<StatementCapture | null> {
+  const jwks = deps.statementJwks ?? ARCHIVE_STATEMENT_JWKS;
+  const want = extractPublicKey(observedKey);
+  if (!want) return null;
+  const picked = await settleWithin(
+    (async () => {
+      const res = await fetchArchiveStatements(domain, selector, deps.archive);
+      for (const jws of res.statements) {
+        const v = await verifyArchiveStatement(jws, jwks);
+        if (!v.ok) continue;
+        if (v.record.domain !== domain.toLowerCase() || v.record.selector !== selector.toLowerCase()) continue;
+        if (extractPublicKey(v.record.value) !== want) continue;
+        return jws;
+      }
+      return null;
+    })(),
+    budgets.statement,
+    null,
+  );
+  if (!picked) return null;
+  const digest = new Uint8Array(createHash('sha256').update(picked, 'utf8').digest());
+  const [tsa, ots] = await Promise.all([
+    deps.tsaProvider ? safeStamp(deps.tsaProvider, digest, budgets.stamp) : Promise.resolve<TimestampProof | null>(null),
+    safeStamp(deps.timestampProvider, digest, budgets.stamp),
+  ]);
+  return { statement: picked, tsa, ots, capturedAt: new Date() };
 }
 
 export async function assembleSignatureArtifact(
@@ -176,6 +249,21 @@ export async function assembleSignatureArtifact(
           : 'archived';
   }
 
+  // F-32.9 — capture the archive's signed statement for the signer's exact key at
+  // receipt (the typical path: a just-contributed pair is statement-issuable
+  // immediately, so sealing gains zero latency). Fail-proof + deadline-bounded like
+  // everything above; a miss here is retried by the F-32.10 wait path.
+  let statementCapture: StatementCapture | null = null;
+  if (deps.archive && input.selector && dkimKey) {
+    statementCapture = await captureArchiveStatement(
+      input.signingDomain,
+      input.selector,
+      dkimKey,
+      deps,
+      { statement: budgets.statement, stamp: budgets.stamp },
+    );
+  }
+
   const { artifact } = await upsertSignatureArtifact(pool, {
     envelope_id: input.envelopeId,
     signer_email: input.signerEmail,
@@ -193,6 +281,10 @@ export async function assembleSignatureArtifact(
     key_obs_proof: keyObsProof,
     key_obs_ots_proof: keyObsOtsProof,
     archive_status: archiveStatus,
+    archive_statement: statementCapture?.statement ?? null,
+    archive_statement_tsa: statementCapture?.tsa ?? null,
+    archive_statement_ots: statementCapture?.ots ?? null,
+    archive_statement_captured_at: statementCapture?.capturedAt ?? null,
     archive_confirmation: archiveConfirmation?.outcome ?? null,
     archive_confirmation_checked_at: archiveConfirmation ? new Date() : null,
     ts_status: tsStatus,

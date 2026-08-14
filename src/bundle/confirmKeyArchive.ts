@@ -14,16 +14,20 @@
 import {
   lookupArchivedKey,
   extractPublicKey,
-  usableLastSeenAt,
+  liveLastSeenAt,
   type DkimArchiveDeps,
 } from '../api/signing/dkimArchive.js';
 import { extractEmbeddedFileMapWeb } from './extractWeb.js';
 import { signerIndices } from './evidenceOrder.js';
+import { confirmStatementsOffline } from './statementProvenance.js';
 import type { KeysJson } from './keysJson.js';
 import type { KeyAuthStatus } from './verifyTypes.js';
 import type { DimensionState } from './assuranceTier.js';
 
-export type ConfirmKeyArchiveDeps = DkimArchiveDeps;
+export type ConfirmKeyArchiveDeps = DkimArchiveDeps & {
+  /** F-32.9 test override; unset = the pinned production statement JWKS. */
+  statementJwks?: import('./archiveStatement.js').ArchiveJwks;
+};
 
 export interface KeyArchiveConfirmation {
   /** `archive-confirmed` = the exact key is present in the public archive; else `pending-online`. */
@@ -39,7 +43,12 @@ export interface KeyArchiveConfirmation {
   keyProvenance: DimensionState;
   /** The archive's observation/registration time (ISO-8601), when confirmed; else null. */
   observedAt: string | null;
-  /** The archive's recorded last-seen for the exact key (F-32.4 validity window, as-recorded semantics); else null. */
+  /**
+   * The key's last-observed-LIVE time (F-32.4 validity window, live-DNS channel
+   * only — #147-A, spec 0.71.0): from the embedded signed statement when one
+   * confirmed, else the live API's `live_dns` observations. Null when the archive
+   * knows the pair only through key recovery (no usable live window).
+   */
   lastSeenAt: string | null;
 }
 
@@ -77,7 +86,9 @@ export async function confirmKeyArchive(
         keyAuthenticity: 'archive-confirmed',
         keyProvenance: 'confirmed',
         observedAt: match.firstSeenAt ?? match.lastSeenAt ?? null,
-        lastSeenAt: usableLastSeenAt(match),
+        // Live-only window input (#147-A): the live_dns channel bound, or null for
+        // a recovery-only record (the validity dimension then goes inconclusive).
+        lastSeenAt: liveLastSeenAt(match),
       };
     }
     // Records EXIST for this exact (domain, selector) but none carry the bundle's key:
@@ -89,7 +100,13 @@ export async function confirmKeyArchive(
   }
 }
 
-/** Confirm every signer's key in a bundle PDF → `{ signerIndex: KeyArchiveConfirmation }`. Never throws. */
+/**
+ * Confirm every signer's key in a bundle PDF → `{ signerIndex: KeyArchiveConfirmation }`.
+ * Statement-first (F-32.9): a signer whose EMBEDDED archive statement verifies is
+ * confirmed with ZERO network for that signer — the statement is the same
+ * authority's signature over the same observation, so the live lookup is only the
+ * fallback for signers without one. Never throws.
+ */
 export async function confirmKeyArchiveWeb(
   pdfBytes: Uint8Array,
   deps: ConfirmKeyArchiveDeps = {},
@@ -100,7 +117,12 @@ export async function confirmKeyArchiveWeb(
     const keysBytes = files.get('keys.json');
     if (!keysBytes) return out;
     const keys = JSON.parse(new TextDecoder().decode(keysBytes)) as KeysJson;
+    const fromStatements = await confirmStatementsOffline(files, deps.statementJwks);
     for (const n of signerIndices(files)) {
+      if (fromStatements[n]) {
+        out[n] = fromStatements[n];
+        continue;
+      }
       const rec = keys.keys.find((k) => k.signer === n);
       if (rec?.domain && rec.selector) {
         out[n] = await confirmKeyArchive(rec.domain, rec.selector, rec.record, deps);

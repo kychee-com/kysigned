@@ -79,17 +79,23 @@ honesty means showing which one you actually hold:
 - **PROVIDER KEY CONFIRMED** — additionally, the public DKIM-key archive confirms the
   **exact** key that signed was the provider's real published key. This is the step that
   turns "the math is consistent" into "the math is consistent *and* the key is
-  authentic," and it is precisely what an offline check cannot establish alone.
+  authentic." Newer records carry that confirmation inside the bundle itself: the
+  archive signs a statement of its own live-DNS observation, kysigned anchors those
+  exact statement bytes with the same dual timestamps, and both are embedded. Such a
+  record confirms key provenance fully offline, long after either service. Records
+  without an embedded statement confirm with one online archive lookup, exactly as
+  before.
 - **PROVEN (DURABLE)** — additionally, the time is anchored durably: the OpenTimestamps
   proof is confirmed in a Bitcoin block (which cannot be back-dated) and agrees with the
   RFC 3161 token, and the signing time falls within the window during which the archive
   observed that key live. This is the strongest tier: authentic key, un-back-datable
   time, re-verifiable by anyone, forever.
 
-A genuine record verified online reaches **PROVIDER KEY CONFIRMED** immediately and
-**PROVEN (DURABLE)** once its Bitcoin anchor settles (typically a few hours after
-signing). Offline, or while the archive and chain are still settling, that same genuine
-record sits honestly at **INTEGRITY VERIFIED** — pending, never failed. The tiers never
+A genuine record reaches **PROVIDER KEY CONFIRMED** immediately (offline via its
+embedded archive statement, or online via the archive lookup) and **PROVEN (DURABLE)**
+once its Bitcoin anchor settles (typically a few hours after signing). While anchors
+and lookups are still settling, a genuine record sits honestly at its currently
+provable tier — pending, never failed. The tiers never
 weaken a real signature; they stop a forgery from borrowing the credibility of a real one.
 
 **NOT proven** (at any tier):
@@ -109,11 +115,11 @@ Each item is a threat, then what stops it (and any residual risk).
 
 - **Leaked or rotated-published DKIM key (the `dkim-rotate` model).** A provider's old private key leaks, or
   a later-published key is used to forge a historical "signature". *Defence:* an
-  **anchored-time upper bound** on the key's life. The public archive records when each
-  provider key was last seen in use; the durable timestamp fixes when the signature
-  existed. If the anchored signing time is *later* than the key was last seen (plus a
-  grace margin), the signature cannot reach **PROVEN (DURABLE)** — which is exactly the
-  retired-key / rotate-and-publish forgery. This is deliberately a one-sided *upper*
+  **anchored-time upper bound** on the key's life. The public archive records when it
+  last saw each provider key live in the provider's own DNS; the durable timestamp fixes
+  when the signature existed. If the anchored signing time is *later* than the key was
+  last observed live (plus a grace margin), the signature cannot reach **PROVEN
+  (DURABLE)** — which is exactly the retired-key / rotate-and-publish forgery. This is deliberately a one-sided *upper*
   bound: a signing time *earlier* than the archive first recorded the key is fine (a key
   is often observed only after it is already in use), so we never require a lower bound.
   A key compromised *during* its live window is indistinguishable from legitimate use —
@@ -130,7 +136,12 @@ Each item is a threat, then what stops it (and any residual risk).
   cannot be confirmed, the record rises no higher than **INTEGRITY VERIFIED** and never
   claims the key was authentic. The honest tiers *are* the defence here — the old single
   "PROVEN" stamp hid this forgery behind a green verdict; the tiers make the difference
-  between "the math checks out" and "the key is genuinely the provider's" visible. Beyond
+  between "the math checks out" and "the key is genuinely the provider's" visible.
+  The bar this sets is high and worth stating plainly: forging a provider-key
+  confirmation requires the operator and the independent archive to collude at the
+  Bitcoin-pinned signing moment. Even that collusion stays permanently falsifiable,
+  because an invented key exists nowhere else, while a provider's genuine key of that
+  era is independently recoverable from any two real emails it signed. Beyond
   forgery, a malicious operator can still only refuse to process or fail to deliver; a
   signing record, once delivered, is wholly beyond operator reach.
 - **Compromised timestamp authority (TSA).** A single RFC 3161 TSA colludes or is

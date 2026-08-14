@@ -11,6 +11,7 @@ import { Buffer } from 'node:buffer';
 import { buildEvidenceManifest } from './evidenceManifest.js';
 import { computeBundleFingerprint } from './fingerprint.js';
 import { buildKeysJson } from './keysJson.js';
+import { orderedEvidence } from './evidenceOrder.js';
 import type { AssembleBundleInput, BundleSignerInput } from './types.js';
 import type { TimestampProof } from '../timestamp/contract.js';
 
@@ -143,10 +144,65 @@ describe('buildKeysJson — the offline DKIM key record (F-8.1)', () => {
       selector: 'sel',
       record: 'v=DKIM1; k=rsa; p=AAAB',
       observedAt: '2026-06-14T10:00:01.000Z',
-      archive: { status: 'archived', source: 'archive.prove.email' },
+      archive: { status: 'archived', source: 'archive.zk.email' },
     });
     // null key + contributed archive surface correctly.
     assert.equal(k.keys[1].record, null);
     assert.equal(k.keys[1].archive.status, 'contributed');
+  });
+});
+
+describe('archive statement embed — F-32.9 (spec 0.71.0)', () => {
+  const STMT = 'eyJhbGciOiJFZERTQSIsImtpZCI6ImFyY2hpdmUtc3RhdGVtZW50LTEifQ.eyJ2IjoxfQ.c2ln';
+  const withStatement = (over: Partial<BundleSignerInput> = {}): BundleSignerInput => ({
+    ...signer(over),
+    archiveStatement: STMT,
+    archiveStatementTsa: proof('rfc3161', 'stmt-tsr'),
+    archiveStatementOts: proof('ots', 'stmt-ots', 'pending'),
+  });
+
+  it('per-signer statement files ride after that signer’s .eml proofs; a statement-less signer keeps the old shape', () => {
+    const m = buildEvidenceManifest(input([withStatement({ index: 1 }), signer({ index: 2, email: 'bob@x.com' })]));
+    assert.deepEqual(
+      m.map((f) => f.path),
+      [
+        'document-original.pdf',
+        'cover-1.pdf',
+        'cover-2.pdf',
+        'signer-1.eml',
+        'signer-2.eml',
+        'proofs/signer-1.tsr',
+        'proofs/signer-1.ots',
+        'proofs/signer-1-statement.jws',
+        'proofs/signer-1-statement.tsr',
+        'proofs/signer-1-statement.ots',
+        'proofs/signer-2.tsr',
+        'proofs/signer-2.ots',
+        'keys.json',
+        'VERIFY-README.txt',
+      ],
+    );
+    const jws = m.find((f) => f.path === 'proofs/signer-1-statement.jws')!;
+    assert.equal(Buffer.from(jws.bytes).toString('utf8'), STMT, 'the EXACT captured statement bytes embed');
+    assert.equal(jws.inFingerprint, true, 'the statement is fingerprint-covered evidence');
+  });
+
+  it('the fingerprint covers the statement (a swapped statement is detectable)', () => {
+    const base = computeBundleFingerprint(buildEvidenceManifest(input([withStatement({ index: 1 })])));
+    const swapped = computeBundleFingerprint(
+      buildEvidenceManifest(
+        input([{ ...withStatement({ index: 1 }), archiveStatement: STMT.slice(0, -1) + '4' }]),
+      ),
+    );
+    assert.notEqual(base, swapped);
+  });
+
+  it('orderedEvidence mirrors the manifest for a statement-bearing bundle (verifier lockstep)', () => {
+    const m = buildEvidenceManifest(input([withStatement({ index: 1 }), signer({ index: 2 })]));
+    const map = new Map(m.map((f) => [f.path, f.bytes]));
+    assert.deepEqual(
+      orderedEvidence(map).map((f) => f.path),
+      m.filter((f) => f.inFingerprint).map((f) => f.path),
+    );
   });
 });

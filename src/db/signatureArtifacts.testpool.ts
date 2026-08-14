@@ -25,6 +25,7 @@ export function createSignatureArtifactsMemoryPool() {
           dkim_domain, dkim_selector, dkim_key, dkim_observed_at,
           ots_proof, tsa_token, key_obs_proof, archive_status, ts_status,
           archive_confirmation, archive_confirmation_checked_at, key_obs_ots_proof,
+          archive_statement, archive_statement_tsa, archive_statement_ots, archive_statement_captured_at,
         ] = v;
         const conflict = rows.find(
           (r) => r.envelope_id === envelope_id &&
@@ -42,6 +43,10 @@ export function createSignatureArtifactsMemoryPool() {
           ots_proof: ots_proof ?? null, tsa_token: tsa_token ?? null, key_obs_proof: key_obs_proof ?? null,
           key_obs_ots_proof: key_obs_ots_proof ?? null,
           archive_status: archive_status ?? null,
+          archive_statement: archive_statement ?? null,
+          archive_statement_tsa: archive_statement_tsa ?? null,
+          archive_statement_ots: archive_statement_ots ?? null,
+          archive_statement_captured_at: archive_statement_captured_at ?? null,
           ts_status: ts_status ?? 'pending',
           archive_confirmation: archive_confirmation ?? null,
           archive_confirmation_checked_at: archive_confirmation_checked_at ?? null,
@@ -92,6 +97,21 @@ export function createSignatureArtifactsMemoryPool() {
         return { rows: [clone(r)], rowCount: 1 } as any;
       }
 
+      // updateArtifactArchiveStatement — write-once capture (F-32.9); must precede the
+      // generic UPDATE branch. `WHERE ... archive_statement IS NULL` models the
+      // captured-bytes-are-the-artifact contract.
+      if (text.includes('SET archive_statement')) {
+        const [id, statement, tsa, ots, capturedAt] = v;
+        const r = rows.find((x) => x.id === id);
+        if (!r || r.archive_statement != null) return { rows: [], rowCount: 0 } as any;
+        r.archive_statement = statement;
+        r.archive_statement_tsa = tsa ?? null;
+        r.archive_statement_ots = ots ?? null;
+        r.archive_statement_captured_at = capturedAt ?? null;
+        r.updated_at = new Date(1700000000000 + ++seq * 1000).toISOString();
+        return { rows: [clone(r)], rowCount: 1 } as any;
+      }
+
       // getSignatureArtifact — SELECT ... WHERE envelope_id AND LOWER(signer_email)
       if (text.includes('SELECT * FROM signature_artifacts') && text.includes('LOWER(signer_email)')) {
         const [envelope_id, signer_email] = v;
@@ -100,6 +120,14 @@ export function createSignatureArtifactsMemoryPool() {
             String(x.signer_email).toLowerCase() === String(signer_email).toLowerCase(),
         );
         return { rows: r ? [clone(r)] : [], rowCount: r ? 1 : 0 } as any;
+      }
+
+      // listEnvelopeSignatureArtifacts — SELECT * WHERE envelope_id only (no LOWER) —
+      // must come AFTER the getSignatureArtifact branch (both share the SELECT prefix).
+      if (text.includes('SELECT * FROM signature_artifacts') && text.includes('envelope_id = $1')) {
+        const [envelope_id] = v;
+        const out = rows.filter((r) => r.envelope_id === envelope_id).map(clone);
+        return { rows: out, rowCount: out.length } as any;
       }
 
       // listPendingTimestampArtifacts — WHERE ts_status = 'pending' ORDER BY created_at LIMIT
@@ -115,12 +143,14 @@ export function createSignatureArtifactsMemoryPool() {
 
       // updateArtifactTimestamps — UPDATE ... WHERE id RETURNING *
       if (text.includes('UPDATE signature_artifacts')) {
-        const [id, ots_proof, key_obs_proof, ts_status] = v;
+        const [id, ots_proof, key_obs_proof, ts_status, key_obs_ots_proof, archive_statement_ots] = v;
         const r = rows.find((x) => x.id === id);
         if (!r) return { rows: [], rowCount: 0 } as any;
         if (ots_proof != null) r.ots_proof = ots_proof;       // COALESCE: keep when null
         if (key_obs_proof != null) r.key_obs_proof = key_obs_proof;
         if (ts_status != null) r.ts_status = ts_status;
+        if (key_obs_ots_proof != null) r.key_obs_ots_proof = key_obs_ots_proof;
+        if (archive_statement_ots != null) r.archive_statement_ots = archive_statement_ots;
         r.updated_at = new Date(1700000000000 + ++seq * 1000).toISOString();
         return { rows: [clone(r)], rowCount: 1 } as any;
       }

@@ -45,6 +45,15 @@ export interface BundleSignerInput {
   otsProof?: TimestampProof | null;
   /** RFC 3161 token → `proofs/signer-<n>.tsr` (omit/null if absent). */
   tsaToken?: TimestampProof | null;
+  /**
+   * F-32.9 — the archive's signed observation statement (EXACT compact-JWS bytes
+   * as captured) → `proofs/signer-<n>-statement.jws`; its two operator anchors
+   * over `sha256(utf8(jws))` → `-statement.tsr` / `-statement.ots`. All omitted
+   * when capture was waived/blocked (the live-fallback bundle shape).
+   */
+  archiveStatement?: string | null;
+  archiveStatementTsa?: TimestampProof | null;
+  archiveStatementOts?: TimestampProof | null;
   /** SES receipt verdicts (receipt-time metadata, AC-62). */
   verdicts?: { spf?: string; dkim?: string; dmarc?: string };
 }

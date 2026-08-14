@@ -36,6 +36,8 @@ export { TIER_LABEL } from './assuranceTier.js';
 export type { AssuranceTier, AssuranceDimensions, DimensionState } from './assuranceTier.js';
 export { applyOnlineConfirmations } from './applyConfirmations.js';
 export type { OnlineConfirmations } from './applyConfirmations.js';
+import { applyOnlineConfirmations } from './applyConfirmations.js';
+import { confirmStatementsOffline } from './statementProvenance.js';
 
 // The explicit "Confirm on Bitcoin" action (F-10.6) — offline-first: called only
 // when the user clicks confirm, so the default page load stays fully offline.
@@ -322,5 +324,14 @@ export async function verifyBundleWeb(pdfBytes: Uint8Array, deps: VerifyBundleDe
 
   const structurallySound = errors.length === 0 && matchesPrinted && signers.length > 0;
   const tier = structurallySound ? computeBundleTier(signers.map((s) => s.tier)) : 'FAILED';
-  return { proven: tier !== 'FAILED', tier, fingerprint: { computed, matchesPrinted }, originalDocSha256, signers, errors };
+  const verdict: BundleVerdict = { proven: tier !== 'FAILED', tier, fingerprint: { computed, matchesPrinted }, originalDocSha256, signers, errors };
+
+  // F-32.9 (spec 0.71.0) — fold OFFLINE provenance from any embedded archive
+  // statements (zero network; the verifier's pinned keys). The fold recomputes
+  // tiers deterministically; an empty map is a no-op, so a pre-statement bundle
+  // is byte-for-byte the old behavior (AC-268).
+  const statements = await confirmStatementsOffline(files, deps.statementJwks);
+  return Object.keys(statements).length > 0
+    ? applyOnlineConfirmations(verdict, { keyArchive: statements })
+    : verdict;
 }

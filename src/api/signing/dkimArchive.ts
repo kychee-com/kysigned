@@ -44,13 +44,30 @@ export interface DkimArchiveDeps {
   path?: string;
 }
 
+/** One per-channel observation window (the archive's 2026-08 shape; camelCase). */
+export interface ArchiveObservation {
+  /** 'live_dns' | 'gcd_recovered' (unknown values tolerated, never counted live). */
+  source?: string;
+  firstSeenAt?: string;
+  lastSeenAt?: string;
+}
+
 export interface ArchiveKeyRecord {
   domain: string;
   selector: string;
   /** The DKIM TXT value, e.g. "v=DKIM1; k=rsa; p=...". */
   value: string;
+  /** Numeric in /api/key JSON (a string inside signed statements — compare as strings). */
+  id?: number | string;
+  /**
+   * Top-level times are SINGLE-CHANNEL since the archive's 2026-08 rework (the
+   * live-DNS window where one exists, else the GCD window) — they are no longer a
+   * cross-channel union. Use `liveLastSeenAt` for the F-32.4 window input.
+   */
   firstSeenAt?: string;
   lastSeenAt?: string;
+  /** Per-channel windows; absent only on pre-2026-08 fixtures/caches. */
+  observations?: ArchiveObservation[];
 }
 
 export interface ArchiveLookupResult {
@@ -99,9 +116,31 @@ export function extractPublicKey(value: string | null | undefined): string {
   return (m ? m[1] : '').replace(/\s+/g, '');
 }
 
-/** The record's usable last-seen (falls back to first-seen) — the F-32.4 window input. */
+/** The record's usable last-seen (falls back to first-seen), channel-blind. */
 export function usableLastSeenAt(record: ArchiveKeyRecord): string | null {
   return record.lastSeenAt ?? record.firstSeenAt ?? null;
+}
+
+/**
+ * The record's last-observed-LIVE time — THE F-32.4 window input (#147 option A,
+ * spec 0.71.0): only the `live_dns` observation channel bounds validity; a record
+ * the archive knows only through key recovery has NO usable live window (null →
+ * the dimension goes inconclusive / receipt goes unconfirmed, never confirmed).
+ * When `observations` is absent entirely (pre-2026-08 fixtures or a cached shape)
+ * the single-channel top-level times stand in — the production API always carries
+ * `observations` today (interop-probed 2026-08-14).
+ */
+export function liveLastSeenAt(record: ArchiveKeyRecord): string | null {
+  if (Array.isArray(record.observations)) {
+    let best: string | null = null;
+    for (const o of record.observations) {
+      if (!o || o.source !== 'live_dns') continue;
+      const t = o.lastSeenAt ?? o.firstSeenAt ?? null;
+      if (t && (best === null || t > best)) best = t;
+    }
+    return best;
+  }
+  return usableLastSeenAt(record);
 }
 
 /** Coerce the archive's lookup body (single record | array | {records}) into a record list. */
@@ -116,7 +155,11 @@ function normalizeRecords(body: unknown): ArchiveKeyRecord[] {
         (r): r is ArchiveKeyRecord => !!r && typeof r === 'object' && 'value' in (r as object),
       );
     }
-    if (typeof obj.value === 'string' && typeof obj.domain === 'string') {
+    // `value` alone qualifies: the 2026-08 single-record shape leads with `id` and
+    // the key comparison never reads `domain` off the record — requiring a top-level
+    // domain made a shape tweak silently normalize to [] (found:false), the
+    // fails-soft-and-invisible failure mode.
+    if (typeof obj.value === 'string') {
       return [obj as unknown as ArchiveKeyRecord];
     }
   }
@@ -167,6 +210,51 @@ export async function contributeKey(
   };
 }
 
+export interface StatementFetchResult {
+  /** Compact-JWS strings exactly as served — the archive freshly signs per request. */
+  statements: string[];
+  /** HTTP status of the final attempt; null when the fetch itself threw. */
+  status: number | null;
+  /** Retriable-later signal (429 after the one retry, 5xx, network) — the F-32.10 wait path re-attempts. */
+  outage: boolean;
+}
+
+/**
+ * Fetch the archive's signed observation statements for a pair (F-32.9,
+ * zkemail/archive#46): `GET /api/key/statement?domain=&selector=` → array of
+ * compact JWS. A GCD-only pair legitimately returns `200 []` (only live-DNS
+ * observations are signed — their signature IS the live-only filter). The
+ * endpoint rate-limits bursts, so one bounded Retry-After retry (clamped ≤5s)
+ * is honored; anything still failing reports `outage` for the wait-path retry
+ * cadence rather than hammering. Never throws.
+ */
+export async function fetchArchiveStatements(
+  domain: string,
+  selector: string,
+  deps?: DkimArchiveDeps,
+): Promise<StatementFetchResult> {
+  const base = deps?.baseUrl ?? DEFAULT_BASE_URL;
+  const url = `${base}/api/key/statement?domain=${encodeURIComponent(domain)}&selector=${encodeURIComponent(selector)}`;
+  try {
+    const f = resolveFetch(deps);
+    let res = await f(url);
+    if (res.status === 429) {
+      const ra = Number(res.headers?.get?.('retry-after') ?? '2');
+      const waitMs = Math.min(Math.max(Number.isFinite(ra) ? ra : 2, 0), 5) * 1000;
+      await new Promise((r) => setTimeout(r, waitMs));
+      res = await f(url);
+    }
+    if (res.status !== 200) {
+      return { statements: [], status: res.status, outage: res.status === 429 || res.status >= 500 };
+    }
+    const body = (await res.json().catch(() => null)) as unknown;
+    const statements = Array.isArray(body) ? body.filter((s): s is string => typeof s === 'string') : [];
+    return { statements, status: 200, outage: false };
+  } catch {
+    return { statements: [], status: null, outage: true };
+  }
+}
+
 export type SigningConfirmOutcome = 'confirmed' | 'unconfirmed' | 'outage';
 
 export interface SigningKeyConfirmation {
@@ -213,11 +301,13 @@ export async function confirmKeyAtSigning(
     if (lookup.found) {
       const match = lookup.records.find((r) => extractPublicKey(r.value) === want);
       if (match) {
-        const lastSeen = usableLastSeenAt(match);
+        // Live-only (#147-A, spec 0.71.0): only a live_dns-channel bound confirms —
+        // a recovery-only window nudges a fresh DNS observation instead.
+        const lastSeen = liveLastSeenAt(match);
         if (lastSeen) return { outcome: 'confirmed', lastSeenAt: lastSeen, nudged: false };
         const nudge = await contributeKey(domain, selector, deps);
         return nudge.ok
-          ? { outcome: 'unconfirmed', lastSeenAt: null, nudged: true, detail: 'exact key present, no usable last-seen; nudged' }
+          ? { outcome: 'unconfirmed', lastSeenAt: null, nudged: true, detail: 'exact key present, no usable live last-seen; nudged' }
           : { outcome: 'outage', lastSeenAt: null, nudged: true, detail: `nudge failed: HTTP ${nudge.status}` };
       }
       // Records exist but none carry the observed key → nudge a fresh observation.

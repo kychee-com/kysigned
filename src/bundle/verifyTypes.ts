@@ -96,4 +96,11 @@ export interface BundleVerdict {
 export interface VerifyBundleDeps {
   /** Verify a timestamp proof commits to a hash (default: real OTS/RFC providers). */
   verifyTimestamp?: (proof: TimestampProof, hash: Uint8Array) => Promise<VerifyResult>;
+  /**
+   * F-32.9 — statement-verification key override (tests sign with throwaway keys).
+   * Unset = the PINNED production archive JWKS (DD-17 real-default): embedded
+   * statements always verify against the VERIFIER'S committed trust anchor,
+   * never keys the bundle supplies.
+   */
+  statementJwks?: import('./archiveStatement.js').ArchiveJwks;
 }

@@ -28,6 +28,9 @@ const ENVELOPE_TIMESTAMP_COLS = [
   'expiry_at',
   'pdf_deleted_at',
   'completion_distributed_at',
+  'finalizing_since',
+  'finalizing_email_sent_at',
+  'statement_waived_at',
 ] as const;
 
 const SIGNER_TIMESTAMP_COLS = [
@@ -514,6 +517,50 @@ export async function markCompletionDistributed(pool: DbPool, envelopeId: string
      WHERE id = $1 AND completion_distributed_at IS NULL
      RETURNING id`,
     [envelopeId]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * F-32.10 — start the bounded statement wait's clock, exactly once (COALESCE keeps
+ * the first value on re-runs). Returns the effective wait-start time.
+ */
+export async function setFinalizingSince(pool: DbPool, envelopeId: string, at: Date): Promise<Date> {
+  const result = await pool.query(
+    `UPDATE envelopes SET finalizing_since = COALESCE(finalizing_since, $2)
+     WHERE id = $1 RETURNING finalizing_since`,
+    [envelopeId, at],
+  );
+  const v = toDate(result.rows[0]?.finalizing_since);
+  return v instanceof Date ? v : at;
+}
+
+/**
+ * F-32.10 / AC-270 — claim the once-only interim "finalizing" creator email.
+ * Returns true iff THIS call claimed it (at-most-once: mark-first, send-after —
+ * a lost email is acceptable noise-avoidance; the dashboard shows finalizing).
+ */
+export async function markFinalizingEmailSent(pool: DbPool, envelopeId: string): Promise<boolean> {
+  const result = await pool.query(
+    `UPDATE envelopes SET finalizing_email_sent_at = now()
+     WHERE id = $1 AND finalizing_email_sent_at IS NULL
+     RETURNING id`,
+    [envelopeId],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * F-32.10 / AC-269 — record the bound-expiry waive (seal WITHOUT the missing
+ * statements; live-fallback semantics). Returns true iff THIS call stamped it —
+ * the guard that keeps the aggregated operator alert to exactly one.
+ */
+export async function markStatementWaived(pool: DbPool, envelopeId: string): Promise<boolean> {
+  const result = await pool.query(
+    `UPDATE envelopes SET statement_waived_at = now()
+     WHERE id = $1 AND statement_waived_at IS NULL
+     RETURNING id`,
+    [envelopeId],
   );
   return (result.rowCount ?? 0) > 0;
 }

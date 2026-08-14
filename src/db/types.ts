@@ -36,6 +36,16 @@ export interface Envelope {
    */
   completion_distributed_at: Date | null;
   /**
+   * F-32.10 bounded seal wait (migration 021): `finalizing_since` = the wait
+   * started (set once, when statement capture blocked sealing);
+   * `finalizing_email_sent_at` = the once-only interim creator email guard;
+   * `statement_waived_at` = sealed at bound expiry without the missing
+   * statements (live-fallback semantics). All NULL on the immediate path.
+   */
+  finalizing_since: Date | null;
+  finalizing_email_sent_at: Date | null;
+  statement_waived_at: Date | null;
+  /**
    * F-3.7 — internal-test envelope (no credit deducted, excluded from
    * revenue/usage metrics, marked in the dashboard). Set via
    * markEnvelopeInternalTest after creation. Default false.
@@ -164,6 +174,18 @@ export interface SignatureArtifact {
   /** archive.prove.email contribution outcome (AC-60). */
   archive_status: string | null;
   /**
+   * The archive's signed observation statement for the signer's exact key
+   * (F-32.9, migration 021): the EXACT compact-JWS bytes as captured — statements
+   * are freshly signed per request, so these bytes are the anchored artifact and
+   * are never replaced by a re-fetch. NULL = not captured (yet, or waived).
+   */
+  archive_statement: string | null;
+  /** RFC 3161 token over sha256(utf8(archive_statement)). */
+  archive_statement_tsa: TimestampProof | null;
+  /** OpenTimestamps proof over the same statement digest (pending → upgraded). */
+  archive_statement_ots: TimestampProof | null;
+  archive_statement_captured_at: Date | null;
+  /**
    * Receipt-time verifier-parity confirmation (F-32.6 / AC-163, migration 010):
    * exact key bytes in the archive with a usable last-seen. NULL = not applicable
    * (legacy row, or the archive step didn't run). Re-checked/healed by the F-32.7 sweep.
@@ -195,6 +217,10 @@ export interface CreateSignatureArtifactInput {
   key_obs_proof?: TimestampProof | null;
   key_obs_ots_proof?: TimestampProof | null;
   archive_status?: string | null;
+  archive_statement?: string | null;
+  archive_statement_tsa?: TimestampProof | null;
+  archive_statement_ots?: TimestampProof | null;
+  archive_statement_captured_at?: Date | null;
   archive_confirmation?: 'confirmed' | 'unconfirmed' | 'outage' | null;
   archive_confirmation_checked_at?: Date | null;
   ts_status?: 'pending' | 'complete';

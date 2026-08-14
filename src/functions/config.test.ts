@@ -206,6 +206,11 @@ describe('buildAppDeps — F-36.6 internal-subject gate (DD-49)', () => {
     assert.equal(deps.inboundEmailCtx().internalGate, deps.internalGate);
     assert.equal(deps.distributeDeps().internalGate, deps.internalGate);
   });
+
+  it('wires the F-32.10 statement gate into distributeDeps (DD-17: no orphan seam)', () => {
+    const deps = buildAppDeps(baseEnv, fakeRuntime());
+    assert.equal(typeof deps.distributeDeps().statementGate, 'function', 'statementGate must be wired in prod config');
+  });
 });
 
 describe('buildAppDeps — F-35 internal-identity list', () => {

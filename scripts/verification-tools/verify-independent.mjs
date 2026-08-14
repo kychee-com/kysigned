@@ -39,6 +39,7 @@ import { extractSigningText, extractPdfAttachments } from '../../src/api/signing
 import { validateSigningIntent, firstIntentLineVerbatim } from '../../src/api/signing/signingIntent.ts';
 import { verifyWith } from '../../src/timestamp/contract.ts';
 import { createRfc3161Provider } from '../../src/timestamp/rfc3161/provider.ts';
+import { confirmStatementsOffline } from '../../src/bundle/statementProvenance.ts';
 
 const sha256hex = (b) => createHash('sha256').update(b).digest('hex');
 
@@ -166,6 +167,9 @@ export async function verifyBundleIndependently(pdfBytes) {
   if (nums.length === 0) errors.push('no signer-<n>.eml evidence found');
 
   const rfc3161 = createRfc3161Provider({});
+  // F-32.9 — embedded archive statements, verified once for the whole bundle
+  // (zero network; verifier-pinned keys). Empty for pre-statement bundles.
+  const stmtConfirmations = await confirmStatementsOffline(files);
   const signers = [];
 
   for (const n of nums) {
@@ -224,12 +228,29 @@ export async function verifyBundleIndependently(pdfBytes) {
     if (!tsOk) reasons.push('no valid timestamp proof');
 
     // F-32 assurance tier, reimplemented INDEPENDENTLY (this toolkit imports none
-    // of the engines). This surface is offline-and-.tsr-only: it confirms no
-    // Bitcoin anchor and holds no archive record, so provider-key provenance, the
-    // key-validity window, and durable-timestamp assurance are all `pending` (not yet
-    // checkable offline — F-020) — the tier therefore caps at INTEGRITY VERIFIED, which
-    // is exactly what the web/CLI engines report under the same offline pin.
-    const assurance = { keyProvenance: 'pending', timestampDurability: 'pending', keyValidity: 'pending' };
+    // of the engines; the crypto primitives it shares — DKIM, RFC 3161, and the
+    // statement verifier — are the same library layer it already leans on). This
+    // surface confirms no Bitcoin anchor, so durable-timestamp assurance stays
+    // `pending` offline. Provider-key provenance CAN now confirm offline via the
+    // bundle's EMBEDDED archive statement (F-32.9, spec 0.71.0) — verified against
+    // the verifier-pinned archive keys, matching the signer's exact key — and the
+    // F-32.4 live-only window (T <= last-observed-live + 90d grace) is recomputed
+    // here from scratch. A statement-less bundle keeps the all-pending posture and
+    // caps at INTEGRITY VERIFIED exactly as before (AC-268).
+    const stmt = stmtConfirmations[n];
+    let keyProvenance = 'pending';
+    let keyValidity = 'pending';
+    if (stmt) {
+      keyProvenance = 'confirmed';
+      const lastSeenMs = stmt.lastSeenAt ? Date.parse(stmt.lastSeenAt) : NaN;
+      keyValidity =
+        signingTimeSec != null && Number.isFinite(lastSeenMs)
+          ? signingTimeSec <= Math.floor(lastSeenMs / 1000) + 90 * 24 * 3600
+            ? 'confirmed'
+            : 'inconclusive'
+          : 'inconclusive';
+    }
+    const assurance = { keyProvenance, timestampDurability: 'pending', keyValidity };
     const tier = signerTier({ dkim: dkimOk, attachment: attOk, intent: intent.valid, timestamp: tsOk }, assurance);
     signers.push({
       index: n,

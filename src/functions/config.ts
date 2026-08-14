@@ -63,6 +63,7 @@ import { getSignatureArtifact } from '../db/signatureArtifacts.js';
 import { resolveSenderGate } from '../api/billingGate.js';
 import { DEFAULT_ENVELOPE_COST_USD_MICROS } from '../api/createGate.js';
 import { createDefaultTimestampAssemblyDeps } from '../api/signing/timestampProviders.js';
+import { evaluateStatementGate } from '../api/statementGate.js';
 import { createOtsProvider } from '../timestamp/ots/provider.js';
 import { assembleBundle } from '../bundle/assembleBundle.js';
 import { resolveDocumentKey } from '../pdf/documentKey.js';
@@ -187,6 +188,8 @@ export interface AppEnv {
    * but a FAIL never blocks signing (DKIM stays the primary gate).
    */
   KYSIGNED_ENFORCE_SENDER_AUTH?: string;
+  /** F-32.10 — the bounded statement wait's bound in hours (default 24). */
+  KYSIGNED_STATEMENT_WAIT_HOURS?: string;
   /**
    * F-13.4 `[service]` — new-account trial credit, in ENVELOPE CREDITS. kysigned.com
    * sets `4` (= $1.00 = 4 envelopes), so a new account opens funded and can sign
@@ -727,6 +730,10 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
         archiveStatus: artifact.archive_status,
         otsProof: artifact.ots_proof,
         tsaToken: artifact.tsa_token,
+        // F-32.9 — the captured archive statement + its anchors embed in the bundle.
+        archiveStatement: artifact.archive_statement,
+        archiveStatementTsa: artifact.archive_statement_tsa,
+        archiveStatementOts: artifact.archive_statement_ots,
         verdicts: {
           ...(artifact.spf_verdict ? { spf: artifact.spf_verdict } : {}),
           ...(artifact.dkim_verdict ? { dkim: artifact.dkim_verdict } : {}),
@@ -750,6 +757,10 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     return { bytes: assembled.bytes, fingerprint: assembled.fingerprint };
   };
 
+  // F-32.10 — the bounded statement wait's bound (hours). Fork-safe default 24;
+  // kysigned.com can tune via env without a code change.
+  const statementWaitHours = Number(env.KYSIGNED_STATEMENT_WAIT_HOURS ?? '');
+
   const distributeDeps = (): DistributeBundleDeps => ({
     emailProvider,
     operatorDomain,
@@ -760,6 +771,20 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     createRun: runtime.createRun,
     emitAppEvent: emitAppEventDep, // F-36 envelope_completed
     internalGate, // F-36.6
+    // F-32.10 — sealing gates on statement capture (spec 0.71.0). Real-default
+    // wiring (DD-17): the same providers/archive deps the receipt path uses, the
+    // pinned production statement JWKS by default, alerts to the operator address.
+    statementGate: (p, e) =>
+      evaluateStatementGate(p, e, {
+        ...createDefaultTimestampAssemblyDeps(),
+        emailProvider,
+        operatorDomain,
+        alertEmail: operatorAlertEmail,
+        createRun: runtime.createRun,
+        ...(Number.isFinite(statementWaitHours) && statementWaitHours > 0
+          ? { waitHours: statementWaitHours }
+          : {}),
+      }),
   });
 
   return {

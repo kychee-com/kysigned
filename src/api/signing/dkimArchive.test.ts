@@ -288,3 +288,118 @@ describe('confirmKeyAtSigning — receipt-time verifier-parity confirmation (F-3
     assert.equal(r.outcome, 'outage');
   });
 });
+
+// ── F-32.9/F-32.4 live-shape client (spec 0.71.0, zkemail/archive#46 live 2026-08) ──
+
+const OBS_LIVE = { source: 'live_dns', firstSeenAt: '2026-03-25T16:30:56.769Z', lastSeenAt: '2026-08-09T20:03:36.763Z' };
+const OBS_GCD = { source: 'gcd_recovered', firstSeenAt: '2024-01-01T00:00:00.000Z', lastSeenAt: '2026-07-01T00:00:00.000Z' };
+
+describe('liveLastSeenAt — the F-32.4 live-only window input (#147-A)', () => {
+  it('takes the live_dns channel lastSeenAt when observations are present', async () => {
+    const mod = (await import('./dkimArchive.js')) as Record<string, unknown>;
+    const liveLastSeenAt = mod.liveLastSeenAt as ((r: unknown) => string | null) | undefined;
+    assert.ok(liveLastSeenAt, 'liveLastSeenAt is exported');
+    assert.equal(liveLastSeenAt!({ ...RECORD, observations: [OBS_LIVE, OBS_GCD] }), OBS_LIVE.lastSeenAt);
+  });
+
+  it('a record with observations but NO live_dns channel has no usable live window', async () => {
+    const { liveLastSeenAt } = (await import('./dkimArchive.js')) as any;
+    assert.equal(liveLastSeenAt({ ...RECORD, observations: [OBS_GCD] }), null);
+    assert.equal(liveLastSeenAt({ ...RECORD, observations: [] }), null);
+  });
+
+  it('falls back to the single-channel top-level times when observations are absent (fixtures/back-compat)', async () => {
+    const { liveLastSeenAt } = (await import('./dkimArchive.js')) as any;
+    assert.equal(liveLastSeenAt(RECORD), RECORD.lastSeenAt);
+  });
+});
+
+describe('confirmKeyAtSigning — live-only parity (a GCD-only window never confirms)', () => {
+  it('a record whose only observations are gcd_recovered is unconfirmed (nudged), not confirmed', async () => {
+    let nudged = false;
+    const r = await confirmKeyAtSigning('kychee.com', 'google', RECORD.value, {
+      fetchFn: fakeFetch((url) => {
+        if (url.includes('/api/dsp')) { nudged = true; return { status: 200, body: { addResult: { already_in_db: true, added: false } } }; }
+        return { status: 200, body: { ...RECORD, observations: [OBS_GCD] } };
+      }),
+    });
+    assert.equal(r.outcome, 'unconfirmed');
+    assert.equal(r.lastSeenAt, null);
+    assert.equal(nudged, true, 'a no-live-window record still nudges a fresh observation');
+  });
+
+  it('a live_dns-observed record still confirms with the live bound', async () => {
+    const r = await confirmKeyAtSigning('kychee.com', 'google', RECORD.value, {
+      fetchFn: fakeFetch(() => ({ status: 200, body: { ...RECORD, observations: [OBS_LIVE] } })),
+    });
+    assert.equal(r.outcome, 'confirmed');
+    assert.equal(r.lastSeenAt, OBS_LIVE.lastSeenAt);
+  });
+});
+
+describe('normalizeRecords hardening — a record led by id without top-level domain still parses', () => {
+  it('single-object response with value but no domain field is a record, not []', async () => {
+    const { domain: _drop, ...noDomain } = RECORD as Record<string, unknown>;
+    const r = await lookupArchivedKey('kychee.com', 'google', {
+      fetchFn: fakeFetch(() => ({ status: 200, body: { id: 1428710, ...noDomain } })),
+    });
+    assert.equal(r.found, true);
+    assert.equal(r.records[0]?.value, RECORD.value);
+  });
+});
+
+describe('fetchArchiveStatements — GET /api/key/statement (F-32.9)', () => {
+  function fakeFetchH(seq: Array<{ status: number; body?: unknown; retryAfter?: string }>) {
+    let i = 0;
+    const calls: string[] = [];
+    const fn = (async (url: string) => {
+      calls.push(String(url));
+      const step = seq[Math.min(i++, seq.length - 1)];
+      return {
+        ok: step.status >= 200 && step.status < 300,
+        status: step.status,
+        headers: { get: (k: string) => (k.toLowerCase() === 'retry-after' ? step.retryAfter ?? null : null) },
+        json: async () => step.body,
+      };
+    }) as unknown as typeof fetch;
+    return { fn, calls };
+  }
+
+  it('returns the JWS array on 200', async () => {
+    const mod = (await import('./dkimArchive.js')) as any;
+    assert.ok(mod.fetchArchiveStatements, 'fetchArchiveStatements is exported');
+    const { fn, calls } = fakeFetchH([{ status: 200, body: ['eyJ.a.b', 'eyJ.c.d'] }]);
+    const r = await mod.fetchArchiveStatements('gmail.com', '20251104', { fetchFn: fn });
+    assert.deepEqual(r.statements, ['eyJ.a.b', 'eyJ.c.d']);
+    assert.equal(r.outage, false);
+    assert.match(calls[0], /\/api\/key\/statement\?domain=gmail\.com&selector=20251104/);
+  });
+
+  it('a GCD-only pair returns 200 [] — empty capture, no outage', async () => {
+    const { fn } = fakeFetchH([{ status: 200, body: [] }]);
+    const { fetchArchiveStatements } = (await import('./dkimArchive.js')) as any;
+    const r = await fetchArchiveStatements('gcd-only.com', 's', { fetchFn: fn });
+    assert.deepEqual(r.statements, []);
+    assert.equal(r.outage, false);
+  });
+
+  it('honors one bounded Retry-After on 429, then succeeds', async () => {
+    const { fn, calls } = fakeFetchH([{ status: 429, retryAfter: '0' }, { status: 200, body: ['eyJ.a.b'] }]);
+    const { fetchArchiveStatements } = (await import('./dkimArchive.js')) as any;
+    const r = await fetchArchiveStatements('gmail.com', '20251104', { fetchFn: fn });
+    assert.deepEqual(r.statements, ['eyJ.a.b']);
+    assert.equal(calls.length, 2);
+  });
+
+  it('429 twice → outage (retriable later); 5xx → outage; network throw → outage; non-array body → []', async () => {
+    const { fetchArchiveStatements } = (await import('./dkimArchive.js')) as any;
+    const twice429 = fakeFetchH([{ status: 429, retryAfter: '0' }, { status: 429, retryAfter: '0' }]);
+    assert.equal((await fetchArchiveStatements('a.com', 's', { fetchFn: twice429.fn })).outage, true);
+    const five = fakeFetchH([{ status: 503 }]);
+    assert.equal((await fetchArchiveStatements('a.com', 's', { fetchFn: five.fn })).outage, true);
+    const thrower = (async () => { throw new Error('ECONNRESET'); }) as unknown as typeof fetch;
+    assert.equal((await fetchArchiveStatements('a.com', 's', { fetchFn: thrower })).outage, true);
+    const junk = fakeFetchH([{ status: 200, body: { not: 'an array' } }]);
+    assert.deepEqual((await fetchArchiveStatements('a.com', 's', { fetchFn: junk.fn })).statements, []);
+  });
+});

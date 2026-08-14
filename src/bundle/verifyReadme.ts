@@ -34,9 +34,15 @@ WHAT IS EMBEDDED
                           with the document attached). Byte-complete.
   proofs/signer-<n>.tsr   RFC 3161 timestamp token over SHA-256(signer-<n>.eml).
   proofs/signer-<n>.ots   OpenTimestamps (Bitcoin) proof over the same hash.
+  proofs/signer-<n>-statement.jws
+                          When present: the public archive's OWN signed statement
+                          of its live-DNS observation of this signer's key (a
+                          compact JWS, exactly as issued), with the operator's
+                          RFC 3161 + OpenTimestamps proofs over those exact bytes
+                          as -statement.tsr / -statement.ots.
   keys.json               The DKIM public keys observed for each signer, when
                           they were observed, and their public-archive
-                          cross-reference (archive.prove.email).
+                          cross-reference (archive.zk.email).
   VERIFY-README.txt       This file.
 
 HOW TO VERIFY (the algorithm)
@@ -55,26 +61,38 @@ For each signer-<n>.eml:
   4. Validate proofs/signer-<n>.tsr against the TSA chain and proofs/signer-<n>.ots
      against the Bitcoin chain (upgrading a pending OpenTimestamps proof when
      online) to establish the signing time T.
-  5. Key-provenance gate: look up (domain, selector) in the public archive and confirm
-     the EXACT embedded key is the one the archive recorded (the archive fetches the
-     provider's DNS itself). A DIFFERENT key for that (domain, selector) is a forged key
-     and FAILS the verdict; an unreachable archive or a not-yet-recorded key is "pending"
-     and does not fail. When confirmed, the durable tier also requires the signing time T
-     to be at or before the key's last-seen time in the archive (plus a grace margin)
+  5. Key-provenance gate. When proofs/signer-<n>-statement.jws is present, verify it
+     OFFLINE: check the JWS signature against the archive's published statement keys
+     (pinned in the verifier; also at
+     https://archive.zk.email/.well-known/dkim-archive-jwks.json), require issuer
+     "archive.zk.email", and require its record to carry this signer's exact
+     (domain, selector, key). A verified statement IS the archive's attestation of its
+     own live-DNS observation; no network is needed and the archive need only have
+     existed at signing. Otherwise, look up (domain, selector) in the public archive
+     and confirm the EXACT embedded key is the one the archive observed live (the
+     archive fetches the provider's DNS itself). A DIFFERENT key for that
+     (domain, selector) is a forged key and FAILS the verdict; an unreachable archive
+     or a not-yet-recorded key is "pending" and does not fail. When confirmed, the
+     durable tier also requires the signing time T to be at or before the key's
+     last-observed-live time (plus a grace margin)
      -- a one-sided UPPER bound (a T before the key was first seen is fine).
   => The verdict is one of four assurance tiers, not a yes/no:
      - FAILED: a check above did not hold, or the archive published a different key than
        the one embedded (a forged key).
      - INTEGRITY VERIFIED: steps 1-4 hold offline, but the key's provenance is not yet
-       confirmed (archive pending). Internally consistent and unaltered, but not yet
-       proven to be the provider's own key.
+       confirmed (no embedded statement, archive pending). Internally consistent and
+       unaltered, but not yet proven to be the provider's own key.
      - PROVIDER KEY CONFIRMED: plus step 5 confirmed the exact key was the provider's
-       real published key.
+       real published key (offline via the embedded statement, or online).
      - PROVEN (DURABLE): plus the OpenTimestamps proof is Bitcoin-block-confirmed and
-       agrees with the RFC 3161 token, and T is within the key's recorded lifetime
-       window (archive last-seen plus grace).
-     A genuine record is INTEGRITY VERIFIED offline and rises to PROVEN (DURABLE) online
-     once its Bitcoin anchor settles; a forged key FAILS.
+       agrees with the RFC 3161 token, and T is within the key's live-observed lifetime
+       window (last-observed-live plus grace).
+     A record with an embedded statement reaches PROVIDER KEY CONFIRMED fully offline;
+     a genuine record rises to PROVEN (DURABLE) once its Bitcoin anchor settles; a
+     forged key FAILS. Forging a provider-key confirmation would take the operator and
+     the archive colluding at the Bitcoin-pinned signing moment, and even that stays
+     permanently falsifiable (an invented key exists nowhere else; a provider's genuine
+     key of an era is recoverable from any two real emails it signed).
 
 Then recompute the verification code: SHA-256 over document-original.pdf, each
 signer-<n>.eml, the proofs/ files, and keys.json, concatenated in that order,

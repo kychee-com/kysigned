@@ -33,6 +33,11 @@ export function orderedEvidence(files: Map<string, Uint8Array>): EmbeddedFile[] 
   for (const n of nums) {
     mk(`proofs/signer-${n}.tsr`, 'application/timestamp-reply');
     mk(`proofs/signer-${n}.ots`, 'application/octet-stream');
+    // F-32.9 — the archive statement + its anchors ride in the same per-signer
+    // slot as buildEvidenceManifest (absent files skip — old bundles unchanged).
+    mk(`proofs/signer-${n}-statement.jws`, 'application/jose');
+    mk(`proofs/signer-${n}-statement.tsr`, 'application/timestamp-reply');
+    mk(`proofs/signer-${n}-statement.ots`, 'application/octet-stream');
   }
   mk('keys.json', 'application/json');
   return out;
