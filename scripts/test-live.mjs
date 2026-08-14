@@ -9,8 +9,9 @@
  *     These gate every commit and every publish.
  *
  *   LIVE E2E (this script) — the tests that deliberately hit REAL third parties:
- *     archive.prove.email (the provider-key gate) and the OpenTimestamps calendars
- *     plus a real Bitcoin anchor. They are env-gated (`KYSIGNED_ONLINE_E2E=1`) so a
+ *     archive.prove.email (the provider-key gate), the archive's signed-statement
+ *     endpoint + JWKS (archive.zk.email, zkemail/archive#46), and the OpenTimestamps
+ *     calendars plus a real Bitcoin anchor. They are env-gated (`KYSIGNED_ONLINE_E2E=1`) so a
  *     third party being down can never turn the mandatory tier red, and so the
  *     hermetic tier stays reproducible offline.
  *
@@ -30,6 +31,7 @@ import { spawn } from 'node:child_process';
 const FILES = [
   'src/bundle/signedFixture.test.ts', // genuine bundle → PROVEN (DURABLE) online
   'src/bundle/forgedKeyFixture.test.ts', // #136 forgery → FAILED by the real archive gate
+  'src/bundle/archiveStatement.online.test.ts', // zkemail/archive#46 → production statements verify
 ];
 
 const child = spawn(

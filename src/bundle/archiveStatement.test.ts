@@ -40,7 +40,7 @@ const RECORD = {
   first_seen_at: '2026-06-01T00:00:00Z',
   last_seen_at: '2026-07-15T08:00:00Z',
 };
-const STATEMENT = { v: 1, iss: 'archive.prove.email', iat: 1789000000, record: RECORD };
+const STATEMENT = { v: 1, iss: 'archive.zk.email', iat: 1789000000, record: RECORD };
 
 let ed: Signer, es: Signer, jwks: ArchiveJwks;
 
@@ -154,9 +154,26 @@ describe('verifyArchiveStatement — reject matrix (distinct reasons)', () => {
     await rejectsWith(await ed.sign({ ...STATEMENT, iat: 1789000000.5 }), 'malformed-shape');
   });
 
-  it('malformed-shape: wrong version or issuer', async () => {
+  it('malformed-shape: wrong version', async () => {
     await rejectsWith(await ed.sign({ ...STATEMENT, v: 2 }), 'malformed-shape');
-    await rejectsWith(await ed.sign({ ...STATEMENT, iss: 'evil.example' }), 'malformed-shape');
+  });
+});
+
+describe('verifyArchiveStatement — issuer pin, its own reject class (zk DX note)', () => {
+  it("issuer-mismatch: an authenticated statement from the archive's OLD name (archive.prove.email)", async () => {
+    await rejectsWith(await ed.sign({ ...STATEMENT, iss: 'archive.prove.email' }), 'issuer-mismatch');
+  });
+
+  it('issuer-mismatch: any other issuer, and a missing iss', async () => {
+    await rejectsWith(await ed.sign({ ...STATEMENT, iss: 'evil.example' }), 'issuer-mismatch');
+    const noIss = { ...STATEMENT } as Record<string, unknown>;
+    delete noIss.iss;
+    await rejectsWith(await ed.sign(noIss), 'issuer-mismatch');
+  });
+
+  it('the check is post-signature: an unpinned signer still fails unknown-key regardless of issuer', async () => {
+    const { signer } = await makeSigner('attacker-2', 'EdDSA');
+    await rejectsWith(await signer.sign({ ...STATEMENT, iss: 'archive.prove.email' }), 'unknown-key');
   });
 });
 

@@ -45,7 +45,7 @@ const RECORD = {
   first_seen_at: '2026-06-01T00:00:00Z',
   last_seen_at: '2026-07-15T08:00:00Z',
 };
-const STATEMENT = { v: 1, iss: 'archive.prove.email', iat: 1789000000, record: RECORD };
+const STATEMENT = { v: 1, iss: 'archive.zk.email', iat: 1789000000, record: RECORD };
 
 /** Sign an object as a compact JWS with the given key material + alg. */
 async function sign(priv, alg, kid, payloadObj) {
@@ -101,6 +101,11 @@ export async function buildVectors() {
   const missing = { ...STATEMENT, record: { ...RECORD } };
   delete missing.record.selector;
   vectors.push({ name: 'reject-shape-missing-field', deterministic: true, jws: await sign(ED.priv, 'EdDSA', ED.kid, missing), expect: { ok: false, reason: 'malformed-shape' } });
+
+  // issuer-mismatch: a VALID signature over the archive's OLD deployment name — the
+  // exact mistake an implementer pinning the wrong host would make. Its own reject
+  // class (never malformed-shape), per the archive's DX note on zkemail/archive#46.
+  vectors.push({ name: 'reject-issuer-mismatch-old-name', deterministic: true, jws: await sign(ED.priv, 'EdDSA', ED.kid, { ...STATEMENT, iss: 'archive.prove.email' }), expect: { ok: false, reason: 'issuer-mismatch' } });
 
   return {
     note: 'Interop reference vectors for the archive signed-observation format (zkemail/archive#46). TEST-ONLY keys. EdDSA vectors are byte-reproducible; the ES256 and unknown-key vectors are randomized (deterministic:false) and checked by outcome only. Regenerate with scripts/gen-archive-statement-vectors.mjs.',

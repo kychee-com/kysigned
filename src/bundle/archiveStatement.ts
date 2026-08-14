@@ -2,9 +2,9 @@
  * archiveStatement.ts (F-32.8 / AC-167, zkemail/archive#46) — verify a signed DKIM
  * archive observation statement.
  *
- * The consuming half of the signed-observation format kysigned proposed upstream,
- * built ahead of the archive's implementation so the format is executable and interop
- * testing can start now. A statement is a compact JWS whose payload attests one
+ * The consuming half of the signed-observation format kysigned proposed upstream —
+ * built ahead of the archive's implementation, now live in production (statements
+ * issue with `iss: archive.zk.email`). A statement is a compact JWS whose payload attests one
  * archive record (domain, selector, key value, source, first/last-seen) as of an
  * issuance time. This module verifies the signature against the archive's pinned
  * verification keys and returns the parsed record, or a distinct machine-readable
@@ -48,7 +48,15 @@ export type ArchiveStatementReject =
   | 'unsupported-alg' // header alg outside {EdDSA, ES256} (blocks alg-none / HS-confusion)
   | 'unknown-key' // header kid absent from the pinned JWKS
   | 'bad-signature' // signature did not verify (tampered payload, or wrong key)
+  | 'issuer-mismatch' // signature ok, but `iss` is not the archive's pinned issuer name
   | 'malformed-shape'; // signature ok, payload fails the statement schema
+
+/**
+ * The archive's pinned issuer name. `archive.zk.email` and `archive.prove.email` serve
+ * the same deployment; the archive settled `iss` on the former before any signing key
+ * existed, because verifiers pin it and it has to outlive any deployment.
+ */
+const ARCHIVE_STATEMENT_ISSUER = 'archive.zk.email';
 
 export type ArchiveStatementResult =
   | { ok: true; record: ArchiveStatementRecord; iat: number; kid: string }
@@ -73,7 +81,6 @@ function parseStatement(payload: unknown): { record: ArchiveStatementRecord; iat
   if (!payload || typeof payload !== 'object') return null;
   const s = payload as Record<string, unknown>;
   if (s.v !== 1) return null;
-  if (s.iss !== 'archive.prove.email') return null;
   if (typeof s.iat !== 'number' || !Number.isInteger(s.iat)) return null;
   if (!s.record || typeof s.record !== 'object') return null;
   const r = s.record as Record<string, unknown>;
@@ -131,13 +138,24 @@ export async function verifyArchiveStatement(
     return { ok: false, reason: 'bad-signature' };
   }
 
-  // 5. Parse + schema-validate the now-authenticated payload.
+  // 5. Parse the now-authenticated payload; a non-object payload is malformed.
   let payload: unknown;
   try {
     payload = JSON.parse(new TextDecoder().decode(payloadBytes));
   } catch {
     return { ok: false, reason: 'malformed-shape' };
   }
+  if (!payload || typeof payload !== 'object') {
+    return { ok: false, reason: 'malformed-shape' };
+  }
+
+  // 6. Issuer pin — its own reject class, distinct from shape (the archive's DX note:
+  //    a wrong issuer surfacing as "malformed" was confusing to debug).
+  if ((payload as Record<string, unknown>).iss !== ARCHIVE_STATEMENT_ISSUER) {
+    return { ok: false, reason: 'issuer-mismatch' };
+  }
+
+  // 7. Schema-validate the rest of the statement.
   const parsed = parseStatement(payload);
   if (!parsed) return { ok: false, reason: 'malformed-shape' };
 
