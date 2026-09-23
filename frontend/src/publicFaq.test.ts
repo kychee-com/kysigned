@@ -21,11 +21,15 @@ describe('public FAQ #email-setup (F-45.4 / AC-274)', () => {
   it('the signer part, the administrator section, the provider steps, the alias note', () => {
     for (const re of [
       /did everything right/i, /one-time/i, /Please turn on DKIM email signing/, /sign sooner/i,
-      /Why turn this on \(even if you never use kysigned\)/i, /inbox/i, /impersonat/i, /DMARC/, /security (questionnaires|reviews)/i,
+      /inbox/i, /impersonat/i, /DMARC/, /security (questionnaires|reviews)/i,
       /Google Admin console/, /Start authentication/, /Defender portal/, /CNAME/, /generate a key/i, /alias/i,
     ]) {
       expect(section, String(re)).toMatch(re)
     }
+  })
+
+  it('heads the administrator section exactly as the spec quotes it (lowercase kysigned)', () => {
+    expect(section).toContain('Why turn this on (even if you never use kysigned)')
   })
 
   it('is operator-free and has no em or en dash', () => {
