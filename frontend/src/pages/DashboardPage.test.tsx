@@ -51,6 +51,39 @@ afterEach(() => vi.unstubAllEnvs());
 
 const renderPage = () => render(<MemoryRouter><DashboardPage /></MemoryRouter>);
 
+// F-45.5 / AC-275 — the list marks every envelope with a needs-attention signer, so
+// the creator notices without opening each one: on the collapsed document card AND
+// on the envelope row once expanded.
+describe('DashboardPage — needs-attention marker (F-45.5 / AC-275)', () => {
+  function withAttention(flag: boolean) {
+    const docs = DOCS.map((d) =>
+      d.documentName === 'MSA' ? { ...d, envelopes: d.envelopes.map((e) => ({ ...e, needs_attention: flag })) } : d,
+    );
+    apiGetMock.mockImplementation((url: string) =>
+      url.startsWith('/v1/documents')
+        ? Promise.resolve(docs)
+        : Promise.resolve({ balance_usd_micros: 5_000_000, envelope_cost_usd_micros: 250_000, sufficient_for_envelope: true }),
+    );
+  }
+
+  it('marks the document card and the envelope row when an envelope needs attention', async () => {
+    withAttention(true);
+    renderPage();
+    await waitFor(() => expect(screen.getByText('MSA')).toBeInTheDocument());
+    const card = screen.getByTestId('doc-attention-' + 'b'.repeat(64));
+    expect(card.textContent).toMatch(/needs attention/i);
+    fireEvent.click(screen.getByText('MSA'));
+    expect(await screen.findByTestId('env-attention-env-uuid-2222')).toBeInTheDocument();
+  });
+
+  it('shows no marker when nothing needs attention', async () => {
+    withAttention(false);
+    renderPage();
+    await waitFor(() => expect(screen.getByText('MSA')).toBeInTheDocument());
+    expect(screen.queryByText(/needs attention/i)).toBeNull();
+  });
+});
+
 describe('DashboardPage — list display (AC-30)', () => {
   it('shows the Open/Completed/Voided status-summary header', async () => {
     renderPage();

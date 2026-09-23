@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useLocation, useNavigate, Link } from 'react-router-dom'
 import { apiGet, apiPost, apiPatch, apiDelete, type EnvelopeStatus } from '../lib/api'
 import { trackEventOnce, GA_EVENTS } from '../lib/analytics'
+import { rejectionGuidance } from '../lib/rejectionCopy'
 
 export function EnvelopeDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -296,8 +297,12 @@ export function EnvelopeDetailPage() {
 
         <div className="space-y-4">
           {data.signers.map((s, i) => {
+            // F-45.5 — the API sets last_rejection only while this signer still owes a
+            // signature on an open envelope, so it outranks pending / awaiting re-sign.
+            const guidance = s.last_rejection ? rejectionGuidance(s.last_rejection.class) : null
             const badge =
               s.undeliverable_at && s.status === 'pending' ? { label: 'undeliverable', cls: 'bg-red-100 text-red-700' } :
+              guidance ? { label: 'needs attention', cls: 'bg-amber-100 text-amber-900 ring-1 ring-amber-300' } :
               s.status === 'signed' ? { label: 'signed', cls: 'bg-green-100 text-green-700' } :
               s.status === 'superseded' ? { label: 'awaiting re-sign', cls: 'bg-orange-100 text-orange-700' } :
               s.status === 'declined' ? { label: 'declined', cls: 'bg-red-100 text-red-700' } :
@@ -323,6 +328,20 @@ export function EnvelopeDetailPage() {
                     )}
                   </div>
                 </div>
+
+                {guidance && !isEditing && (
+                  <div data-testid="signer-attention" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 space-y-1">
+                    <p>{guidance.reason}</p>
+                    <p>{guidance.tell}</p>
+                    {guidance.faqHref && (
+                      <a href={guidance.faqHref} target="_blank" rel="noopener noreferrer"
+                         className="inline-flex items-center min-h-[44px] md:min-h-0 font-medium underline">
+                        How to switch it on (a guide you can share)
+                      </a>
+                    )}
+                    <p>Or send the request to a different address of theirs: use <strong>Edit</strong> on this signer.</p>
+                  </div>
+                )}
 
                 {s.status === 'signed' && !isEditing && (
                   <div className="mt-2 text-xs text-gray-500 space-y-0.5">

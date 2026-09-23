@@ -33,6 +33,7 @@ type Signer = {
   email: string; name: string; on_behalf_of: string | null; status: string;
   signing_method: string | null; signed_at: string | null; undeliverable_at: string | null;
   signing_domain?: string | null; signing_selector?: string | null; eml_sha256?: string | null;
+  last_rejection?: { class: string; at: string } | null;
 };
 function signer(over: Partial<Signer>): Signer {
   return { email: 'a@x.com', name: 'Alice', on_behalf_of: null, status: 'pending', signing_method: null, signed_at: null, undeliverable_at: null, ...over };
@@ -203,6 +204,61 @@ describe('signer state badges (F-11.2)', () => {
     expect(await screen.findByText('awaiting re-sign')).toBeInTheDocument();
     expect(screen.queryByText('superseded')).toBeNull();
     expect(screen.getByText('undeliverable')).toBeInTheDocument();
+  });
+});
+
+// F-45.5 / AC-275 — a signer whose last forward was rejected is visibly blocked,
+// with the plain reason, what to tell them, and the change-address option.
+describe('needs-attention state (F-45.5 / AC-275)', () => {
+  const AT = new Date('2026-09-23T10:00:00Z').toISOString();
+  const EM_DASH = String.fromCodePoint(0x2014);
+  const EN_DASH = String.fromCodePoint(0x2013);
+
+  it('Google Workspace no-DKIM: badge, admin/DKIM guidance, the Google FAQ link (44px), and the change-address hint', async () => {
+    mockEnvelope(envelope({
+      signers: [signer({ email: 'a@x.com', name: 'Alice', last_rejection: { class: 'google_workspace_no_dkim', at: AT } })],
+    }));
+    renderPage();
+    expect(await screen.findByText('needs attention')).toBeInTheDocument();
+    expect(screen.queryByText('pending')).toBeNull();
+    const block = screen.getByTestId('signer-attention');
+    expect(block.textContent).toMatch(/Google Workspace/);
+    expect(block.textContent).toMatch(/DKIM/);
+    expect(block.textContent).toMatch(/different address/i);
+    expect(block.textContent).toMatch(/Edit/);
+    const link = screen.getByRole('link', { name: /how to switch it on/i });
+    expect(link.getAttribute('href')).toBe('/faq#email-setup-google');
+    expect(link.className).toMatch(/min-h-\[44px\]/);
+    expect(block.textContent!.includes(EM_DASH) || block.textContent!.includes(EN_DASH)).toBe(false);
+  });
+
+  it('a self-fixable class shows what went wrong and that the signer was already told', async () => {
+    mockEnvelope(envelope({
+      signers: [signer({ email: 'a@x.com', name: 'Alice', last_rejection: { class: 'wrong_phrase', at: AT } })],
+    }));
+    renderPage();
+    const block = await screen.findByTestId('signer-attention');
+    expect(block.textContent).toMatch(/didn.t start with .I sign this document./);
+    expect(block.textContent).toMatch(/already emailed them/);
+    expect(screen.queryByRole('link', { name: /how to switch it on/i })).toBeNull();
+  });
+
+  it('a re-requested (superseded) signer with a rejection needs attention too', async () => {
+    mockEnvelope(envelope({
+      signers: [signer({ email: 'a@x.com', name: 'Alice', status: 'superseded', last_rejection: { class: 'microsoft_365_no_dkim', at: AT } })],
+    }));
+    renderPage();
+    expect(await screen.findByText('needs attention')).toBeInTheDocument();
+    expect(screen.queryByText('awaiting re-sign')).toBeNull();
+    expect(screen.getByRole('link', { name: /how to switch it on/i }).getAttribute('href')).toBe('/faq#email-setup-microsoft');
+  });
+
+  it('no rejection → no needs-attention state', async () => {
+    mockEnvelope(envelope());
+    renderPage();
+    await screen.findByText('Signers');
+    expect(screen.queryByText('needs attention')).toBeNull();
+    expect(screen.queryByTestId('signer-attention')).toBeNull();
   });
 });
 

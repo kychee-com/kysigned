@@ -11,7 +11,11 @@ interface EnvelopeBrief {
   status: string
   created_at: string
   completed_at: string | null
+  /** F-45.5 — open, with at least one signer whose last forward was rejected. */
+  needs_attention?: boolean
 }
+
+const ATTENTION_PILL = 'text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-900 ring-1 ring-amber-300'
 
 interface DocumentSummary {
   documentHash: string
@@ -279,6 +283,9 @@ export function DashboardPage() {
                   <p className="text-xs text-gray-600 mt-1">Sent {fmtDate(doc.envelopes[0]?.created_at ?? null)}</p>
                 </div>
                 <div className="flex items-center gap-3">
+                  {doc.envelopes.some((e) => e.needs_attention) && (
+                    <span data-testid={`doc-attention-${doc.documentHash}`} className={ATTENTION_PILL}>needs attention</span>
+                  )}
                   {/* Affirmative green when any progress / complete (GH#2). */}
                   <span className={`text-xs ${doc.signedCount > 0 ? 'text-green-700 font-medium' : 'text-gray-600'}`}>
                     {doc.signedCount}/{doc.totalSigners} signed{complete ? ' ✓' : ''}
@@ -301,8 +308,13 @@ export function DashboardPage() {
                         {fmtDate(env.created_at)}
                         {env.completed_at ? ` → completed ${fmtDate(env.completed_at)}` : ''}
                       </span>
-                      <span className={`px-2 py-0.5 rounded border ${statusMeta(env.status).cls}`}>
-                        {statusMeta(env.status).label}
+                      <span className="flex items-center gap-2">
+                        {env.needs_attention && (
+                          <span data-testid={`env-attention-${env.id}`} className={ATTENTION_PILL}>needs attention</span>
+                        )}
+                        <span className={`px-2 py-0.5 rounded border ${statusMeta(env.status).cls}`}>
+                          {statusMeta(env.status).label}
+                        </span>
                       </span>
                     </Link>
                   ))}

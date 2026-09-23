@@ -192,6 +192,8 @@ export interface EnvelopeStatus {
     signing_domain?: string | null
     signing_selector?: string | null
     eml_sha256?: string | null
+    /** F-45.6 — the latest unresolved rejection of a signer who still owes a signature. */
+    last_rejection?: { class: string; at: string } | null
   }>
 }
 
