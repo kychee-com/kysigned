@@ -3,7 +3,7 @@
   "info": {
     "title": "kysigned API",
     "description": "Self-verifying e-signatures: create an envelope from a PDF plus signers; each human signer signs by forwarding one email (their provider DKIM-signs it); every party receives an offline-verifiable evidence bundle. This document describes the public /v1 surface of a kysigned instance. Machine-readable errors: every error response is `{ \"error\": string, \"code\": string }` where `code` is a stable taxonomy value (`auth_*`, `csrf_*`, `payment_*`, `validation_*`, `state_*`, `not_found`, `rate_size_*`, `idempotency_*`, `internal_*`). Completion webhooks: pass `callback_url` at create; deliveries are signed with `X-Kysigned-Signature: t=<unix>,v1=<hex hmac-sha256(callback_secret, \"<t>.<rawBody>\")>` — verify by recomputing the HMAC over `t + \".\" + rawBody` with the `callback_secret` returned once in the create response, comparing constant-time, and rejecting timestamps outside your tolerance window.",
-    "version": "0.71.0",
+    "version": "0.72.0",
     "license": {
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
@@ -245,6 +245,31 @@
                 "delivery_status": {
                   "type": "string",
                   "description": "pending | delivered | undeliverable — whether the signing-request email reached the signer (distinct from signing status)"
+                },
+                "last_rejection": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "description": "null, or the signer's latest unresolved rejection while they still owe a signature on an open envelope (cleared when they sign, are edited, or the envelope closes). google_workspace_no_dkim / microsoft_365_no_dkim mean the signer's organization has no DKIM switched on: forwarding again cannot help until their email administrator turns it on, or the creator changes the signer's address.",
+                  "properties": {
+                    "class": {
+                      "type": "string",
+                      "enum": [
+                        "wrong_phrase",
+                        "attachment_missing",
+                        "attachment_modified",
+                        "sender_auth",
+                        "dkim_unverifiable",
+                        "google_workspace_no_dkim",
+                        "microsoft_365_no_dkim"
+                      ]
+                    },
+                    "at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
                 }
               }
             }
@@ -799,7 +824,60 @@
         ],
         "responses": {
           "200": {
-            "description": "Documents"
+            "description": "Documents grouped by source upload, each with its envelopes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "documentHash": {
+                        "type": "string"
+                      },
+                      "documentName": {
+                        "type": "string"
+                      },
+                      "totalSigners": {
+                        "type": "integer"
+                      },
+                      "signedCount": {
+                        "type": "integer"
+                      },
+                      "envelopes": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string"
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "completed_at": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "format": "date-time"
+                            },
+                            "needs_attention": {
+                              "type": "boolean",
+                              "description": "true when the envelope is open and at least one signer's latest forward was rejected (that signer's last_rejection is set)"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }

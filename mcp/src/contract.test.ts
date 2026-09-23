@@ -269,6 +269,26 @@ describe('check_envelope_status', () => {
     assert.equal(parsed.signers[2]!.delivery_status, 'delivered');
   });
 
+  it("F-45.6 / AC-276 — the description names last_rejection and a blocked signer's class passes through verbatim", async () => {
+    const { tools } = await client.listTools();
+    const t = tools.find((x) => x.name === 'check_envelope_status');
+    assert.ok(t, 'check_envelope_status not registered');
+    assert.match(String(t!.description), /last_rejection/);
+    assert.match(String(t!.description), /google_workspace_no_dkim/);
+    assert.match(String(t!.description), /microsoft_365_no_dkim/);
+    const envelope = {
+      envelope_id: 'env-2',
+      status: 'active',
+      signers: [{
+        email: 'blocked@x.com', status: 'pending', delivery_status: 'pending',
+        last_rejection: { class: 'google_workspace_no_dkim', at: '2026-09-23T10:00:00.000Z' },
+      }],
+    };
+    queue.push({ status: 200, body: envelope });
+    const parsed = JSON.parse(await callTool('check_envelope_status', { envelope_id: 'env-2' })) as typeof envelope;
+    assert.deepEqual(parsed.signers[0]!.last_rejection, envelope.signers[0]!.last_rejection);
+  });
+
   it('#119 — a non-ok response is a coded isError result', async () => {
     queue.push({ status: 404, body: { error: 'Envelope not found', code: 'not_found' } });
     const r = await callToolFull('check_envelope_status', { envelope_id: 'nope' });

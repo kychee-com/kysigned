@@ -122,6 +122,9 @@ server.registerTool(
   {
     description:
       "Check a signing envelope: per-signer signing status and times, plus each signer's delivery_status (pending / delivered / undeliverable — whether the signing-request email reached them, distinct from whether they signed). " +
+      "Each signer also carries last_rejection: null, or { class, at } when their latest forward was rejected and they still owe a signature on an open envelope. " +
+      'class is one of wrong_phrase, attachment_missing, attachment_modified, sender_auth, dkim_unverifiable, or, when the signer cannot fix it by forwarding again because their ' +
+      "organization's domain has no DKIM switched on, google_workspace_no_dkim / microsoft_365_no_dkim (their email administrator must turn it on, or the creator can change the signer's address). " +
       'Accepts EITHER the ambient KYSIGNED_AUTHORIZATION creator key OR a per-envelope tracking_token (ktt_…, ' +
       'returned by every create — F-30.7): the token needs NO API key and reads exactly its own envelope, so the ' +
       'no-key wallet path polls through the same tool it created with. An explicit tracking_token wins over the ambient key.',

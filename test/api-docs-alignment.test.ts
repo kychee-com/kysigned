@@ -203,6 +203,20 @@ describe('API Documentation Alignment', () => {
     }
   });
 
+  it('F-45.6 / F-45.5 — openapi documents each signer\'s last_rejection and each envelope brief\'s needs_attention', { skip: !openapiExists ? 'openapi.json does not exist yet' : undefined }, () => {
+    const spec = JSON.parse(readFileSync(OPENAPI, 'utf-8')) as any;
+    const signerProps = Object.values(spec.components?.schemas ?? {})
+      .map((s: any) => s?.properties?.signers?.items?.properties)
+      .find((p: any) => p?.delivery_status);
+    assert.ok(signerProps?.last_rejection, 'the signer schema documents last_rejection');
+    const classes = signerProps.last_rejection.properties?.class?.enum ?? [];
+    for (const c of ['wrong_phrase', 'google_workspace_no_dkim', 'microsoft_365_no_dkim']) {
+      assert.ok(classes.includes(c), `last_rejection.class enum includes ${c}`);
+    }
+    const brief = spec.paths?.['/v1/documents']?.get?.responses?.['200']?.content?.['application/json']?.schema?.items?.properties?.envelopes?.items?.properties;
+    assert.equal(brief?.needs_attention?.type, 'boolean', 'the documents envelope brief documents needs_attention');
+  });
+
   it('llms.txt documents ONLY honored auth (bearer keys), never the session-as-Authorization lie', { skip: !llmsExists ? 'llms.txt missing' : undefined }, () => {
     const t = readFileSync(LLMS_TXT, 'utf-8');
     assert.ok(!/pass it as the `Authorization` header/.test(t), 'the old session-as-Authorization instruction must be gone');

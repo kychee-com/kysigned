@@ -21,6 +21,8 @@ import {
   markSignerUndeliverable,
   markEnvelopePdfDeleted,
   setEnvelopeAutoClose,
+  isEnvelopeOpen,
+  signerNeedsAttention,
 } from '../db/envelopes.js';
 import type { EmitAppEvent } from '../integrations/appEvents.js';
 import type { InternalSubjectGate } from '../integrations/internalSubject.js';
@@ -880,6 +882,13 @@ export async function handleGetEnvelope(
           // undeliverable), distinct from the signing `status`. Surfaced verbatim by the
           // MCP status tool so an agent can tell a bounced invite from a normal pending.
           delivery_status: deliveryStatus(s),
+          // F-45.6 / AC-276 — the signer's latest unresolved rejection (the bounce
+          // class + when), so an API/MCP consumer can tell a blocked signer from a
+          // slow one. Null once they sign, after an edit, or when the envelope closed.
+          last_rejection:
+            isEnvelopeOpen(envelope) && signerNeedsAttention(s)
+              ? { class: s.last_rejection_class, at: s.last_rejection_at }
+              : null,
           completion_email_provider_msg_id: s.completion_email_provider_msg_id ?? null,
           // F-11 — per-signer evidence (mirrors the bundle signature page); null
           // until the signer has signed and the artifact exists.
@@ -1196,6 +1205,8 @@ export async function handleListDocuments(
         status: e.status,
         created_at: e.created_at,
         completed_at: e.completed_at,
+        // F-45.5 / AC-275 — open, with at least one signer whose last forward was rejected.
+        needs_attention: d.attentionEnvelopeIds.includes(e.id),
       })),
     })),
   };

@@ -815,6 +815,22 @@ export interface DocumentGroup {
   totalSigners: number;
   signedCount: number;
   envelopes: Envelope[];
+  /** F-45.5 — ids of this group's open envelopes that have a needs-attention signer. */
+  attentionEnvelopeIds: string[];
+}
+
+/** F-45.5 — an envelope still accepting signatures (open = active or awaiting seal). */
+export function isEnvelopeOpen(envelope: Pick<Envelope, 'status'>): boolean {
+  return envelope.status === 'active' || envelope.status === 'awaiting_seal';
+}
+
+/**
+ * F-45.5 / F-45.6 — a signer whose latest forward was rejected and who still owes a
+ * signature (`pending`, or `superseded` = re-requested after an edit). Callers also
+ * require the envelope to be open.
+ */
+export function signerNeedsAttention(signer: Pick<EnvelopeSigner, 'status' | 'last_rejection_class'>): boolean {
+  return (signer.status === 'pending' || signer.status === 'superseded') && !!signer.last_rejection_class;
 }
 
 /**
@@ -858,6 +874,7 @@ export async function getDocumentsByOwner(
   for (const [hash, envs] of groups) {
     let totalSigners = 0;
     let signedCount = 0;
+    const attentionEnvelopeIds: string[] = [];
 
     for (const env of envs) {
       const signerResult = await pool.query(
@@ -867,6 +884,7 @@ export async function getDocumentsByOwner(
       const signers = signerResult.rows.map(rehydrateSigner);
       totalSigners += signers.length;
       signedCount += signers.filter(s => s.status === 'signed').length;
+      if (isEnvelopeOpen(env) && signers.some(signerNeedsAttention)) attentionEnvelopeIds.push(env.id);
     }
 
     results.push({
@@ -875,6 +893,7 @@ export async function getDocumentsByOwner(
       totalSigners,
       signedCount,
       envelopes: envs,
+      attentionEnvelopeIds,
     });
   }
 

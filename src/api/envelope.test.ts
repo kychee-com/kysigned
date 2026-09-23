@@ -935,6 +935,43 @@ describe('Envelope API — from spec acceptance criteria', () => {
       assert.equal(s.eml_sha256, 'abc123def');
     });
 
+    it("exposes each unsigned signer's latest rejection as last_rejection (F-45.6 / AC-276)", async () => {
+      await handleCreateEnvelope(
+        { pool: db.pool, emailProvider: email, baseUrl: 'https://x.com', senderIdentity: 'owner@x.com' },
+        { document_name: 'NDA', pdf_base64: TEST_FIXTURE_PDF_B64, signers: [
+          { email: 'blocked@b.com', name: 'B' },
+          { email: 'resign@b.com', name: 'R' },
+          { email: 'signed@b.com', name: 'S' },
+          { email: 'clean@b.com', name: 'C' },
+        ] },
+      );
+      const envId = db.envelopes[0].id;
+      const at = new Date('2026-09-23T10:00:00Z');
+      const row = (e: string) => db.signers.find((s) => s.email === e)!;
+      Object.assign(row('blocked@b.com'), { last_rejection_class: 'google_workspace_no_dkim', last_rejection_at: at });
+      Object.assign(row('resign@b.com'), { status: 'superseded', last_rejection_class: 'wrong_phrase', last_rejection_at: at });
+      // A stale class on a signed row must never surface (signing clears it; belt-and-braces).
+      Object.assign(row('signed@b.com'), { status: 'signed', signed_at: at, last_rejection_class: 'wrong_phrase', last_rejection_at: at });
+      const result = await handleGetEnvelope({ pool: db.pool, baseUrl: 'https://x.com' }, envId, 'owner@x.com');
+      const by = (e: string) => result.body.signers!.find((x: any) => x.email === e)! as any;
+      assert.deepEqual(by('blocked@b.com').last_rejection, { class: 'google_workspace_no_dkim', at });
+      assert.deepEqual(by('resign@b.com').last_rejection, { class: 'wrong_phrase', at });
+      assert.equal(by('signed@b.com').last_rejection, null);
+      assert.equal(by('clean@b.com').last_rejection, null);
+    });
+
+    it('last_rejection is null once the envelope is closed (F-45.5)', async () => {
+      await handleCreateEnvelope(
+        { pool: db.pool, emailProvider: email, baseUrl: 'https://x.com', senderIdentity: 'owner@x.com' },
+        { document_name: 'NDA', pdf_base64: TEST_FIXTURE_PDF_B64, signers: [{ email: 'blocked@b.com', name: 'B' }] },
+      );
+      const envId = db.envelopes[0].id;
+      Object.assign(db.signers[0], { last_rejection_class: 'microsoft_365_no_dkim', last_rejection_at: new Date() });
+      db.envelopes[0].status = 'voided';
+      const result = await handleGetEnvelope({ pool: db.pool, baseUrl: 'https://x.com' }, envId, 'owner@x.com');
+      assert.equal((result.body.signers![0] as any).last_rejection, null);
+    });
+
     it('persists an autoClose=false (manual-seal) choice at creation (F-24.3)', async () => {
       await handleCreateEnvelope(
         { pool: db.pool, emailProvider: email, baseUrl: 'https://x.com', senderIdentity: 'owner@x.com' },
@@ -1428,6 +1465,25 @@ describe('Envelope API — from spec acceptance criteria', () => {
       const result = await handleListDocuments({ pool: db.pool }, '0xNobody');
       assert.equal(result.status, 200);
       assert.equal(result.body.length, 0);
+    });
+
+    it('flags each OPEN envelope that has a needs-attention signer (F-45.5 / AC-275)', async () => {
+      const ctx = { pool: db.pool, emailProvider: email, baseUrl: 'https://kysigned.com', senderIdentity: 'owner@x.com' };
+      await handleCreateEnvelope(ctx, { pdf_base64: TEST_FIXTURE_PDF_B64, document_name: 'Doc', signers: [{ email: 'a@t.com', name: 'A' }] });
+      await handleCreateEnvelope(ctx, { pdf_base64: TEST_FIXTURE_PDF_B64, document_name: 'Doc', signers: [{ email: 'b@t.com', name: 'B' }] });
+      const [envA, envB] = [db.envelopes[0].id, db.envelopes[1].id];
+      Object.assign(db.signers.find((s) => s.email === 'a@t.com')!, { last_rejection_class: 'wrong_phrase', last_rejection_at: new Date() });
+      const flags = async () => {
+        const res = await handleListDocuments({ pool: db.pool }, 'owner@x.com');
+        const briefs = res.body.flatMap((d: any) => d.envelopes) as Array<{ id: string; needs_attention: boolean }>;
+        return (id: string) => briefs.find((e) => e.id === id)!.needs_attention;
+      };
+      const open = await flags();
+      assert.equal(open(envA), true);
+      assert.equal(open(envB), false);
+      db.envelopes[0].status = 'completed';
+      const closed = await flags();
+      assert.equal(closed(envA), false, 'a closed envelope never needs attention');
     });
   });
 
