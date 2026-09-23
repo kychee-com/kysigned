@@ -30,7 +30,7 @@ import {
   markSignerAcceptanceNotified,
   getActiveEnvelopesWithPendingSigner,
 } from '../../db/envelopes.js';
-import { templates, type RejectionReason } from '../../email/templates.js';
+import { templates, type GenericRejectionReason } from '../../email/templates.js';
 import { processForward, type ForwardOutcome } from './processForward.js';
 import { assembleSignatureArtifact, type ArtifactAssemblyDeps } from './artifactAssembly.js';
 import { scheduleTimestampUpgrade } from './timestampSchedule.js';
@@ -370,7 +370,7 @@ async function resolveContext(pool: DbPool, envelopeId: string, signerEmail: str
 }
 
 /** Fold a fine-grained rejection code into the user-facing bounce class (AC-20). */
-export function rejectionReasonForCode(code: string | null): RejectionReason {
+export function rejectionReasonForCode(code: string | null): GenericRejectionReason {
   switch (code) {
     case 'attachment_missing':
       return 'attachment_missing';

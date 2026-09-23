@@ -18,13 +18,25 @@ export const REQUIRED_INTENT_LINE = 'I sign this document';
  * pipeline emits finer-grained `ForwardRejectionCode`s; the notifier folds them
  * into these user-facing classes (see `forwardNotifier.rejectionReasonForCode`).
  */
-export type RejectionReason =
+export type GenericRejectionReason =
   | 'wrong_phrase' // bad / missing first-line intent phrase
   | 'attachment_missing' // the canonical PDF wasn't attached
   | 'attachment_modified' // the attached PDF didn't byte-match the original
   | 'sender_auth' // SES SPF / DMARC hard-fail (spoofing guard)
   | 'dkim_unverifiable' // the forward's DKIM signature didn't verify
   | 'envelope_inactive'; // completed / voided / expired — no new signatures
+
+/**
+ * F-45.1 — the signer's own domain has no DKIM switched on and the provider signed
+ * under its fallback identity. Retrying cannot help, so these get their own bounce
+ * (`providerNoDkimBounce`), not the generic copy.
+ */
+export type ProviderNoDkimReason = 'google_workspace_no_dkim' | 'microsoft_365_no_dkim';
+
+export type RejectionReason = GenericRejectionReason | ProviderNoDkimReason;
+
+/** Rejection classes the creator is told about in the general notice (F-45.3 (b)). */
+export type CreatorNoticeReason = Exclude<GenericRejectionReason, 'envelope_inactive'>;
 
 function wrap(title: string, body: string): string {
   return `<!DOCTYPE html>
@@ -66,6 +78,36 @@ function textWrap(body: string): string {
 function antiLinkify(addr: string): string {
   const dot = addr.lastIndexOf('.');
   return dot < 0 ? addr : `${addr.slice(0, dot)}<span>.</span>${addr.slice(dot + 1)}`;
+}
+
+/** Escape a creator/signer-supplied value for an HTML body (plain-text parts stay literal). */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** F-45.2 / F-45.3 (a) — per-provider wording + the FAQ section the admin needs. */
+const PROVIDER_NO_DKIM: Record<ProviderNoDkimReason, { name: string; adminLocation: string; faqAnchor: string }> = {
+  google_workspace_no_dkim: { name: 'Google Workspace', adminLocation: 'the Google Admin console', faqAnchor: 'email-setup-google' },
+  microsoft_365_no_dkim: { name: 'Microsoft 365', adminLocation: 'the Microsoft Defender portal', faqAnchor: 'email-setup-microsoft' },
+};
+
+/** F-45.3 (b) — the creator's one-line, plain-words reason per rejection class. */
+const CREATOR_REASON_LINES: Record<CreatorNoticeReason, string> = {
+  wrong_phrase: `the first line of their forward wasn’t “${REQUIRED_INTENT_LINE}”`,
+  attachment_missing: 'the document wasn’t attached to their forward',
+  attachment_modified: 'the attached document had been changed',
+  sender_auth: 'their email didn’t pass our sender checks',
+  dkim_unverifiable: 'their email provider’s signature on the forward didn’t verify',
+};
+
+/** The filled status-page button shared by the F-45.3 creator notices. */
+function statusButton(link: string): string {
+  return `<table cellpadding="0" cellspacing="0" style="margin:4px 0 8px;"><tr><td style="background:#1a1a2e;border-radius:6px;padding:12px 24px;"><a href="${link}" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">View this document’s status</a></td></tr></table>`;
 }
 
 export const templates = {
@@ -253,7 +295,7 @@ export const templates = {
     signerName: string;
     documentName: string;
     operatorDomain: string;
-    reason: RejectionReason;
+    reason: GenericRejectionReason;
     howItWorksLink: string;
     faqHowToSignLink: string;
     faqWrongEmailLink: string;
@@ -261,7 +303,7 @@ export const templates = {
     // Per-class copy: headline + what-happened + how-to-fix, and which standard
     // reminder blocks (the required intent line, the keep-the-attachment note) to show.
     const COPY: Record<
-      RejectionReason,
+      GenericRejectionReason,
       { headline: string; what: string; fix: string; showIntentLine: boolean; showAttachment: boolean }
     > = {
       wrong_phrase: {
@@ -694,6 +736,119 @@ export const templates = {
       `),
       text: textWrap(
         `Hi ${vars.senderName},\n\nWe couldn't deliver the signing request for "${vars.documentName}" to ${vars.signerEmail}. The address bounced.\n\nDouble-check the address. On the document's page you can fix it: remove this signer and add them back at the corrected address, or remove them if they're no longer needed.\n\nManage this document: ${vars.dashboardLink}`
+      ),
+      from: `notifications@${vars.operatorDomain}`,
+      replyTo: `info@${vars.operatorDomain}`,
+    };
+  },
+
+  // F-45.2 / AC-272 — the signer's bounce when their organization's Google Workspace
+  // or Microsoft 365 domain has no DKIM switched on. Re-forwarding cannot help, so
+  // this says so plainly, gives a copy-ready line for their email administrator, and
+  // links that provider's FAQ steps. No transport advice, no em or en dash.
+  providerNoDkimBounce(vars: {
+    signerName: string;
+    documentName: string;
+    operatorDomain: string;
+    reason: ProviderNoDkimReason;
+    /** The signer's own email domain (the one that needs DKIM switched on). */
+    signerDomain: string;
+    /** Who sent the document (named in the sign-sooner fallback). */
+    senderName: string;
+  }) {
+    const p = PROVIDER_NO_DKIM[vars.reason];
+    const faqLink = `https://${vars.operatorDomain}/faq#${p.faqAnchor}`;
+    const domain = escapeHtml(vars.signerDomain);
+    return {
+      subject: `Action needed: your signature on "${vars.documentName}" wasn’t accepted`,
+      html: wrap(`Action Needed`, `
+        <p style="margin:0 0 15px;">Hi ${escapeHtml(vars.signerName)},</p>
+        <p style="margin:0 0 8px;font-size:16px;font-weight:600;color:#1a1a2e;">Your email needs a one-time setup before you can sign</p>
+        <p style="margin:0 0 15px;">We received your forward for <strong>“${escapeHtml(vars.documentName)}”</strong>, and you did everything right. We couldn’t accept it because your organization’s email (<strong>${domain}</strong>, on ${p.name}) isn’t set up to prove that its messages really come from ${domain}. This is a one-time setting that only your email administrator can switch on, so forwarding again won’t help until it’s on.</p>
+        <div style="margin:18px 0 8px;border-top:1px solid #e5e7eb;padding-top:16px;">
+          <span style="display:inline-block;background:#1a1a2e;color:#fff;font-size:11px;font-weight:700;padding:2px 7px;border-radius:3px;">WHAT TO DO</span>
+        </div>
+        <p style="margin:10px 0 12px;font-size:14px;color:#222;">Send this to whoever manages your organization’s ${p.name}:</p>
+        <p style="margin:0 0 12px;padding:10px 14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;font-size:14px;color:#14532d;">Please turn on DKIM email signing for ${domain} in ${p.adminLocation}. Here’s how: <a href="${faqLink}" style="color:#14532d;">${faqLink}</a></p>
+        <p style="margin:0 0 12px;font-size:14px;color:#222;">Once they confirm it’s on, forward the original signing email again, exactly as before.</p>
+        <p style="margin:0 0 18px;font-size:13px;color:#444;">Need to sign sooner? Ask ${escapeHtml(vars.senderName)} to send the document to a different email address of yours.</p>
+        <table cellpadding="0" cellspacing="0" style="margin:0 0 8px;"><tr><td style="border:1px solid #1a1a2e;border-radius:6px;padding:10px 22px;"><a href="${faqLink}" style="color:#1a1a2e;text-decoration:none;font-weight:600;font-size:14px;">How your administrator switches it on</a></td></tr></table>
+      `),
+      text: textWrap(
+        [
+          `Hi ${vars.signerName},`,
+          'Your email needs a one-time setup before you can sign',
+          `We received your forward for “${vars.documentName}”, and you did everything right. We couldn’t accept it because your organization’s email (${vars.signerDomain}, on ${p.name}) isn’t set up to prove that its messages really come from ${vars.signerDomain}. This is a one-time setting that only your email administrator can switch on, so forwarding again won’t help until it’s on.`,
+          `WHAT TO DO\nSend this to whoever manages your organization’s ${p.name}:\n\n    Please turn on DKIM email signing for ${vars.signerDomain} in ${p.adminLocation}. Here’s how: ${faqLink}`,
+          'Once they confirm it’s on, forward the original signing email again, exactly as before.',
+          `Need to sign sooner? Ask ${vars.senderName} to send the document to a different email address of yours.`,
+        ].join('\n\n'),
+      ),
+      from: `notifications@${vars.operatorDomain}`,
+      replyTo: `info@${vars.operatorDomain}`,
+    };
+  },
+
+  // F-45.3 (a) / AC-273 — tell the CREATOR, once per signer, that the signer's
+  // organization has no DKIM switched on, that the signer did nothing wrong and was
+  // told, and the two ways forward (their admin, or a different address).
+  signerBlockedCreatorNotice(vars: {
+    signerName: string;
+    signerEmail: string;
+    documentName: string;
+    operatorDomain: string;
+    reason: ProviderNoDkimReason;
+    signerDomain: string;
+    statusPageLink: string;
+  }) {
+    const p = PROVIDER_NO_DKIM[vars.reason];
+    const faqLink = `https://${vars.operatorDomain}/faq#${p.faqAnchor}`;
+    return {
+      subject: `${vars.signerName} can’t sign "${vars.documentName}" until their email is set up`,
+      html: wrap(`Signer Needs Setup`, `
+        <p style="margin:0 0 15px;"><strong>${escapeHtml(vars.signerName)}</strong> (${escapeHtml(vars.signerEmail)}) tried to sign <strong>“${escapeHtml(vars.documentName)}”</strong>, but we couldn’t accept it. Their organization’s ${p.name} email (${escapeHtml(vars.signerDomain)}) isn’t set up to prove its messages are genuine, so no signature from that address can count yet.</p>
+        <p style="margin:0 0 15px;">They did nothing wrong, and we’ve sent them instructions: their email administrator needs to switch on a one-time setting called DKIM in ${p.adminLocation}.</p>
+        <p style="margin:0 0 18px;font-size:14px;color:#222;"><strong>How you can help:</strong> share this guide with them: <a href="${faqLink}" style="color:#1a1a2e;">${faqLink}</a>. Or, if another address of theirs works for you, change their email on the document’s page and we’ll send them a fresh request.</p>
+        ${statusButton(vars.statusPageLink)}
+      `),
+      text: textWrap(
+        [
+          `${vars.signerName} (${vars.signerEmail}) tried to sign “${vars.documentName}”, but we couldn’t accept it. Their organization’s ${p.name} email (${vars.signerDomain}) isn’t set up to prove its messages are genuine, so no signature from that address can count yet.`,
+          `They did nothing wrong, and we’ve sent them instructions: their email administrator needs to switch on a one-time setting called DKIM in ${p.adminLocation}.`,
+          `How you can help: share this guide with them: ${faqLink}. Or, if another address of theirs works for you, change their email on the document’s page and we’ll send them a fresh request.`,
+          `View this document’s status: ${vars.statusPageLink}`,
+        ].join('\n\n'),
+      ),
+      from: `notifications@${vars.operatorDomain}`,
+      replyTo: `info@${vars.operatorDomain}`,
+    };
+  },
+
+  // F-45.3 (b) / AC-277 — tell the CREATOR about any other rejected attempt, once per
+  // kind of problem: the plain reason, that the signer was already told how to fix it,
+  // and the creator's own remedy (send the request to a different address).
+  signerRejectedCreatorNotice(vars: {
+    signerName: string;
+    signerEmail: string;
+    documentName: string;
+    operatorDomain: string;
+    reason: CreatorNoticeReason;
+    statusPageLink: string;
+  }) {
+    const reasonLine = CREATOR_REASON_LINES[vars.reason];
+    return {
+      subject: `${vars.signerName}’s signature on "${vars.documentName}" wasn’t accepted`,
+      html: wrap(`Signature Not Accepted`, `
+        <p style="margin:0 0 15px;"><strong>${escapeHtml(vars.signerName)}</strong> (${escapeHtml(vars.signerEmail)}) tried to sign <strong>“${escapeHtml(vars.documentName)}”</strong>, but we couldn’t accept it: ${reasonLine}. We’ve already emailed them how to fix it, so usually there’s nothing you need to do.</p>
+        <p style="margin:0 0 18px;font-size:14px;color:#222;">If they’re stuck, you can send the request to a different email address of theirs: change their email on the document’s page and we’ll send them a fresh request.</p>
+        ${statusButton(vars.statusPageLink)}
+      `),
+      text: textWrap(
+        [
+          `${vars.signerName} (${vars.signerEmail}) tried to sign “${vars.documentName}”, but we couldn’t accept it: ${reasonLine}. We’ve already emailed them how to fix it, so usually there’s nothing you need to do.`,
+          'If they’re stuck, you can send the request to a different email address of theirs: change their email on the document’s page and we’ll send them a fresh request.',
+          `View this document’s status: ${vars.statusPageLink}`,
+        ].join('\n\n'),
       ),
       from: `notifications@${vars.operatorDomain}`,
       replyTo: `info@${vars.operatorDomain}`,

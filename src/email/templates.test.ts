@@ -24,6 +24,9 @@ function buildAllTemplates(op: string): Record<string, RenderedEmail> {
     envelopeCreated: templates.envelopeCreated({ documentName: 'NDA', envelopeId: SWEEP_ENV, signers: [{ name: 'Alice', email: 'a@x.com', status: 'pending' }], dashboardLink: 'http://d', operatorDomain: op }),
     creatorProgress: templates.creatorProgress({ signerName: 'Alice', documentName: 'NDA', signedCount: 1, totalCount: 2, statusPageLink: 'http://s', operatorDomain: op }),
     signingRequestUndeliverable: templates.signingRequestUndeliverable({ senderName: 'Bob', documentName: 'NDA', signerEmail: 'a@x.com', dashboardLink: 'http://d', operatorDomain: op }),
+    providerNoDkimBounce: templates.providerNoDkimBounce({ signerName: 'Alice', documentName: 'NDA', operatorDomain: op, reason: 'google_workspace_no_dkim', signerDomain: 'example.org', senderName: 'Bob' }),
+    signerBlockedCreatorNotice: templates.signerBlockedCreatorNotice({ signerName: 'Alice', signerEmail: 'a@example.org', documentName: 'NDA', operatorDomain: op, reason: 'microsoft_365_no_dkim', signerDomain: 'example.org', statusPageLink: 'http://s' }),
+    signerRejectedCreatorNotice: templates.signerRejectedCreatorNotice({ signerName: 'Alice', signerEmail: 'a@x.com', documentName: 'NDA', operatorDomain: op, reason: 'wrong_phrase', statusPageLink: 'http://s' }),
   };
 }
 
