@@ -7,7 +7,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { diagnoseProviderNoDkim } from './providerNoDkim.js';
+import { diagnoseProviderNoDkim, isUnsignedForward } from './providerNoDkim.js';
 import type { DkimSignatureDescriptor } from './dkimPolicy.js';
 
 function sig(signingDomain: string, result: DkimSignatureDescriptor['result'] = 'pass'): DkimSignatureDescriptor {
@@ -91,6 +91,70 @@ describe('diagnoseProviderNoDkim (F-45.1)', () => {
     assert.equal(
       diagnoseProviderNoDkim({ fromDomain: 'contoso.onmicrosoft.com', signatures: [sig('fabrikam.onmicrosoft.com')] }),
       null,
+    );
+  });
+});
+
+describe('diagnoseProviderNoDkim: Microsoft 365, unsigned (F-45.1, spec 0.73.0, AC-279)', () => {
+  // mailauth reports an unsigned message as one placeholder result with no domain.
+  const NOT_SIGNED = sig('', 'none');
+
+  it('isUnsignedForward: only the "message not signed" placeholder, or nothing at all', () => {
+    assert.equal(isUnsignedForward({ signatures: [NOT_SIGNED] }), true);
+    assert.equal(isUnsignedForward({ signatures: [] }), true);
+    assert.equal(isUnsignedForward({ signatures: [sig('example.com', 'fail')] }), false);
+    assert.equal(isUnsignedForward({ signatures: [NOT_SIGNED, sig('example.com', 'neutral')] }), false);
+  });
+
+  it('unsigned + first sealed by Microsoft → microsoft_365', () => {
+    assert.equal(
+      diagnoseProviderNoDkim({ fromDomain: 'contoso.com', signatures: [NOT_SIGNED] }, { arcFirstSealer: 'microsoft.com' }),
+      'microsoft_365',
+    );
+  });
+
+  it('the same with no descriptors at all (the no_signature shape) → microsoft_365', () => {
+    assert.equal(
+      diagnoseProviderNoDkim({ fromDomain: 'contoso.com', signatures: [] }, { arcFirstSealer: 'microsoft.com' }),
+      'microsoft_365',
+    );
+  });
+
+  it('unsigned + first sealed by anyone else → null', () => {
+    for (const sealer of ['google.com', 'relay.example.net', 'notmicrosoft.com', 'microsoft.com.evil.net']) {
+      assert.equal(
+        diagnoseProviderNoDkim({ fromDomain: 'contoso.com', signatures: [NOT_SIGNED] }, { arcFirstSealer: sealer }),
+        null,
+        sealer,
+      );
+    }
+  });
+
+  it('unsigned with no verified sealer → null', () => {
+    assert.equal(diagnoseProviderNoDkim({ fromDomain: 'contoso.com', signatures: [NOT_SIGNED] }, { arcFirstSealer: null }), null);
+    assert.equal(diagnoseProviderNoDkim({ fromDomain: 'contoso.com', signatures: [NOT_SIGNED] }), null);
+  });
+
+  it("a sender on Microsoft's own onmicrosoft.com domain → null (Microsoft always signs it)", () => {
+    assert.equal(
+      diagnoseProviderNoDkim({ fromDomain: 'contoso.onmicrosoft.com', signatures: [NOT_SIGNED] }, { arcFirstSealer: 'microsoft.com' }),
+      null,
+    );
+  });
+
+  it('a signed forward ignores the sealer: judged by the fallback rules alone', () => {
+    // An own-domain signature that fails: the domain HAS DKIM, so no diagnosis.
+    assert.equal(
+      diagnoseProviderNoDkim({ fromDomain: 'contoso.com', signatures: [sig('contoso.com', 'fail')] }, { arcFirstSealer: 'microsoft.com' }),
+      null,
+    );
+    // A Google fallback signature stays Google even when Microsoft sealed the message.
+    assert.equal(
+      diagnoseProviderNoDkim(
+        { fromDomain: 'example.com', signatures: [sig('example-com.20251104.gappssmtp.com')] },
+        { arcFirstSealer: 'microsoft.com' },
+      ),
+      'google_workspace',
     );
   });
 });

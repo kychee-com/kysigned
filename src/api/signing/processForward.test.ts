@@ -11,7 +11,10 @@ import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { Buffer } from 'node:buffer';
-import { dkimSign } from 'mailauth';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { dkimSign, sealMessage, type ARCSealOptions } from 'mailauth';
 import { processForward } from './processForward.js';
 import { sha256Hex } from './attachmentCheck.js';
 import { createInboundRepliesMemoryPool } from '../../db/inboundReplies.testpool.js';
@@ -439,5 +442,235 @@ describe('processForward — provider no-DKIM diagnosis (F-45.1)', () => {
       assert.equal(r.code, 'invalid_signature');
       assert.equal(r.providerNoDkim, undefined);
     }
+  });
+});
+
+describe('processForward — Microsoft 365, unsigned: the verified ARC first sealer (F-45.1, spec 0.73.0, AC-279)', () => {
+  const MS_KEY = 'arcselector10001._domainkey.microsoft.com';
+  const GOOGLE_KEY = 'arc-20240605._domainkey.google.com';
+  let msPrivate = '';
+  let msTxt = '';
+  let googlePrivate = '';
+  let googleTxt = '';
+
+  before(() => {
+    const pair = () => {
+      const kp = generateKeyPairSync('rsa', {
+        modulusLength: 2048,
+        publicKeyEncoding: { type: 'spki', format: 'pem' },
+        privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+      });
+      return [kp.privateKey, `v=DKIM1; k=rsa; p=${kp.publicKey.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '')}`];
+    };
+    [msPrivate, msTxt] = pair();
+    [googlePrivate, googleTxt] = pair();
+  });
+
+  /** Prepend an i=1 ARC set the way Exchange Online (or Gmail) seals outgoing mail. */
+  async function sealAs(raw: string, signingDomain: string, selector: string, key: string): Promise<string> {
+    // mailauth's createSeal reads `cv` and `authResults`, which its typings leave out.
+    const opts: ARCSealOptions & { cv: string; authResults: string } = {
+      signingDomain,
+      selector,
+      privateKey: key,
+      cv: 'none',
+      authResults: `mx.${signingDomain} 1; spf=none; dmarc=none; dkim=none; arc=none`,
+      signTime: new Date('2026-06-13T10:00:01Z'),
+    };
+    return (await sealMessage(raw, opts)).toString('utf8') + raw;
+  }
+  const sealByMicrosoft = (raw: string) => sealAs(raw, 'microsoft.com', 'arcselector10001', msPrivate);
+
+  /** Serves the named TXT records (plus the DKIM test key for `dkimDomains`) and records every lookup. */
+  function recordingResolver(records: Record<string, string>, dkimDomains: string[] = []) {
+    const lookups: string[] = [];
+    const served = new Map(Object.entries(records));
+    for (const d of dkimDomains) served.set(`test._domainkey.${d}`, txtRecord);
+    const resolve: DkimResolver = async (name, rrtype) => {
+      lookups.push(String(name));
+      const txt = served.get(String(name));
+      if (String(rrtype).toLowerCase() === 'txt' && txt) return [[txt]];
+      const e = new Error('ENOTFOUND') as Error & { code?: string };
+      e.code = 'ENOTFOUND';
+      throw e;
+    };
+    return { resolve, lookups };
+  }
+
+  async function signAs(raw: string, domains: string[]): Promise<string> {
+    const res = await dkimSign(raw, {
+      canonicalization: 'relaxed/relaxed',
+      signTime: new Date('2026-06-13T10:00:00Z'),
+      signatureData: domains.map((signingDomain) => ({ signingDomain, selector: 'test', privateKey, algorithm: 'rsa-sha256' })),
+    });
+    return res.signatures + raw;
+  }
+
+  const CONTOSO = { from: 'Alice <alice@contoso.com>' };
+
+  it('unsigned + a verifying Microsoft seal → rejected with the same gate code, diagnosed microsoft_365', async () => {
+    const plain = await processForward(buildForward(CONTOSO), {
+      pool: seedPool({ signerEmail: 'alice@contoso.com' }).pool,
+      verdicts: PASS,
+      dkimResolver: recordingResolver({ [MS_KEY]: msTxt }).resolve,
+    });
+    const h = seedPool({ signerEmail: 'alice@contoso.com' });
+    const sealed = await sealByMicrosoft(buildForward(CONTOSO));
+    const r = await processForward(sealed, { pool: h.pool, verdicts: PASS, dkimResolver: recordingResolver({ [MS_KEY]: msTxt }).resolve });
+    assert.equal(r.outcome, 'rejected');
+    assert.equal(plain.outcome, 'rejected');
+    if (r.outcome === 'rejected' && plain.outcome === 'rejected') {
+      assert.equal(r.code, plain.code, 'the gate code is unchanged by the seal');
+      assert.equal(r.providerNoDkim, 'microsoft_365');
+    }
+    assert.equal(h.signers[0].status, 'pending', 'nothing is recorded signed');
+  });
+
+  it('unsigned + a Google seal → no diagnosis', async () => {
+    const h = seedPool({ signerEmail: 'alice@contoso.com' });
+    const sealed = await sealAs(buildForward(CONTOSO), 'google.com', 'arc-20240605', googlePrivate);
+    const r = await processForward(sealed, { pool: h.pool, verdicts: PASS, dkimResolver: recordingResolver({ [GOOGLE_KEY]: googleTxt }).resolve });
+    assert.equal(r.outcome, 'rejected');
+    if (r.outcome === 'rejected') assert.equal(r.providerNoDkim, undefined);
+  });
+
+  it('unsigned + a Microsoft seal that no longer verifies (body edited) → no diagnosis', async () => {
+    const h = seedPool({ signerEmail: 'alice@contoso.com' });
+    const sealed = await sealByMicrosoft(buildForward(CONTOSO));
+    const edited = sealed.replace('Forwarded message', 'Forwarded MESSAGE (edited)');
+    assert.notEqual(edited, sealed);
+    const r = await processForward(edited, { pool: h.pool, verdicts: PASS, dkimResolver: recordingResolver({ [MS_KEY]: msTxt }).resolve });
+    assert.equal(r.outcome, 'rejected');
+    if (r.outcome === 'rejected') assert.equal(r.providerNoDkim, undefined);
+  });
+
+  it('unsigned + a Microsoft seal whose key is missing from DNS → no diagnosis', async () => {
+    const h = seedPool({ signerEmail: 'alice@contoso.com' });
+    const sealed = await sealByMicrosoft(buildForward(CONTOSO));
+    const r = await processForward(sealed, { pool: h.pool, verdicts: PASS, dkimResolver: recordingResolver({}).resolve });
+    assert.equal(r.outcome, 'rejected');
+    if (r.outcome === 'rejected') assert.equal(r.providerNoDkim, undefined);
+  });
+
+  it('a misaligned forward that Microsoft also sealed → judged by the fallback rules alone (no diagnosis)', async () => {
+    const h = seedPool({ signerEmail: 'alice@contoso.com' });
+    const sealed = await sealByMicrosoft(await signAs(buildForward(CONTOSO), ['relay.example.net']));
+    const r = await processForward(sealed, {
+      pool: h.pool,
+      verdicts: PASS,
+      dkimResolver: recordingResolver({ [MS_KEY]: msTxt }, ['relay.example.net']).resolve,
+    });
+    assert.equal(r.outcome, 'rejected');
+    if (r.outcome === 'rejected') {
+      assert.equal(r.code, 'misaligned');
+      assert.equal(r.providerNoDkim, undefined);
+    }
+  });
+
+  it('an own-domain signed forward that Microsoft also sealed → signed as before', async () => {
+    const h = seedPool({ signerEmail: 'alice@contoso.com' });
+    const sealed = await sealByMicrosoft(await signAs(buildForward(CONTOSO), ['contoso.com']));
+    const r = await processForward(sealed, {
+      pool: h.pool,
+      verdicts: PASS,
+      dkimResolver: recordingResolver({ [MS_KEY]: msTxt }, ['contoso.com']).resolve,
+    });
+    assert.equal(r.outcome, 'signed');
+    assert.equal(h.signers[0].status, 'signed');
+  });
+
+  it('the seal check runs only for an unsigned forward (no extra lookup on any other path)', async () => {
+    // mailauth already checks the latest ARC message signature inside verifyDkim, on
+    // every path; the seal check is the one EXTRA lookup, and only the unsigned path pays it.
+    const misaligned = recordingResolver({ [MS_KEY]: msTxt }, ['relay.example.net']);
+    await processForward(await sealByMicrosoft(await signAs(buildForward(CONTOSO), ['relay.example.net'])), {
+      pool: seedPool({ signerEmail: 'alice@contoso.com' }).pool,
+      verdicts: PASS,
+      dkimResolver: misaligned.resolve,
+    });
+    const unsigned = recordingResolver({ [MS_KEY]: msTxt });
+    await processForward(await sealByMicrosoft(buildForward(CONTOSO)), {
+      pool: seedPool({ signerEmail: 'alice@contoso.com' }).pool,
+      verdicts: PASS,
+      dkimResolver: unsigned.resolve,
+    });
+    const msLookups = (l: string[]) => l.filter((n) => n === MS_KEY).length;
+    assert.equal(msLookups(unsigned.lookups), msLookups(misaligned.lookups) + 1);
+  });
+});
+
+/**
+ * The GENERATED corporate Microsoft 365 forward (spec 0.73.1, AC-279): no real corporate
+ * sample exists, so `scripts/gen-m365-no-dkim-mock.mjs` builds one in Exchange Online's
+ * layout, unsigned, sealed i=1 as `microsoft.com` with a stand-in key whose public half
+ * rides in the .json. See `fixtures/README.md`.
+ */
+describe('processForward — the GENERATED Microsoft 365 corporate forward (F-45.1, spec 0.73.1, AC-279)', () => {
+  const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
+  const MOCK_EML = readFileSync(join(FIXTURES, 'm365-corporate-no-dkim.GENERATED.eml'), 'utf8');
+  const MOCK = JSON.parse(readFileSync(join(FIXTURES, 'm365-corporate-no-dkim.GENERATED.json'), 'utf8')) as {
+    generated: boolean;
+    envelope: { id: string; hex: string; documentName: string };
+    signer: { email: string; domain: string };
+    attachment: { sha256: string };
+    standInKeys: Record<string, string>;
+  };
+  const MS_KEY = 'arcselector10001._domainkey.microsoft.com';
+
+  function serving(records: Record<string, string>): DkimResolver {
+    return async (name, rrtype) => {
+      const txt = records[String(name)];
+      if (String(rrtype).toLowerCase() === 'txt' && txt) return [[txt]];
+      const e = new Error('ENOTFOUND') as Error & { code?: string };
+      e.code = 'ENOTFOUND';
+      throw e;
+    };
+  }
+
+  function seedMockEnvelope() {
+    const h = createInboundRepliesMemoryPool();
+    h.envelopes.push({ id: MOCK.envelope.id, status: 'active', document_name: MOCK.envelope.documentName, document_hash: MOCK.attachment.sha256 });
+    h.signers.push({ id: 's-mock', envelope_id: MOCK.envelope.id, email: MOCK.signer.email, status: 'pending', sent_pdf_hash: MOCK.attachment.sha256 });
+    return h;
+  }
+
+  it("the generated mock is marked GENERATED and has Microsoft's no-DKIM shape", () => {
+    assert.equal(MOCK.generated, true);
+    assert.match(MOCK_EML, /^X-Kysigned-Fixture: GENERATED MOCK, not real mail\./);
+    assert.doesNotMatch(MOCK_EML, /^DKIM-Signature:/im, 'no DKIM signature, as Microsoft sends a no-DKIM domain');
+    const seals = MOCK_EML.match(/^ARC-Seal:[^]*?(?=^\S)/gim) ?? [];
+    assert.equal(seals.length, 1, 'exactly one ARC set');
+    const seal = seals[0].replace(/\r?\n\s+/g, ' ');
+    for (const tag of ['i=1;', 'd=microsoft.com;', 's=arcselector10001;', 'cv=none;']) assert.ok(seal.includes(tag), tag);
+    assert.match(MOCK_EML, /^ARC-Authentication-Results: i=1; mx\.microsoft\.com 1; spf=none; dmarc=none; dkim=none; arc=none$/m);
+    assert.match(MOCK_EML, new RegExp(`^From: .*@${MOCK.signer.domain.replaceAll('.', '\\.')}>`, 'm'));
+    assert.match(MOCK_EML, new RegExp(`\\[ksgn-${MOCK.envelope.hex}\\]`));
+    assert.deepEqual(Object.keys(MOCK.standInKeys), [MS_KEY]);
+  });
+
+  it('a generated Microsoft 365 corporate forward with DKIM off → rejected, diagnosed microsoft_365 (AC-279)', async () => {
+    const h = seedMockEnvelope();
+    const r = await processForward(MOCK_EML, { pool: h.pool, verdicts: PASS, dkimResolver: serving(MOCK.standInKeys) });
+    assert.equal(r.outcome, 'rejected');
+    if (r.outcome === 'rejected') {
+      assert.equal(r.envelopeId, MOCK.envelope.id);
+      assert.equal(r.signerEmail, MOCK.signer.email);
+      assert.equal(r.providerNoDkim, 'microsoft_365');
+    }
+    assert.equal(h.signers[0].status, 'pending', 'nothing is recorded signed');
+  });
+
+  it("the same generated forward checked against any other key (the live service's view) → no diagnosis (AC-279)", async () => {
+    const other = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
+    const otherTxt = `v=DKIM1; k=rsa; p=${other.publicKey.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '')}`;
+    const h = seedMockEnvelope();
+    const r = await processForward(MOCK_EML, { pool: h.pool, verdicts: PASS, dkimResolver: serving({ [MS_KEY]: otherTxt }) });
+    assert.equal(r.outcome, 'rejected');
+    if (r.outcome === 'rejected') assert.equal(r.providerNoDkim, undefined, 'a seal Microsoft did not make never names Microsoft');
+    assert.equal(h.signers[0].status, 'pending');
   });
 });

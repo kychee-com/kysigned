@@ -34,7 +34,8 @@ import { evaluateDkimPolicy, type DkimPolicyReason } from './dkimPolicy.js';
 import { extractSigningText } from './mimeExtract.js';
 import { validateSigningIntent } from './signingIntent.js';
 import { checkForwardedAttachment } from './attachmentCheck.js';
-import { diagnoseProviderNoDkim, type ProviderNoDkim } from './providerNoDkim.js';
+import { diagnoseProviderNoDkim, isUnsignedForward, type ProviderNoDkim } from './providerNoDkim.js';
+import { verifiedFirstArcSealer } from './arcSealer.js';
 
 export interface ProcessForwardContext {
   pool: DbPool;
@@ -84,9 +85,10 @@ export type ForwardOutcome =
       /** The offending intent line / attachment state, for the F-7 corrective bounce. */
       detail?: string;
       /**
-       * F-45.1 — set only on a `misaligned` rejection whose signatures are ALL a
-       * provider's fallback (the signer's domain has no DKIM switched on). Chooses
-       * the messaging; the gate `code` is unchanged (DD-69).
+       * F-45.1 — set only when the signer's domain has no DKIM switched on: a
+       * `misaligned` rejection whose signatures are ALL a provider's fallback, or an
+       * unsigned forward that Microsoft sealed first (DD-71). Chooses the messaging;
+       * the gate `code` is unchanged (DD-69).
        */
       providerNoDkim?: ProviderNoDkim;
     }
@@ -150,7 +152,16 @@ export async function processForward(
   const dkimOutcome = await verifyDkim(rawMime, { resolver: ctx.dkimResolver });
   const dkimVerdict = evaluateDkimPolicy(dkimOutcome);
   if (!dkimVerdict.ok) {
-    const providerNoDkim = dkimVerdict.reason === 'misaligned' ? diagnoseProviderNoDkim(dkimOutcome) : null;
+    // F-45.1: the fallback-signature rules read a `misaligned` rejection; an unsigned
+    // forward is read by its verified ARC first sealer, the only path that pays the
+    // extra seal-key lookup (DD-71).
+    let providerNoDkim: ProviderNoDkim | null = null;
+    if (dkimVerdict.reason === 'misaligned') {
+      providerNoDkim = diagnoseProviderNoDkim(dkimOutcome);
+    } else if (isUnsignedForward(dkimOutcome)) {
+      const arcFirstSealer = await verifiedFirstArcSealer(dkimOutcome.arc, { resolver: ctx.dkimResolver });
+      providerNoDkim = diagnoseProviderNoDkim(dkimOutcome, { arcFirstSealer });
+    }
     return {
       outcome: 'rejected',
       code: dkimVerdict.reason,

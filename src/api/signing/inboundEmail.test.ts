@@ -14,6 +14,11 @@ import { RetryableRunError, PermanentRunError, type CreateRunOptions } from '../
 import type { DbPool } from '../../db/pool.js';
 import type { EmailMessage } from '../../email/types.js';
 import type { ForwardOutcome } from './processForward.js';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createInboundRepliesMemoryPool } from '../../db/inboundReplies.testpool.js';
+import type { DkimResolver } from './dkimVerify.js';
 
 // A tiny query-matcher pool: first matching SQL-substring wins; default = empty.
 function fakePool(answers: Array<{ match: string; rows: unknown[] }> = []): DbPool {
@@ -524,5 +529,89 @@ describe('inboundEmail — F-36 app events (60.3)', () => {
     assert.equal(lines.length, 1);
     assert.match(lines[0]!, /internal-classification failed/);
     assert.match(lines[0]!, /db blip/);
+  });
+});
+
+/**
+ * End to end on the GENERATED corporate Microsoft 365 forward (spec 0.73.1, AC-279): the
+ * REAL processForward (no outcome stub) over one in-memory database, with the handler's
+ * own `dkimResolver` serving the mock's stand-in seal key. See `fixtures/README.md`.
+ */
+describe('inboundEmail — the GENERATED Microsoft 365 corporate forward, end to end (F-45.1, spec 0.73.1, AC-279)', () => {
+  const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
+  const MOCK_EML = readFileSync(join(FIXTURES, 'm365-corporate-no-dkim.GENERATED.eml'), 'utf8');
+  const MOCK = JSON.parse(readFileSync(join(FIXTURES, 'm365-corporate-no-dkim.GENERATED.json'), 'utf8')) as {
+    envelope: { id: string; documentName: string; creator: { email: string } };
+    signer: { name: string; email: string; domain: string };
+    attachment: { sha256: string };
+    standInKeys: Record<string, string>;
+  };
+
+  it("a generated Microsoft 365 corporate forward runs end to end: Microsoft bounce + the creator's Microsoft notice (AC-279)", async () => {
+    const db = createInboundRepliesMemoryPool();
+    db.envelopes.push({
+      id: MOCK.envelope.id,
+      status: 'active',
+      sender_email: MOCK.envelope.creator.email,
+      document_name: MOCK.envelope.documentName,
+      document_hash: MOCK.attachment.sha256,
+      auto_close: true,
+    });
+    db.signers.push({
+      id: 's-mock',
+      envelope_id: MOCK.envelope.id,
+      email: MOCK.signer.email,
+      name: MOCK.signer.name,
+      status: 'pending',
+      sent_pdf_hash: MOCK.attachment.sha256,
+      rejection_notice_classes: [],
+    });
+    // The in-memory pool models every statement on this path except the envelope's
+    // signer list, which the notices read for the signer's name.
+    const pool: DbPool = {
+      query: async (text: string, v?: unknown[]) => {
+        if (text.includes('FROM envelope_signers WHERE envelope_id = $1 ORDER BY name')) {
+          const rows = db.signers.filter((s) => s.envelope_id === v?.[0]).map((s) => ({ ...s }));
+          return { rows, rowCount: rows.length } as never;
+        }
+        return db.pool.query(text, v);
+      },
+      end: async () => {},
+    };
+    const standIn: DkimResolver = async (name, rrtype) => {
+      const txt = MOCK.standInKeys[String(name)];
+      if (String(rrtype).toLowerCase() === 'txt' && txt) return [[txt]];
+      const e = new Error('ENOTFOUND') as Error & { code?: string };
+      e.code = 'ENOTFOUND';
+      throw e;
+    };
+    const r = recorder();
+    const ctx: InboundEmailCtx = {
+      pool,
+      emailProvider: r.emailProvider,
+      operatorDomain: 'kysigned.com',
+      baseUrl: 'https://kysigned.com',
+      fetchRawMime: async () => MOCK_EML,
+      createRun: r.createRun,
+      dkimResolver: standIn,
+    };
+
+    const out = await handleReplyReceived(ctx, { event: { message_id: 'msg-m365-mock' } });
+
+    assert.equal(out.action, 'rejected');
+    assert.equal(out.rejectionClass, 'microsoft_365_no_dkim');
+    assert.equal(r.sent.length, 2, 'the signer bounce and one creator notice');
+    const [bounce, notice] = r.sent;
+    assert.equal(bounce.to, MOCK.signer.email);
+    assert.match(bounce.html ?? '', /Microsoft 365/);
+    assert.match(bounce.html ?? '', new RegExp(MOCK.signer.domain.replaceAll('.', '\\.')), 'names the signer domain');
+    assert.match(bounce.html ?? '', /faq#email-setup-microsoft/);
+    assert.equal(notice.to, MOCK.envelope.creator.email);
+    assert.match(notice.subject ?? '', /Dana Cohen can.t sign "Mock Services Agreement \(GENERATED TEST\)" until their email is set up/);
+    assert.match(notice.html ?? '', /Microsoft Defender portal/);
+    assert.equal(db.signers[0].status, 'pending', 'nothing is recorded signed');
+    assert.equal(db.signers[0].last_rejection_class, 'microsoft_365_no_dkim', 'the dashboard and API see the problem');
+    assert.deepEqual(db.signers[0].rejection_notice_classes, ['microsoft_365_no_dkim'], 'the creator is told once');
+    assert.equal(r.runs.length, 0, 'no completion run');
   });
 });

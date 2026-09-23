@@ -12,7 +12,7 @@
  * In production `resolver` is omitted so mailauth queries live DNS (F-6.2 "live DNS
  * key"); tests inject a resolver to verify offline against a generated key.
  */
-import { dkimVerify } from 'mailauth';
+import { dkimVerify, type ArcChainData } from 'mailauth';
 import { extractFrom } from './mimeHeaders.js';
 import type { DkimSignatureDescriptor } from './dkimPolicy.js';
 
@@ -39,6 +39,12 @@ export interface DkimVerifyOutcome {
   signatures: DkimSignatureDescriptor[];
   /** True if ANY DKIM-Signature header carries an l= body-length tag (F-6.2(c)). */
   anyBodyLengthTag: boolean;
+  /**
+   * The ARC chain mailauth parsed during this same verification (F-45.1, DD-71). Read
+   * only to name the verified first sealer of an UNSIGNED forward
+   * (`verifiedFirstArcSealer`); it never takes part in the signing decision.
+   */
+  arc?: ArcChainData;
 }
 
 const HEADER_BODY_SEP = /\r\n\r\n|\n\n/;
@@ -106,5 +112,5 @@ export async function verifyDkim(
 
   const fromDomain = (extractFrom(rawMime).split('@')[1] ?? '').toLowerCase();
 
-  return { fromDomain, signatures, anyBodyLengthTag: hasBodyLengthTag(rawMime) };
+  return { fromDomain, signatures, anyBodyLengthTag: hasBodyLengthTag(rawMime), arc: result.arc };
 }

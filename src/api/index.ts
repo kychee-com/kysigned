@@ -92,6 +92,10 @@ export { validateSigningIntent, CANONICAL_INTENT } from './signing/signingIntent
 export { checkForwardedAttachment, sha256Hex } from './signing/attachmentCheck.js';
 export { verifyDkim } from './signing/dkimVerify.js';
 export { evaluateDkimPolicy } from './signing/dkimPolicy.js';
+// F-45.1 provider no-DKIM diagnosis (messaging only; never the gate verdict).
+export { diagnoseProviderNoDkim, isUnsignedForward } from './signing/providerNoDkim.js';
+export type { ProviderNoDkim, ProviderNoDkimHints } from './signing/providerNoDkim.js';
+export { verifiedFirstArcSealer } from './signing/arcSealer.js';
 export { evaluateSenderAuth } from './signing/senderAuthGate.js';
 export { checkReplyMembership } from './signing/checkReplyMembership.js';
 export { buildEnvelopeToken, parseEnvelopeToken } from './subjectToken.js';

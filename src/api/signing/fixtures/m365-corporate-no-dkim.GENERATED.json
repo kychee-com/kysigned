@@ -1,0 +1,28 @@
+{
+  "generated": true,
+  "note": "GENERATED MOCK, not real mail: a Microsoft 365 corporate tenant's forward with DKIM off, sealed with a stand-in test key instead of Microsoft's. Only a test resolver serving standInKeys makes the seal verify.",
+  "generator": "scripts/gen-m365-no-dkim-mock.mjs",
+  "generatedAt": "2026-09-23T14:34:17.024Z",
+  "scenario": "Microsoft 365 tenant, custom domain, DKIM off: the forward carries no DKIM-Signature and one ARC set (i=1, d=microsoft.com, s=arcselector10001, cv=none).",
+  "envelope": {
+    "id": "5e1f0c2a-9b7d-4c3e-8a61-2f4d6b8e0c17",
+    "hex": "5e1f0c2a9b7d4c3e8a612f4d6b8e0c17",
+    "documentName": "Mock Services Agreement (GENERATED TEST)",
+    "creator": {
+      "name": "Sam Rivera",
+      "email": "sam.rivera@fabrikam.example"
+    }
+  },
+  "signer": {
+    "name": "Dana Cohen",
+    "email": "dana.cohen@northwind-traders.example",
+    "domain": "northwind-traders.example"
+  },
+  "attachment": {
+    "filename": "Mock Services Agreement (GENERATED TEST).pdf",
+    "sha256": "be5be87996b840af01b24a33f2aff38b16991b3d5dc3557450305a8b511c8b22"
+  },
+  "standInKeys": {
+    "arcselector10001._domainkey.microsoft.com": "v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyxQt0WjMp2ZUHBZU611K9eKr+nIaNPziWnBiD6eTSVV6M5F+P768TOONv+7XfsBzPv4gdry1tvUx7mgY3xx9dctNkgMOn+LG/VFMtgw/hf3Zr3z+HVl1tkV1sFOwY703LStErswB+rDpDLt7oWI+2aVbxg8lrX6E7IQ08U/4RNssiOYYZNT60yAAGzovuId4X4F354gq7x4LfTN9JtfklGLkuK23gnyEncrrZmBsFH2VmO9OHSFeaUGRtB/gsmB5UtVE0iKFnW48TZsv+rGtIDKKIXTgRSSwnWM2xT7xjSz4Jn3EFKIzRUcA21XXFYGNkED0mATA1NRJRvJsoiSSuwIDAQAB"
+  }
+}

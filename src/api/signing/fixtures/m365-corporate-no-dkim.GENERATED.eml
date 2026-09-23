@@ -1,0 +1,131 @@
+X-Kysigned-Fixture: GENERATED MOCK, not real mail. A Microsoft 365 corporate
+ tenant's forward with DKIM off (F-45.1 / AC-279). Its ARC seal is made with a
+ stand-in test key, not Microsoft's. See src/api/signing/fixtures/README.md.
+Return-Path: <dana.cohen@northwind-traders.example>
+Received: from NAM12-SN1-obe.outbound.protection.outlook.com (198.51.100.101)
+ by inbound-smtp.us-east-1.amazonaws.com with SMTP id 4e0cf3b8834607f699889d6cc01ae89d
+ for forward-to-sign@kysigned.com; Wed, 23 Sep 2026 09:41:09 +0000
+Received-SPF: pass (spfCheck: domain of northwind-traders.example designates 198.51.100.101
+ as permitted sender) client-ip=198.51.100.101; envelope-from=dana.cohen@northwind-traders.example;
+ helo=NAM12-SN1-obe.outbound.protection.outlook.com;
+Authentication-Results: amazonses.com; spf=pass (spfCheck: domain of northwind-traders.example
+ designates 198.51.100.101 as permitted sender) client-ip=198.51.100.101;
+ envelope-from=dana.cohen@northwind-traders.example; helo=NAM12-SN1-obe.outbound.protection.outlook.com;
+ dkim=none header.i=unknown; dmarc=none header.from=northwind-traders.example;
+ARC-Seal: i=1; a=rsa-sha256; t=1790156468; cv=none; d=microsoft.com;
+ s=arcselector10001;
+ b=sO7zQcn3IdbjoCBjqDwyO7ss7sQiPVGgxlydYAj7K5dRDLnrDIoggjS2SOxvOD6u2p8SDw7+b
+ v2Ny4T9sTGwuciWnDJS15D1WdUs2gaXnW4/iPf6QgelB6e2vM/jASIGunPcUN8T6FuS9l+16bvd
+ +O8nlbCosyIzHAvfNSffMIduOuN91tly557tD3jbMOHHBv3h2I65rhPhUdb69Vorci5BbrMV8z2
+ cptI8eq4aWuYYjF2H+fPIo8JTLnHnZ1nCRAgwQW5heDIUCvhVMZSWeZYBi0A5FJRgFCtIsrB+wa
+ Axdo0N0MLcQS73mdxpyy//6FEXmLq9fL51jESN15gfww==
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed;
+ d=microsoft.com; h=MIME-Version: Content-Type:
+ x-ms-exchange-antispam-messagedata-0:
+ x-ms-exchange-antispam-messagedata-chunkcount: Message-ID: Date: Subject:
+ From; q=dns/txt; s=arcselector10001; t=1790156468;
+ bh=koKKgTWKB8DlKkJZGxxWTV7uAvdDC+ENsXXUBVepv+Q=;
+ b=AElvBWXjOrmBmvVlO4pHTh/bvqGrMpKLsudfhP/PA7euFIE9zzMielmWhH8j936WFp2tJDEtV
+ SKWdplynWg4STVmkxGCTKSMnAWYH3XxUMZaR97DylPKvsSuaLSyRNbOwE0GrubtvlS8Bx17jKM1
+ kKvFxK/9rmEsPIzmCdWc8PeQOsQxLKf+QOmerFxZOZrnI4roEb6wSZobz4llT7cStAxdKQXVgjf
+ ybEu+CvDLVItGWYemEe50ZI2JebEF+nKPXGWBa/H1rYp8ysGjCg2wSdpbZ2CxsXmZmKV2y5IhI4
+ yy13Qu/DMyDVQ4PdT586VYqtlecLq33Efv0/1WyNyKRg==
+ARC-Authentication-Results: i=1; mx.microsoft.com 1; spf=none; dmarc=none; dkim=none; arc=none
+Received: from SA1PR17MB6189.namprd17.prod.outlook.com (2001:db8:806:1bd::9) by
+ SA1PR17MB5432.namprd17.prod.outlook.com (2001:db8:806:1be::7) with Microsoft SMTP
+ Server (version=TLS1_2, cipher=TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384) id
+ 15.20.9160.12; Wed, 23 Sep 2026 09:41:07 +0000
+Received: from SA1PR17MB6189.namprd17.prod.outlook.com
+ ([fe80::db8:1]) by SA1PR17MB6189.namprd17.prod.outlook.com
+ ([fe80::db8:1%4]) with mapi id 15.20.9160.012; Wed, 23 Sep 2026 09:41:07 +0000
+From: Dana Cohen <dana.cohen@northwind-traders.example>
+To: "forward-to-sign@kysigned.com" <forward-to-sign@kysigned.com>
+Subject: FW: Signature requested: "Mock Services Agreement (GENERATED TEST)" [ksgn-5e1f0c2a9b7d4c3e8a612f4d6b8e0c17]
+Thread-Topic: Signature requested: "Mock Services Agreement (GENERATED TEST)" [ksgn-5e1f0c2a9b7d4c3e8a612f4d6b8e0c17]
+Thread-Index: rOh9EDE39Idmn0RrXc3fX0Ws79Wq/A==
+Date: Wed, 23 Sep 2026 09:41:07 +0000
+Message-ID: <SA1PR17MB6189C08957FC49090E0DDF8D1546E63B33A2@SA1PR17MB6189.namprd17.prod.outlook.com>
+References: <ksgn-5e1f0c2a9b7d4c3e8a612f4d6b8e0c17.request@kysigned.com>
+In-Reply-To: <ksgn-5e1f0c2a9b7d4c3e8a612f4d6b8e0c17.request@kysigned.com>
+Accept-Language: en-US
+Content-Language: en-US
+X-MS-Has-Attach: yes
+X-MS-TNEF-Correlator:
+x-ms-publictraffictype: Email
+x-ms-traffictypediagnostic: SA1PR17MB6189:EE_|SA1PR17MB5432:EE_
+x-ms-office365-filtering-correlation-id: da6aeec0-2438-454c-6085-7e0eda1051cf
+x-ms-exchange-antispam-messagedata-chunkcount: 1
+x-ms-exchange-antispam-messagedata-0: La1lGwN3kItXm6MYke79tmcKlGpH7vyVFuKcdJLsfTMvnK+liWs4kEQs+skcTMXnNXXdGsF10jE9
+ Gjn4T8UP5Ss9QnIvYf5b71X3QzVWqA7MFyu9ZsVip6mvYTahRMVjR/JRomSNzrts89KplKGGoKmd
+ 12yYya5uiLG5gkJBbIqcyeWGPc/81PtFKKbcvYifkqE6Xfd4+PA2C59CFteQnsJTcO34MDtY1Qsd
+ kFYRS9oHuwKh2sLBkfA2XaSssM8Q3elxQha07njoo4qpWSoUOCYzntGdioIIwDRkxcwkPARDH3M+
+ FE8oGRoLVb6K4Mdm
+Content-Type: multipart/mixed; boundary="_004_SA1PR17MB6189C08957FC49090E0DDF8D1546E63B33A2SA1PR17MB6189namp_"
+MIME-Version: 1.0
+X-OriginatorOrg: northwind-traders.example
+X-MS-Exchange-CrossTenant-AuthAs: Internal
+X-MS-Exchange-CrossTenant-AuthSource: SA1PR17MB6189.namprd17.prod.outlook.com
+X-MS-Exchange-CrossTenant-Network-Message-Id: d298aaa5-4d5f-6d6e-3073-78cfb40e879d
+X-MS-Exchange-CrossTenant-originalarrivaltime: 23 Sep 2026 09:41:07.4213 (UTC)
+X-MS-Exchange-CrossTenant-fromentityheader: Hosted
+X-MS-Exchange-CrossTenant-id: 3f6c1d2e-8b4a-4f0e-9c7d-5a1b2c3d4e5f
+X-MS-Exchange-CrossTenant-mailboxtype: HOSTED
+X-MS-Exchange-Transport-CrossTenantHeadersStamped: SA1PR17MB5432
+
+--_004_SA1PR17MB6189C08957FC49090E0DDF8D1546E63B33A2SA1PR17MB6189namp_
+Content-Type: multipart/alternative; boundary="_000_SA1PR17MB6189C08957FC49090E0DDF8D1546E63B33A2SA1PR17MB6189namp_"
+
+--_000_SA1PR17MB6189C08957FC49090E0DDF8D1546E63B33A2SA1PR17MB6189namp_
+Content-Type: text/plain; charset="us-ascii"
+Content-Transfer-Encoding: 7bit
+
+I sign this document
+
+________________________________
+From: kysigned <notifications@kysigned.com>
+Sent: Wednesday, September 23, 2026 12:36 PM
+To: Dana Cohen <dana.cohen@northwind-traders.example>
+Subject: Signature requested: "Mock Services Agreement (GENERATED TEST)" [ksgn-5e1f0c2a9b7d4c3e8a612f4d6b8e0c17]
+
+Hi Dana Cohen,
+
+Sam Rivera has requested your signature on "Mock Services Agreement (GENERATED TEST)". The document is attached to this email.
+
+--_000_SA1PR17MB6189C08957FC49090E0DDF8D1546E63B33A2SA1PR17MB6189namp_
+Content-Type: text/html; charset="us-ascii"
+Content-Transfer-Encoding: 7bit
+
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=us-ascii">
+</head>
+<body dir="ltr">
+<div style="font-family: Aptos, sans-serif; font-size: 12pt;">I sign this document</div>
+<div><br></div>
+<hr style="display:inline-block;width:98%" tabindex="-1">
+<div id="divRplyFwdMsg" dir="ltr"><font face="Calibri, sans-serif" style="font-size:11pt" color="#000000">
+<b>From:</b> kysigned &lt;notifications@kysigned.com&gt;<br>
+<b>Sent:</b> Wednesday, September 23, 2026 12:36 PM<br>
+<b>To:</b> Dana Cohen &lt;dana.cohen@northwind-traders.example&gt;<br>
+<b>Subject:</b> Signature requested: &quot;Mock Services Agreement (GENERATED TEST)&quot; [ksgn-5e1f0c2a9b7d4c3e8a612f4d6b8e0c17]</font>
+<div>&nbsp;</div>
+</div>
+<div><p>Hi Dana Cohen,</p>
+<p>Sam Rivera has requested your signature on &ldquo;Mock Services Agreement (GENERATED TEST)&rdquo;. The document is attached to this email.</p></div>
+</body>
+</html>
+
+--_000_SA1PR17MB6189C08957FC49090E0DDF8D1546E63B33A2SA1PR17MB6189namp_--
+
+--_004_SA1PR17MB6189C08957FC49090E0DDF8D1546E63B33A2SA1PR17MB6189namp_
+Content-Type: application/pdf; name="Mock Services Agreement (GENERATED TEST).pdf"
+Content-Description: Mock Services Agreement (GENERATED TEST).pdf
+Content-Disposition: attachment; filename="Mock Services Agreement (GENERATED TEST).pdf"; size=97;
+	creation-date="Wed, 23 Sep 2026 09:40:58 GMT";
+	modification-date="Wed, 23 Sep 2026 09:41:07 GMT"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjcKJSBHRU5FUkFURUQgTU9DSyBhdHRhY2htZW50IGZvciB0aGUga3lzaWduZWQgRi00
+NS4xIGZpeHR1cmU6IG5vdCBhIHJlYWwgZG9jdW1lbnQuCiUlRU9GCg==
+
+--_004_SA1PR17MB6189C08957FC49090E0DDF8D1546E63B33A2SA1PR17MB6189namp_--
