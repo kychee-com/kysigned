@@ -41,6 +41,7 @@ const SIGNER_TIMESTAMP_COLS = [
   'completion_email_bounced_at',
   'undeliverable_at',
   'acceptance_notified_at',
+  'last_rejection_at',
 ] as const;
 
 function toDate(v: unknown): Date | null | undefined {
@@ -285,7 +286,8 @@ export async function markSignerSignedByEmail(
 ): Promise<boolean> {
   const result = await pool.query(
     `UPDATE envelope_signers
-       SET status = 'signed', signed_at = now(), signing_method = 'email'
+       SET status = 'signed', signed_at = now(), signing_method = 'email',
+           last_rejection_class = NULL, last_rejection_at = NULL
      WHERE envelope_id = $1 AND LOWER(email) = LOWER($2) AND status <> 'signed'
      RETURNING id`,
     [envelopeId, email]
@@ -310,6 +312,50 @@ export async function markSignerAcceptanceNotified(
      WHERE envelope_id = $1 AND LOWER(email) = LOWER($2) AND acceptance_notified_at IS NULL
      RETURNING id`,
     [envelopeId, email],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * F-45.5 / F-45.6 (DD-70) — record the latest rejection class on a signer who still
+ * owes a signature (`pending`, or `superseded` = re-requested after an edit). A signed
+ * signer is never touched. Returns true iff a row was updated.
+ */
+export async function recordSignerRejection(
+  pool: DbPool,
+  envelopeId: string,
+  email: string,
+  rejectionClass: string,
+): Promise<boolean> {
+  const result = await pool.query(
+    `UPDATE envelope_signers
+        SET last_rejection_class = $3::text, last_rejection_at = now()
+      WHERE envelope_id = $1 AND LOWER(email) = LOWER($2) AND status IN ('pending', 'superseded')
+      RETURNING id`,
+    [envelopeId, email, rejectionClass],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * F-45.3 (DD-70) — claim the creator notice for one (signer, rejection class), at most
+ * once. Appends the class to `rejection_notice_classes` only if it is not there yet and
+ * returns true only for the claiming call, so a duplicate forward or a retried run never
+ * re-sends (the acceptance-ack exactly-once pattern).
+ */
+export async function claimRejectionNotice(
+  pool: DbPool,
+  envelopeId: string,
+  email: string,
+  rejectionClass: string,
+): Promise<boolean> {
+  const result = await pool.query(
+    `UPDATE envelope_signers
+        SET rejection_notice_classes = array_append(rejection_notice_classes, $3::text)
+      WHERE envelope_id = $1 AND LOWER(email) = LOWER($2)
+        AND NOT ($3::text = ANY(rejection_notice_classes))
+      RETURNING id`,
+    [envelopeId, email, rejectionClass],
   );
   return (result.rowCount ?? 0) > 0;
 }
@@ -374,7 +420,7 @@ export async function addSignerToEnvelope(
  * `signed` — a previously-signed signer becomes `superseded` (re-requested), the
  * rest `pending` — so the prior signature is dropped (`signed_at` /
  * `signing_method` cleared) and the reminder + undeliverable state reset for the
- * fresh request.
+ * fresh request. The F-45 rejection state resets too, and the creator notices re-arm.
  */
 export async function updateSignerForEdit(
   pool: DbPool,
@@ -385,7 +431,8 @@ export async function updateSignerForEdit(
     `UPDATE envelope_signers
         SET name = $2, on_behalf_of = $3, sent_pdf_hash = $4, status = $5,
             signed_at = NULL, signing_method = NULL, undeliverable_at = NULL,
-            reminder_count = 0, last_reminder_at = NULL
+            reminder_count = 0, last_reminder_at = NULL,
+            last_rejection_class = NULL, last_rejection_at = NULL, rejection_notice_classes = '{}'
       WHERE id = $1
       RETURNING *`,
     [signerId, fields.name, fields.on_behalf_of, fields.sent_pdf_hash, fields.status],

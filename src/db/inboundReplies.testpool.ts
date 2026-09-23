@@ -177,9 +177,32 @@ export function createInboundRepliesMemoryPool() {
         );
         if (s) {
           s.status = 'signed'; s.signed_at = new Date(); s.signing_method = 'email';
+          if (text.includes('last_rejection_class = NULL')) { s.last_rejection_class = null; s.last_rejection_at = null; }
           return { rows: [{ id: s.id }], rowCount: 1 } as any;
         }
         return { rows: [], rowCount: 0 } as any;
+      }
+      // F-45 recordSignerRejection — latest class on a pending/superseded signer.
+      if (text.includes('UPDATE envelope_signers') && text.includes('SET last_rejection_class')) {
+        const [envelopeId, email, cls] = v;
+        const hits = signers.filter(
+          (x) => x.envelope_id === envelopeId &&
+            String(x.email).toLowerCase() === String(email).toLowerCase() &&
+            (x.status === 'pending' || x.status === 'superseded'),
+        );
+        for (const s of hits) { s.last_rejection_class = cls; s.last_rejection_at = new Date(); }
+        return { rows: hits.map((s) => ({ id: s.id })), rowCount: hits.length } as any;
+      }
+      // F-45 claimRejectionNotice — append the class once; true only for the claimer.
+      if (text.includes('UPDATE envelope_signers') && text.includes('array_append(rejection_notice_classes')) {
+        const [envelopeId, email, cls] = v;
+        const hits = signers.filter(
+          (x) => x.envelope_id === envelopeId &&
+            String(x.email).toLowerCase() === String(email).toLowerCase() &&
+            !(x.rejection_notice_classes ?? []).includes(cls),
+        );
+        for (const s of hits) s.rejection_notice_classes = [...(s.rejection_notice_classes ?? []), cls];
+        return { rows: hits.map((s) => ({ id: s.id })), rowCount: hits.length } as any;
       }
       // 2F.CD.2: checkAllSigned — COUNT total + signed for an envelope's signers.
       if (text.includes('COUNT(*)') && text.includes('envelope_signers')) {

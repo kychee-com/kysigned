@@ -88,6 +88,15 @@ export interface EnvelopeSigner {
   undeliverable_at: Date | null;
   /** F-7.3 / F-29.6 — exactly-once acceptance-ack marker (set when the ack was sent). */
   acceptance_notified_at: Date | null;
+  /**
+   * F-45.5 / F-45.6 — the latest rejection class of a signer who has not signed yet
+   * (the corrective-bounce class, e.g. `wrong_phrase`, `google_workspace_no_dkim`).
+   * Cleared on sign and on edit. NULL = nothing to flag.
+   */
+  last_rejection_class: string | null;
+  last_rejection_at: Date | null;
+  /** F-45.3 — rejection classes the creator was already notified about (claim-first). */
+  rejection_notice_classes: string[];
 }
 
 export interface CreateEnvelopeInput {

@@ -34,6 +34,7 @@ import { evaluateDkimPolicy, type DkimPolicyReason } from './dkimPolicy.js';
 import { extractSigningText } from './mimeExtract.js';
 import { validateSigningIntent } from './signingIntent.js';
 import { checkForwardedAttachment } from './attachmentCheck.js';
+import { diagnoseProviderNoDkim, type ProviderNoDkim } from './providerNoDkim.js';
 
 export interface ProcessForwardContext {
   pool: DbPool;
@@ -82,6 +83,12 @@ export type ForwardOutcome =
       signerEmail: string;
       /** The offending intent line / attachment state, for the F-7 corrective bounce. */
       detail?: string;
+      /**
+       * F-45.1 — set only on a `misaligned` rejection whose signatures are ALL a
+       * provider's fallback (the signer's domain has no DKIM switched on). Chooses
+       * the messaging; the gate `code` is unchanged (DD-69).
+       */
+      providerNoDkim?: ProviderNoDkim;
     }
   | {
       outcome: 'dropped';
@@ -143,12 +150,14 @@ export async function processForward(
   const dkimOutcome = await verifyDkim(rawMime, { resolver: ctx.dkimResolver });
   const dkimVerdict = evaluateDkimPolicy(dkimOutcome);
   if (!dkimVerdict.ok) {
+    const providerNoDkim = dkimVerdict.reason === 'misaligned' ? diagnoseProviderNoDkim(dkimOutcome) : null;
     return {
       outcome: 'rejected',
       code: dkimVerdict.reason,
       reason: `DKIM verification failed: ${dkimVerdict.reason}.`,
       envelopeId,
       signerEmail,
+      ...(providerNoDkim ? { providerNoDkim } : {}),
     };
   }
 

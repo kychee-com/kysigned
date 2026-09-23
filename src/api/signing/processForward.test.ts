@@ -348,3 +348,96 @@ describe('processForward — the signing event (F-6)', () => {
     assert.equal(h.signers[0].status, 'signed');
   });
 });
+
+// F-45.1 / AC-271 / AC-278 — a provider that signs under its own fallback domain
+// because the signer's domain has no DKIM switched on. The gate verdict stays
+// `misaligned`; only the diagnosis rides along on the rejected outcome.
+describe('processForward — provider no-DKIM diagnosis (F-45.1)', () => {
+  const GOOGLE_FALLBACK = 'example-com.20251104.gappssmtp.com';
+  const MICROSOFT_FALLBACK = 'contoso.onmicrosoft.com';
+
+  async function signAs(raw: string, domains: string[]): Promise<string> {
+    const res = await dkimSign(raw, {
+      canonicalization: 'relaxed/relaxed',
+      signTime: new Date('2026-06-13T10:00:00Z'),
+      signatureData: domains.map((signingDomain) => ({ signingDomain, selector: 'test', privateKey, algorithm: 'rsa-sha256' })),
+    });
+    return res.signatures + raw;
+  }
+
+  function resolverFor(domains: string[]): DkimResolver {
+    const served = new Set(domains.map((d) => `test._domainkey.${d}`));
+    return async (name, rrtype) => {
+      if (String(rrtype).toLowerCase() === 'txt' && served.has(name)) return [[txtRecord]];
+      const e = new Error('ENOTFOUND') as Error & { code?: string };
+      e.code = 'ENOTFOUND';
+      throw e;
+    };
+  }
+
+  it('Google Workspace fallback signature → misaligned + google_workspace (AC-271)', async () => {
+    const h = seedPool();
+    const raw = await signAs(buildForward(), [GOOGLE_FALLBACK]);
+    const r = await processForward(raw, { pool: h.pool, verdicts: PASS, dkimResolver: resolverFor([GOOGLE_FALLBACK]) });
+    assert.equal(r.outcome, 'rejected');
+    if (r.outcome === 'rejected') {
+      assert.equal(r.code, 'misaligned');
+      assert.equal(r.providerNoDkim, 'google_workspace');
+    }
+    assert.equal(h.signers[0].status, 'pending');
+  });
+
+  it('Microsoft 365 fallback signature → misaligned + microsoft_365 (AC-278)', async () => {
+    const h = seedPool({ signerEmail: 'alice@contoso.com' });
+    const raw = await signAs(buildForward({ from: 'Alice <alice@contoso.com>' }), [MICROSOFT_FALLBACK]);
+    const r = await processForward(raw, { pool: h.pool, verdicts: PASS, dkimResolver: resolverFor([MICROSOFT_FALLBACK]) });
+    assert.equal(r.outcome, 'rejected');
+    if (r.outcome === 'rejected') {
+      assert.equal(r.code, 'misaligned');
+      assert.equal(r.providerNoDkim, 'microsoft_365');
+    }
+    assert.equal(h.signers[0].status, 'pending');
+  });
+
+  it('a verifying signature under any other domain → misaligned, no diagnosis', async () => {
+    const h = seedPool();
+    const raw = await signAs(buildForward(), ['relay.example.net']);
+    const r = await processForward(raw, { pool: h.pool, verdicts: PASS, dkimResolver: resolverFor(['relay.example.net']) });
+    assert.equal(r.outcome, 'rejected');
+    if (r.outcome === 'rejected') {
+      assert.equal(r.code, 'misaligned');
+      assert.equal(r.providerNoDkim, undefined);
+    }
+  });
+
+  it('an own-domain signature beside the fallback one → no diagnosis (the domain HAS DKIM)', async () => {
+    const h = seedPool();
+    const raw = await signAs(buildForward(), ['example.com', GOOGLE_FALLBACK]);
+    // Only the fallback key is served, so the own-domain signature cannot pass.
+    const r = await processForward(raw, { pool: h.pool, verdicts: PASS, dkimResolver: resolverFor([GOOGLE_FALLBACK]) });
+    assert.equal(r.outcome, 'rejected');
+    if (r.outcome === 'rejected') {
+      assert.equal(r.code, 'misaligned');
+      assert.equal(r.providerNoDkim, undefined);
+    }
+  });
+
+  it('an unsigned forward → rejected, no diagnosis', async () => {
+    const h = seedPool();
+    const r = await processForward(buildForward(), { pool: h.pool, verdicts: PASS, dkimResolver: resolverFor([]) });
+    assert.equal(r.outcome, 'rejected');
+    if (r.outcome === 'rejected') assert.equal(r.providerNoDkim, undefined);
+  });
+
+  it('a tampered fallback signature → invalid_signature, no diagnosis', async () => {
+    const h = seedPool();
+    const signed = await signAs(buildForward(), [GOOGLE_FALLBACK]);
+    const tampered = signed.replace('Forwarded message', 'Forwarded MESSAGE (edited)');
+    const r = await processForward(tampered, { pool: h.pool, verdicts: PASS, dkimResolver: resolverFor([GOOGLE_FALLBACK]) });
+    assert.equal(r.outcome, 'rejected');
+    if (r.outcome === 'rejected') {
+      assert.equal(r.code, 'invalid_signature');
+      assert.equal(r.providerNoDkim, undefined);
+    }
+  });
+});
