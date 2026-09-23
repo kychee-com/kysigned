@@ -448,3 +448,150 @@ describe('EnvelopeDetailPage — visual QA: tap target + contrast + font size (U
     expect(container.innerHTML).not.toContain('text-[11px]');
   });
 });
+
+// FC32.1 (UX-039/UX-040/UX-041 + BT-32.1, system-test cycle 32): every control on this page
+// reaches 44x44 on a phone in EVERY state, not only the three the sweep named. The scanner
+// reports one offender per tag + first class (so "Cancel document" and "Delete" hid behind
+// UX-039/UX-041) and only sees the state it loads (the add, edit and seal states were never
+// on screen), so this lock walks all five states and checks every control, with no dedup.
+// The minimums are md-gated because F-11.3 / AC-84 keep the desktop layout unchanged.
+// This is the class-level tripwire only; the binding proof is real geometry in a real
+// browser (toolbelt/envelope-detail-design-probe.mjs, FC32.2).
+describe('EnvelopeDetailPage — every control reaches 44x44 on a phone, in every state (UX-039..041, FC32.1)', () => {
+  const AT = new Date('2026-09-23T10:00:00Z').toISOString();
+  const SIGNED_AT = new Date('2026-09-23T11:00:00Z').toISOString();
+  const openWithAttention = () =>
+    envelope({
+      status: 'active',
+      auto_close: true,
+      signers: [
+        signer({ email: 'blocked@x.com', name: 'Blocked Signer', last_rejection: { class: 'google_workspace_no_dkim', at: AT } }),
+        signer({ email: 'plain@x.com', name: 'Plain Signer' }),
+      ],
+    });
+  const allSigned = (over: Record<string, unknown>) =>
+    envelope({
+      signers: [
+        signer({ email: 'a@x.com', name: 'Alice', status: 'signed', signed_at: SIGNED_AT }),
+        signer({ email: 'b@x.com', name: 'Bob', status: 'signed', signed_at: SIGNED_AT }),
+      ],
+      ...over,
+    });
+
+  /** Every control that lacks the md-gated minimums, named so a failure says which one. */
+  function controlsWithoutTapToken(root: HTMLElement): string[] {
+    const has = (el: Element, ...classes: string[]) => classes.every((c) => el.classList.contains(c));
+    const describeEl = (el: Element) => {
+      const input = el as HTMLInputElement;
+      const label = (el.textContent || input.placeholder || input.value || input.type || '').trim().slice(0, 40);
+      return `<${el.tagName.toLowerCase()}> "${label}"`;
+    };
+    const missing: string[] = [];
+    root.querySelectorAll('button').forEach((el) => {
+      if (!has(el, 'min-h-[44px]', 'md:min-h-0', 'min-w-[44px]', 'md:min-w-0')) missing.push(describeEl(el));
+    });
+    root.querySelectorAll('input').forEach((el) => {
+      if (['checkbox', 'radio', 'hidden'].includes(el.type)) return; // the wrapping label is the tap target
+      if (!has(el, 'min-h-[44px]', 'md:min-h-0')) missing.push(describeEl(el));
+    });
+    root.querySelectorAll('label').forEach((el) => {
+      if (!el.querySelector('input[type="checkbox"]')) return;
+      if (!has(el, 'min-h-[44px]', 'md:min-h-0')) missing.push(describeEl(el));
+    });
+    root.querySelectorAll('a').forEach((el) => {
+      if (!has(el, 'min-h-[44px]', 'md:min-h-0')) missing.push(describeEl(el));
+    });
+    return missing;
+  }
+
+  it('S1 open with a needs-attention signer: Add, Edit and Delete per signer, Send Reminders, Cancel, the FAQ and back links', async () => {
+    mockEnvelope(openWithAttention());
+    const { container } = renderPage();
+    await screen.findByText('needs attention');
+    // Non-vacuous: every control this state must show is on screen before the lock runs.
+    expect(screen.getByRole('button', { name: /\+ add signer/i })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^edit$/i })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: /^delete$/i })).toHaveLength(2);
+    expect(screen.getByRole('button', { name: /send reminders/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /cancel document/i })).toBeEnabled();
+    expect(screen.getByRole('link', { name: /how to switch it on/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /dashboard/i })).toBeInTheDocument();
+    expect(controlsWithoutTapToken(container)).toEqual([]);
+  });
+
+  it('S2 the add-signer form, on-behalf ticked: its inputs, the checkbox label, Add & send request, Cancel', async () => {
+    mockEnvelope(openWithAttention());
+    const { container } = renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /\+ add signer/i }));
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect(screen.getByPlaceholderText('Full name')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('email@example.com')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Organisation name')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /add & send request/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
+    expect(controlsWithoutTapToken(container)).toEqual([]);
+  });
+
+  it('S3 the edit form on the needs-attention signer, on-behalf ticked: its inputs, the checkbox label, Save & resend, Cancel', async () => {
+    mockEnvelope(openWithAttention());
+    const { container } = renderPage();
+    await screen.findByText('needs attention');
+    fireEvent.click(screen.getAllByRole('button', { name: /^edit$/i })[0]!);
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect(screen.getByPlaceholderText('Organisation name')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /save & resend/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
+    // The other signer keeps its own Edit and Delete while this one is being edited.
+    expect(screen.getAllByRole('button', { name: /^edit$/i })).toHaveLength(1);
+    expect(controlsWithoutTapToken(container)).toEqual([]);
+  });
+
+  it('S4 manual seal, all signed: Seal & send, the kept edit controls, Cancel document', async () => {
+    mockEnvelope(allSigned({ status: 'awaiting_seal', auto_close: false }));
+    const { container } = renderPage();
+    expect(await screen.findByRole('button', { name: /seal & send/i })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^edit$/i })).toHaveLength(2);
+    expect(screen.getByRole('button', { name: /cancel document/i })).toBeEnabled();
+    expect(controlsWithoutTapToken(container)).toEqual([]);
+  });
+
+  it('S5 auto-close, all signed, finalizing: the disabled Cancel document', async () => {
+    mockEnvelope(allSigned({ status: 'active', auto_close: true }));
+    const { container } = renderPage();
+    expect(await screen.findByRole('button', { name: /cancel document/i })).toBeDisabled();
+    expect(controlsWithoutTapToken(container)).toEqual([]);
+  });
+
+  it('BT-32.3: the loading spinner is replaced by a NEW page container, never reused as it (desktop layout shift)', async () => {
+    // React reused the full-width spinner <div> as the centred max-w-3xl column, so on a
+    // desktop the SAME node jumped from x=0 to the centre: a layout shift of about 0.21 on
+    // every load (measured by the FC32.2 probe). A fresh node is not a layout shift.
+    let resolveEnvelope: (value: unknown) => void = () => {};
+    apiGetMock.mockImplementation(() => new Promise((resolve) => { resolveEnvelope = resolve; }));
+    const { container } = renderPage();
+    const loadingRoot = container.firstElementChild as HTMLElement;
+    expect(loadingRoot.querySelector('.animate-spin')).not.toBeNull();
+    resolveEnvelope(openWithAttention());
+    await screen.findByText('Signers');
+    expect(loadingRoot.isConnected).toBe(false);
+    expect(container.firstElementChild).not.toBe(loadingRoot);
+  });
+
+  it('BT-32.1: the edit form names its two text inputs through their labels, with ids unique per signer row', async () => {
+    mockEnvelope(openWithAttention());
+    renderPage();
+    await screen.findByText('needs attention');
+    fireEvent.click(screen.getAllByRole('button', { name: /^edit$/i })[0]!);
+    const firstName = screen.getByLabelText('Full name') as HTMLInputElement;
+    const firstEmail = screen.getByLabelText(/^Email/) as HTMLInputElement;
+    expect(firstName.value).toBe('Blocked Signer');
+    expect(firstEmail.value).toBe('blocked@x.com');
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    fireEvent.click(screen.getAllByRole('button', { name: /^edit$/i })[1]!);
+    const secondName = screen.getByLabelText('Full name') as HTMLInputElement;
+    const secondEmail = screen.getByLabelText(/^Email/) as HTMLInputElement;
+    expect(secondName.value).toBe('Plain Signer');
+    expect(secondEmail.value).toBe('plain@x.com');
+    expect(new Set([firstName.id, firstEmail.id, secondName.id, secondEmail.id]).size).toBe(4);
+  });
+});

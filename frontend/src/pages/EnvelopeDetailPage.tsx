@@ -1,11 +1,23 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { useParams, useLocation, useNavigate, Link } from 'react-router-dom'
 import { apiGet, apiPost, apiPatch, apiDelete, type EnvelopeStatus } from '../lib/api'
 import { trackEventOnce, GA_EVENTS } from '../lib/analytics'
 import { rejectionGuidance } from '../lib/rejectionCopy'
 
+// FC32.1 (UX-039/UX-040/UX-041): the ONE tap-target token every control on this page
+// carries, in every state (open, add form, edit form, manual seal, finalizing). 44x44
+// below `md`, where the tap-target check runs; at `md` and up the minimums resolve to
+// zero, so the desktop layout stays exactly as it was (F-11.3 / AC-84). Buttons also
+// centre their label inside the 44x44 box. The back link and the F-45 FAQ link keep
+// their own `min-h-[44px] md:min-h-0` treatment. A control added to this page without
+// the token fails EnvelopeDetailPage.test.tsx (the FC32.1 lock).
+const TAP_TARGET = 'min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0'
+const TAP_BUTTON = `${TAP_TARGET} inline-flex items-center justify-center`
+
 export function EnvelopeDetailPage() {
   const { id } = useParams<{ id: string }>()
+  // BT-32.1: the edit form binds each label to its input (unique per signer row).
+  const fieldIdBase = useId()
   // Arriving straight from "Send for Signing" carries justSent in router state:
   // jump to the top of the page and show a green confirmation banner. Captured
   // once on mount; the flag is then consumed so a refresh/back won't re-show it
@@ -159,8 +171,12 @@ export function EnvelopeDetailPage() {
     }
   }
 
-  if (error) return <div className="max-w-lg mx-auto mt-20 p-6 text-center text-red-600">{error}</div>
-  if (!data) return <div className="flex items-center justify-center min-h-screen">
+  // BT-32.3: each root carries its own key, so React MOUNTS the page column instead of
+  // reusing the full-width spinner <div> as it. Reused, that one node jumped from x=0 to
+  // the centred column on a desktop: a layout shift of about 0.21 on every load. A newly
+  // inserted node is not a layout shift, and the loading visual is unchanged.
+  if (error) return <div key="error" className="max-w-lg mx-auto mt-20 p-6 text-center text-red-600">{error}</div>
+  if (!data) return <div key="loading" className="flex items-center justify-center min-h-screen">
     <div className="animate-spin h-8 w-8 border-4 border-gray-300 border-t-gray-900 rounded-full" />
   </div>
 
@@ -195,7 +211,7 @@ export function EnvelopeDetailPage() {
     data.status
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8">
+    <div key="page" className="max-w-3xl mx-auto px-4 py-8">
       {/* Post-send confirmation (Barry QA 2026-06-19) — shown at the very top so
           it's the first thing the creator sees after "Send for Signing". When an
           address couldn't be reached we warn instead of showing all-green
@@ -254,7 +270,7 @@ export function EnvelopeDetailPage() {
           <h2 className="text-sm font-medium">Signers</h2>
           {editable && !adding && (
             <button onClick={() => setAdding(true)} disabled={busy}
-                    className="text-sm text-blue-600 hover:underline disabled:opacity-40">
+                    className={`${TAP_BUTTON} text-sm text-blue-600 hover:underline disabled:opacity-40`}>
               + Add signer
             </button>
           )}
@@ -266,12 +282,12 @@ export function EnvelopeDetailPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <input type="text" placeholder="Full name" value={addForm.name}
                      onChange={(e) => setAddForm({ ...addForm, name: e.target.value })}
-                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                     className={`${TAP_TARGET} w-full border border-gray-300 rounded-lg px-3 py-2 text-sm`} />
               <input type="email" placeholder="email@example.com" value={addForm.email}
                      onChange={(e) => setAddForm({ ...addForm, email: e.target.value })}
-                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                     className={`${TAP_TARGET} w-full border border-gray-300 rounded-lg px-3 py-2 text-sm`} />
             </div>
-            <label className="flex items-center gap-2 text-xs text-gray-600">
+            <label className={`${TAP_TARGET} flex items-center gap-2 text-xs text-gray-600`}>
               <input type="checkbox" checked={addForm.onBehalf}
                      onChange={(e) => setAddForm({ ...addForm, onBehalf: e.target.checked })}
                      className="rounded border-gray-300" />
@@ -280,15 +296,15 @@ export function EnvelopeDetailPage() {
             {addForm.onBehalf && (
               <input type="text" placeholder="Organisation name" value={addForm.onBehalfOf}
                      onChange={(e) => setAddForm({ ...addForm, onBehalfOf: e.target.value })}
-                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                     className={`${TAP_TARGET} w-full border border-gray-300 rounded-lg px-3 py-2 text-sm`} />
             )}
             <div className="flex gap-2">
               <button onClick={handleAddSigner} disabled={busy}
-                      className="px-3 py-1.5 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-40">
+                      className={`${TAP_BUTTON} px-3 py-1.5 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-40`}>
                 {busy ? 'Adding…' : 'Add & send request'}
               </button>
               <button onClick={() => { setAdding(false); setAddForm({ email: '', name: '', onBehalf: false, onBehalfOf: '' }) }}
-                      className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
+                      className={`${TAP_BUTTON} px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50`}>
                 Cancel
               </button>
             </div>
@@ -321,9 +337,9 @@ export function EnvelopeDetailPage() {
                     {editable && !isEditing && (
                       <>
                         <button onClick={() => startEdit(s)} disabled={busy}
-                                className="text-xs text-gray-500 hover:text-gray-900 disabled:opacity-40">Edit</button>
+                                className={`${TAP_BUTTON} text-xs text-gray-500 hover:text-gray-900 disabled:opacity-40`}>Edit</button>
                         <button onClick={() => handleDeleteSigner(s.email)} disabled={busy}
-                                className="text-xs text-red-600 hover:text-red-700 disabled:opacity-40">Delete</button>
+                                className={`${TAP_BUTTON} text-xs text-red-600 hover:text-red-700 disabled:opacity-40`}>Delete</button>
                       </>
                     )}
                   </div>
@@ -366,19 +382,19 @@ export function EnvelopeDetailPage() {
                     )}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-xs text-gray-500 mb-1">Full name</label>
-                        <input type="text" value={editForm.name}
+                        <label htmlFor={`${fieldIdBase}-signer-${i}-name`} className="block text-xs text-gray-500 mb-1">Full name</label>
+                        <input id={`${fieldIdBase}-signer-${i}-name`} type="text" value={editForm.name}
                                onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                               className={`${TAP_TARGET} w-full border border-gray-300 rounded-lg px-3 py-2 text-sm`} />
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-500 mb-1">Email <span className="text-gray-600">(changing re-sends to the new address)</span></label>
-                        <input type="email" value={editForm.newEmail}
+                        <label htmlFor={`${fieldIdBase}-signer-${i}-email`} className="block text-xs text-gray-500 mb-1">Email <span className="text-gray-600">(changing re-sends to the new address)</span></label>
+                        <input id={`${fieldIdBase}-signer-${i}-email`} type="email" value={editForm.newEmail}
                                onChange={(e) => setEditForm({ ...editForm, newEmail: e.target.value })}
-                               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                               className={`${TAP_TARGET} w-full border border-gray-300 rounded-lg px-3 py-2 text-sm`} />
                       </div>
                     </div>
-                    <label className="flex items-center gap-2 text-xs text-gray-600">
+                    <label className={`${TAP_TARGET} flex items-center gap-2 text-xs text-gray-600`}>
                       <input type="checkbox" checked={editForm.onBehalf}
                              onChange={(e) => setEditForm({ ...editForm, onBehalf: e.target.checked })}
                              className="rounded border-gray-300" />
@@ -387,15 +403,15 @@ export function EnvelopeDetailPage() {
                     {editForm.onBehalf && (
                       <input type="text" placeholder="Organisation name" value={editForm.onBehalfOf}
                              onChange={(e) => setEditForm({ ...editForm, onBehalfOf: e.target.value })}
-                             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                             className={`${TAP_TARGET} w-full border border-gray-300 rounded-lg px-3 py-2 text-sm`} />
                     )}
                     <div className="flex gap-2">
                       <button onClick={() => submitEdit(s.email)} disabled={busy}
-                              className="px-3 py-1.5 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-40">
+                              className={`${TAP_BUTTON} px-3 py-1.5 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-40`}>
                         {busy ? 'Saving…' : 'Save & resend'}
                       </button>
                       <button onClick={() => setEditEmail(null)}
-                              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                              className={`${TAP_BUTTON} px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50`}>Cancel</button>
                     </div>
                   </div>
                 )}
@@ -410,13 +426,13 @@ export function EnvelopeDetailPage() {
         {/* F-24.2 — manual "Seal & send" (only when all-signed + parked). */}
         {canSeal && (
           <button onClick={handleSeal} disabled={busy}
-                  className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-800 disabled:opacity-40">
+                  className={`${TAP_BUTTON} px-4 py-2 text-sm bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-800 disabled:opacity-40`}>
             {busy ? 'Sealing…' : 'Seal & send signed document'}
           </button>
         )}
         {editable && !allSigned && (
           <button onClick={handleRemind} disabled={reminding}
-                  className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-40">
+                  className={`${TAP_BUTTON} px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-40`}>
             {reminding ? 'Sending...' : 'Send Reminders'}
           </button>
         )}
@@ -427,7 +443,7 @@ export function EnvelopeDetailPage() {
         {open && (
           <button onClick={handleVoid} disabled={completePending}
                   title={completePending ? 'Everyone has signed, the completed signing record is on its way, so this document can no longer be cancelled.' : undefined}
-                  className={`px-4 py-2 text-sm border rounded-lg ${completePending ? 'border-gray-200 text-gray-300 cursor-not-allowed' : 'border-red-200 text-red-600 hover:bg-red-50'}`}>
+                  className={`${TAP_BUTTON} px-4 py-2 text-sm border rounded-lg ${completePending ? 'border-gray-200 text-gray-300 cursor-not-allowed' : 'border-red-200 text-red-600 hover:bg-red-50'}`}>
             Cancel document
           </button>
         )}
