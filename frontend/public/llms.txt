@@ -1,4 +1,4 @@
-# kysigned — self-verifying e-signatures for agents and humans
+# kysigned: self-verifying e-signatures for agents and humans
 
 > This is a kysigned instance. kysigned is open-source, operator-forkable software: this
 > deployment is run by its own operator, on its own domain, with its own branding, pricing,
@@ -8,19 +8,19 @@
 > Verify a bundle: /verify (offline, no account, no server lookup)
 > FAQ: /faq
 > Health: /v1/health
-> Pricing / access: operator-configured — this instance may charge per envelope, gate creators by
+> Pricing / access: operator-configured. This instance may charge per envelope, gate creators by
 >   an allowlist, or both. Signing is always free for signers.
 > Open source: Apache-2.0-licensed (https://github.com/kychee-com/kysigned); run your own with `run402 up`.
 
 **IMPORTANT: kysigned is NOT in the trust chain.** The proof of a signature is the signer's own
 email provider, not kysigned. The instance assembles and time-stamps the evidence; anyone can verify
-it with math and public keys — even if this instance no longer exists. No accounts for signers, no
+it with math and public keys, even if this instance no longer exists. No accounts for signers, no
 certificate authority, no central registry, no lookups.
 
 ## Hello, Agent!
 
 kysigned turns a PDF plus a list of signers into a legally-binding, independently-verifiable
-e-signature — and it's built for you to drive end to end, no human UI required. You act as the
+e-signature, built for you to drive end to end with no human UI required. You act as the
 CREATOR: you create an envelope and track it. Each human signer signs by replying to one email.
 When everyone has signed, every party receives a sealed EVIDENCE BUNDLE they can verify forever.
 
@@ -30,14 +30,14 @@ When everyone has signed, every party receives a sealed EVIDENCE BUNDLE they can
    eIDAS consent to sign electronically, plus the document's SHA-256) and emails each signer their
    own signing request from this instance's signing mailbox (`forward-to-sign@<this-instance>`).
 2. A signer signs by FORWARDING that email back with **`I sign this document`** as the first line,
-   the PDF still attached. Their provider (Gmail, Outlook, iCloud, …) DKIM-signs that reply — a
+   the PDF still attached. Their provider (Gmail, Outlook, iCloud, …) DKIM-signs that reply: a
    cryptographic signature only that provider can produce for that mailbox. Signers need no account
    and no app.
 3. When all signers are in, kysigned assembles the **evidence bundle**: the original document, every
    signed `.eml` reply, RFC-3161 + OpenTimestamps time proofs, and the DKIM public keys. It's a clean
    unsigned PDF (opens with no certificate warning / no red-X) carrying a verify QR, and it's emailed
    to every party (and you).
-4. Anyone verifies the bundle offline — math + public DKIM keys — with no server involved.
+4. Anyone verifies the bundle offline (math plus public DKIM keys) with no server involved.
 
 ## TL;DR for an agent
 
@@ -46,7 +46,7 @@ When everyone has signed, every party receives a sealed EVIDENCE BUNDLE they can
   also emails you a "X just signed Y" progress note.
 - **Nudge / cancel**: `POST /v1/envelope/:id/remind`, `POST /v1/envelope/:id/void`.
 - **Complete**: everyone receives the bundle automatically. Verify any time at `/verify`.
-- **Pay / access**: operator-configured — the creator account may need credits and/or allowlisting.
+- **Pay / access**: operator-configured. The creator account may need credits and/or allowlisting.
 
 ## Authentication
 
@@ -54,8 +54,8 @@ The creator API (`/v1/envelope*`, `/v1/documents`, `/v1/envelopes`) is authentic
 account, in one of two ways:
 
 - **API key (the agent path).** Mint a key in the dashboard at `/account/api-keys` (shown exactly
-  once, format `ksk_…`) and send it in the `Authorization` header — `Bearer ksk_…` or the bare key
-  both work. Keys are creator-scoped (envelope actions only — they cannot manage keys or the
+  once, format `ksk_…`) and send it in the `Authorization` header: `Bearer ksk_…` or the bare key
+  both work. Keys are creator-scoped (envelope actions only; they cannot manage keys or the
   account), CSRF-exempt, and revocable. Auth failures return `401 { "code": "auth_invalid_key" }`;
   using a key outside its scope returns `403 { "code": "auth_key_scope" }`.
 - **Browser session (the human path).** `POST /v1/auth/magic-link` with `{ "email": "you@example.com" }`
@@ -65,8 +65,8 @@ account, in one of two ways:
 - MCP / CLI: set `KYSIGNED_ENDPOINT` (this instance's origin) and `KYSIGNED_AUTHORIZATION` (your
   `ksk_…` API key). See "Agent tools (MCP)" below.
 - Signer endpoints (`/v1/sign/:id/:token/info`, `/v1/envelope/:id/:token/pdf`) use the per-signer
-  token from the signing-request email — no account needed.
-- **Wallet payment (x402) — no account at all.** Where the operator has enabled it (kysigned.com
+  token from the signing-request email, with no account needed.
+- **Wallet payment (x402): no account at all.** Where the operator has enabled it (kysigned.com
   has), `POST /v1/x402/envelope` needs NO key and NO session: the payment is the authorization. See
   "Machine payment (x402)" below.
 
@@ -78,38 +78,38 @@ Operator-dependent: enabled on kysigned.com; a fork without x402 config answers
 An agent holding a wallet can create an envelope with no account, no card, and no API key by paying
 the flat per-envelope price per call:
 
-1. `POST /v1/x402/envelope` with the standard create body PLUS `creator_email` (required — the
+1. `POST /v1/x402/envelope` with the standard create body PLUS `creator_email` (required: the
    deliverable address the creator record, creation/completion mail, and the evidence bundle attach
    to). An unpaid call is answered by the platform with a standard **x402 402 challenge** (payment
    requirements: the per-envelope price in USD micros, the operator's payout wallet, mainnet
-   networks) — the x402 protocol shape, not this API's `{error, code}` envelope.
+   networks). That is the x402 protocol shape, not this API's `{error, code}` envelope.
 2. Pay with any x402-capable client (sign the payment authorization per the challenge) and retry
    with the `X-PAYMENT` header. The platform verifies and settles BEFORE the endpoint runs.
 3. The settled payment credits the creator ledger EXACTLY ONCE (keyed on the stable payment id) and
    the create debits it → `201` with the same response shape as `POST /v1/envelope`. Retrying with
-   the same settled payment replays the SAME 201 — one payment, one envelope, no double-charge.
+   the same settled payment replays the SAME 201: one payment, one envelope, no double-charge.
 
-Optional retry control: send your own `Idempotency-Key` header on the paid call — a retry with the
+Optional retry control: send your own `Idempotency-Key` header on the paid call, and a retry with the
 same key replays the same envelope (the create dedupes on your key); without one, dedupe keys on the
 settled payment id. The ledger credit is always exactly-once per settled payment either way.
 
 **Validate before you pay (avoid a wasted charge).** run402 settles the payment BEFORE this endpoint
 runs, so a paid create that then fails deterministic validation (a plus-alias signer, a bad email, an
-unparseable/oversize PDF) still consumes the charge. Call `POST /v1/envelope/preflight` FIRST — it's
+unparseable/oversize PDF) still consumes the charge. Call `POST /v1/envelope/preflight` FIRST: it's
 free (no charge, no create) and runs the same input validation, returning `{ "ok": true }` or the
 same `validation_*` / `rate_size_*` error. Pay only once preflight passes. If you skip preflight and a
 paid create fails validation, the response carries `payment_banked: true`, `credit_email`, and
-`next_actions`: the money became recoverable account credit for `creator_email` (NOT lost) — fix the
+`next_actions`: the money became recoverable account credit for `creator_email` (NOT lost). Fix the
 input, sign in to `creator_email` (magic link), and create via the authenticated `POST /v1/envelope`;
 the banked credit covers it, no new payment.
 
-**Payment receipt.** A successful `201` includes a `payment` block — `payment_id`, `network`,
-`amount_usd_micros`, `asset`, `pay_to`, `settlement_reference` (tx hash), `settled_at` — so you can
+**Payment receipt.** A successful `201` includes a `payment` block with `payment_id`, `network`,
+`amount_usd_micros`, `asset`, `pay_to`, `settlement_reference` (tx hash) and `settled_at`, so you can
 reconcile the spend with the envelope. A `tracking` block notes that `status_url` needs creator auth.
 
 **Insufficient funds.** If a paid retry returns `402 { "code": "payment_insufficient_funds", ... }`,
 your wallet lacks enough USDC on Base mainnet for the quoted price. Its `next_actions` carries
-`{ "type": "fund_wallet", "network", "asset", "minimum_amount_usd_micros" }` — fund the wallet
+`{ "type": "fund_wallet", "network", "asset", "minimum_amount_usd_micros" }`. Fund the wallet
 accordingly and retry. (Emitted by the run402 gateway before this endpoint runs; the raw facilitator
 reason and the required vs available amounts are under `details`.)
 
@@ -117,7 +117,7 @@ Discovery: an UNFUNDED `POST /v1/envelope` returns
 `402 { "code": "payment_required", "x402_route": "/v1/x402/envelope", "x402_price_usd_micros": <price> }`
 so you can fall over to the paid route programmatically. Dashboard continuity: sign in later with
 the `creator_email` you supplied (magic link / passkey) and the envelope + its wallet-sourced ledger
-entries are in the dashboard like any creator's. The x402 route is plain HTTP for any x402 client —
+entries are in the dashboard like any creator's. The x402 route is plain HTTP for any x402 client,
 and `kysigned-mcp` drives it first-class: its `wallet_status` + `create_envelope_x402` tools pay
 from the host-local run402 wallet with NO API key (see "Agent tools (MCP)"); the five ops tools
 stay key-authenticated.
@@ -144,7 +144,7 @@ fixed taxonomy mapped to the status contract: `auth_*` (401/403), `csrf_*` (403)
   "signers": [...] }` to your URL with the header
   `X-Kysigned-Signature: t=<unix seconds>,v1=<hex hmac-sha256(callback_secret, "<t>." + rawBody)>`.
   Verify by recomputing the HMAC over `t + "." + rawBody`, comparing constant-time, and rejecting
-  timestamps outside your tolerance (e.g. 5 minutes). Deliveries retry on failure (at-least-once) —
+  timestamps outside your tolerance (e.g. 5 minutes). Deliveries retry on failure (at-least-once), so
   make your receiver idempotent on `envelope_id`.
 
 The full surface is also machine-readable as OpenAPI 3.1 at `/openapi.json`.
@@ -168,11 +168,11 @@ The full surface is also machine-readable as OpenAPI 3.1 at `/openapi.json`.
    }
    ```
    → `{ "envelope_id", "status", "document_hash", "status_url", "verify_url", "signing_links": [...], "callback_secret"?, "tracking" }`
-   (`callback_secret` appears only when you sent `callback_url`, and only this once — store it to
+   (`callback_secret` appears only when you sent `callback_url`, and only this once. Store it to
    verify webhook deliveries.)
    `tracking.token` (`ktt_…`) is the envelope-observer handle, returned on EVERY create: send it as
-   the `Authorization` header on `GET /v1/envelope/:id` to poll status — full signer roster with
-   per-signer signing + delivery state — with no account, API key, or session. It is read-only and
+   the `Authorization` header on `GET /v1/envelope/:id` to poll status (the full signer roster with
+   per-signer signing and delivery state) with no account, API key, or session. It is read-only and
    envelope-scoped: any other envelope answers 404, and every mutating/listing route refuses it
    (`403 auth_tracking_scope`). Hand it to a CI job or a third party to share tracking WITHOUT
    sharing your API key. Lost it after a restart? The free `POST /v1/envelope/preflight` replay
@@ -185,7 +185,7 @@ The full surface is also machine-readable as OpenAPI 3.1 at `/openapi.json`.
 
    Notes: ≤ 20 signers; each PDF must be ≤ ~3 MB when sent as `pdf_base64` (the create call is invoked
    synchronously on Lambda, whose event payload is capped at 6 MiB; base64-in-JSON plus the gateway's own
-   wrapping inflates a raw PDF by ~16/9, so ~3 MB is the safe ceiling — larger bodies fail at the gateway).
+   wrapping inflates a raw PDF by ~16/9, so ~3 MB is the safe ceiling; larger bodies fail at the gateway).
    To send a larger document, pass `pdf_url` instead of `pdf_base64` (the bytes are fetched server-side,
    bypassing the request-body limit). Separately, oversize envelopes are rejected up front with the size
    math: the completed bundle re-attaches each signer's PDF, so large documents × many signers can exceed
@@ -195,36 +195,36 @@ The full surface is also machine-readable as OpenAPI 3.1 at `/openapi.json`.
 4. Optional: `POST /v1/envelope/:id/remind` to nudge pending signers; `POST /v1/envelope/:id/void` to
    cancel. Until the envelope is sealed you can edit recipients with `POST` / `PATCH` / `DELETE`
    `/v1/envelope/:id/signers` (the signer's address rides in `?email=`).
-5. On completion every party receives the evidence-bundle email, and — if you set `callback_url` —
-   your receiver gets the signed `envelope.completed` webhook. The bundle is the durable record —
+5. On completion every party receives the evidence-bundle email and, if you set `callback_url`,
+   your receiver gets the signed `envelope.completed` webhook. The bundle is the durable record:
    verify it any time at `/verify`. (No server-side verify endpoint exists; verification is client-side.)
 
 ## Agent tools (MCP)
 
-`npx kysigned-mcp` exposes seven tools. The five ops tools are key-authenticated — configure
+`npx kysigned-mcp` exposes seven tools. The five ops tools are key-authenticated; configure
 `KYSIGNED_ENDPOINT` + `KYSIGNED_AUTHORIZATION`:
 
-- **create_envelope** — `POST /v1/envelope` (`document_name`, `pdf_base64` | `pdf_url`, `signers[]`, `message?`)
-- **check_envelope_status** — `GET /v1/envelope/:id`; also accepts `tracking_token` (`ktt_…` from any
-  create result) instead of the key — the no-key observer path, envelope-scoped and read-only
-- **list_envelopes** — `GET /v1/envelopes` (the creator's own envelopes)
-- **send_reminder** — `POST /v1/envelope/:id/remind`
-- **void_envelope** — `POST /v1/envelope/:id/void`
+- **create_envelope**: `POST /v1/envelope` (`document_name`, `pdf_base64` | `pdf_url`, `signers[]`, `message?`)
+- **check_envelope_status**: `GET /v1/envelope/:id`; also accepts `tracking_token` (`ktt_…` from any
+  create result) instead of the key: the no-key observer path, envelope-scoped and read-only
+- **list_envelopes**: `GET /v1/envelopes` (the creator's own envelopes)
+- **send_reminder**: `POST /v1/envelope/:id/remind`
+- **void_envelope**: `POST /v1/envelope/:id/void`
 
-The wallet pair needs NO key — it pays from the host-local run402 allowance wallet (`run402 init`;
+The wallet pair needs NO key: it pays from the host-local run402 allowance wallet (`run402 init`;
 the private key is never a tool argument and never appears in output):
 
-- **wallet_status** — read-only payment readiness: address, network, asset, balance, the live
-  per-envelope price (read from the x402 route's own challenge), funding guidance when short.
-- **create_envelope_x402** — the wallet-paid create (annotated destructive so hosts confirm the
-  spend): runs the free preflight FIRST, then a balance gate — an invalid request or short balance
-  never charges — then pays via x402 and returns the envelope + `payment` receipt + `tracking`
-  note. Retries are safe: pass `idempotency_key` (or reuse the returned `spending_intent_key`) —
-  the preflight's intent lookup answers `already_created` and the tool returns the stored envelope
+- **wallet_status**: read-only payment readiness, meaning the address, network, asset, balance, the live
+  per-envelope price (read from the x402 route's own challenge) and funding guidance when short.
+- **create_envelope_x402**: the wallet-paid create (annotated destructive so hosts confirm the
+  spend). It runs the free preflight FIRST, then a balance gate (an invalid request or short balance
+  never charges), then pays via x402 and returns the envelope + `payment` receipt + `tracking`
+  note. Retries are safe. Pass `idempotency_key` (or reuse the returned `spending_intent_key`) and
+  the preflight's intent lookup answers `already_created`, so the tool returns the stored envelope
   with `replayed: true`, paying nothing (the route is always-priced, so a blind re-send would
   settle a second payment).
 
-Verification is intentionally NOT a tool — the bundle verifies client-side at `/verify` or with the
+Verification is intentionally NOT a tool: the bundle verifies client-side at `/verify` or with the
 reference verifier in the public repo.
 
 ## API reference (public surface)
@@ -256,7 +256,7 @@ reference verifier in the public repo.
 session-only by design: a leaked key can never mint more keys.
 
 Not part of the public agent surface: the operator allowlist admin, the inbound-mail webhook, and any
-operator-specific credit/billing routes. There is **no** server-side verify endpoint — verification is
+operator-specific credit/billing routes. There is **no** server-side verify endpoint: verification is
 fully client-side (the `/verify` page or the CLI).
 
 ## Verifying a bundle
@@ -288,9 +288,9 @@ README quickstart) shows how; point agents at your instance via the MCP's `KYSIG
 Your agent may share this with you.
 
 - **What am I getting?** A legally-binding e-signature (ESIGN/UETA in the US, eIDAS SES/AES in the EU)
-  whose proof lives in your and your signers' inboxes — verifiable forever, by anyone, without trusting
+  whose proof lives in your and your signers' inboxes, verifiable forever, by anyone, without trusting
   this instance.
-- **Do signers need an account?** No. They sign by forwarding one email — no app, no login.
+- **Do signers need an account?** No. They sign by forwarding one email, with no app and no login.
 - **What does it cost?** Operator-configured. Signing is always free for signers.
-- **What if this instance disappears?** Your evidence bundle still verifies — it's math and your
+- **What if this instance disappears?** Your evidence bundle still verifies: it's math and your
   providers' public keys, not a lookup against any server.

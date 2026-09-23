@@ -37,7 +37,7 @@ interface ApiErrorBody { error?: string; code?: string; reason?: string; debug_m
 function toApiError(data: ApiErrorBody, status: number): ApiError {
   const parts: string[] = []
   if (data.error) parts.push(data.error)
-  if (data.debug_message) parts.push(`— debug: ${data.debug_message}`)
+  if (data.debug_message) parts.push(`(debug: ${data.debug_message})`)
   if (data.reason) console.warn(`api error detail (${status}):`, data.reason)
   return new ApiError(parts.join(' ') || 'Request failed', status, { code: data.code, reason: data.reason })
 }

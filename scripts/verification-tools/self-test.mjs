@@ -47,11 +47,11 @@ for (const c of CASES) {
     failures++;
     continue;
   }
-  console.log(`ok   ${c.file} — proven=${v.proven}${c.broken ? ` (${c.broken} broken, as expected)` : ''}`);
+  console.log(`ok   ${c.file}: proven=${v.proven}${c.broken ? ` (${c.broken} broken, as expected)` : ''}`);
 }
 
 if (failures) {
   console.error(`\n${failures} fixture(s) FAILED the self-test.`);
   process.exit(1);
 }
-console.log(`\nAll ${CASES.length} fixtures verified as expected — the independent toolkit reproduces the canonical verdict.`);
+console.log(`\nAll ${CASES.length} fixtures verified as expected: the independent toolkit reproduces the canonical verdict.`);

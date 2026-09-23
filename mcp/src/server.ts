@@ -79,7 +79,7 @@ server.registerTool(
         .url()
         .optional()
         .describe('https URL the service fetches the PDF from server-side (the large-document escape).'),
-      signers: z.array(signerSchema).min(1).max(20).describe('1–20 signers (email + display name)'),
+      signers: z.array(signerSchema).min(1).max(20).describe('1 to 20 signers (email + display name)'),
       message: z.string().optional().describe('Optional message included in the signing-request email'),
       expiry_days: z
         .number()
@@ -121,19 +121,19 @@ server.registerTool(
   'check_envelope_status',
   {
     description:
-      "Check a signing envelope: per-signer signing status and times, plus each signer's delivery_status (pending / delivered / undeliverable — whether the signing-request email reached them, distinct from whether they signed). " +
+      "Check a signing envelope: per-signer signing status and times, plus each signer's delivery_status (pending / delivered / undeliverable: whether the signing-request email reached them, distinct from whether they signed). " +
       "Each signer also carries last_rejection: null, or { class, at } when their latest forward was rejected and they still owe a signature on an open envelope. " +
       'class is one of wrong_phrase, attachment_missing, attachment_modified, sender_auth, dkim_unverifiable, or, when the signer cannot fix it by forwarding again because their ' +
       "organization's domain has no DKIM switched on, google_workspace_no_dkim / microsoft_365_no_dkim (their email administrator must turn it on, or the creator can change the signer's address). " +
       'Accepts EITHER the ambient KYSIGNED_AUTHORIZATION creator key OR a per-envelope tracking_token (ktt_…, ' +
-      'returned by every create — F-30.7): the token needs NO API key and reads exactly its own envelope, so the ' +
+      'returned by every create, per F-30.7): the token needs NO API key and reads exactly its own envelope, so the ' +
       'no-key wallet path polls through the same tool it created with. An explicit tracking_token wins over the ambient key.',
     inputSchema: {
       envelope_id: z.string().min(1).describe('The envelope ID to check'),
       tracking_token: z
         .string()
         .optional()
-        .describe('Envelope-scoped read-only observer token (ktt_…) from the create result — no API key needed.'),
+        .describe('Envelope-scoped read-only observer token (ktt_…) from the create result. No API key needed.'),
     },
     annotations: { title: 'Check envelope status', readOnlyHint: true, openWorldHint: true },
   },
@@ -208,7 +208,7 @@ export function configurePaymentSigner(provider: OpaqueSignerProvider | undefine
   if (realWalletSeams) {
     throw new PayerConfigError(
       'payer_source_conflict',
-      'configurePaymentSigner must run before the first wallet tool call — the payer source resolves exactly once.',
+      'configurePaymentSigner must run before the first wallet tool call, because the payer source resolves exactly once.',
     );
   }
   injectedPaymentSigner = provider;
@@ -258,10 +258,10 @@ server.registerTool(
   {
     description:
       'Report the payer\'s payment readiness for wallet-paid envelope creation: payer provenance (source kind + ' +
-      'public address + network — never key material), asset, on-chain balance (read resiliently across independent ' +
+      'public address + network, never key material), asset, on-chain balance (read resiliently across independent ' +
       'RPC providers), the live per-envelope price (read from the x402 route\'s own challenge), and whether the ' +
-      'balance covers it — when short, a structured QR-ready fund_wallet action (ERC-681 payment URI for exactly ' +
-      'the shortfall). Read-only — never creates, spends, or initiates an on-chain transaction. Needs no API key: ' +
+      'balance covers it; when short, a structured QR-ready fund_wallet action (ERC-681 payment URI for exactly ' +
+      'the shortfall). Read-only: it never creates, spends, or initiates an on-chain transaction. Needs no API key: ' +
       'the wallet-paid path works without KYSIGNED_AUTHORIZATION. The payer resolves once from: an explicit ' +
       'allowance file (KYSIGNED_RUN402_ALLOWANCE_PATH), an embedder-injected opaque signer, or the host-local ' +
       'run402 allowance (`run402 init`); its key is never a tool argument and never appears in output.',
@@ -283,11 +283,11 @@ server.registerTool(
   'create_envelope_x402',
   {
     description:
-      'Create a signing envelope PAYING PER ENVELOPE from the local run402 wallet via x402 — no API key and no ' +
+      'Create a signing envelope PAYING PER ENVELOPE from the local run402 wallet via x402, with no API key and no ' +
       'kysigned account needed (the payment itself establishes the creator record for creator_email). This tool ' +
       'SPENDS REAL FUNDS: it pays the operator\'s live per-envelope price (read from the x402 route\'s challenge; ' +
       'kysigned.com: $0.25 USDC on Base mainnet). Safety order: it first runs the FREE preflight validation, then ' +
-      'checks the wallet balance, and only then pays — an invalid request or short balance never triggers a charge. ' +
+      'checks the wallet balance, and only then pays, so an invalid request or short balance never triggers a charge. ' +
       'Retries are safe: the spending-intent idempotency key (yours, or a generated one returned in the result) ' +
       'replays the same envelope without paying twice. The payer resolves once from: an explicit allowance file ' +
       '(KYSIGNED_RUN402_ALLOWANCE_PATH), an embedder-injected opaque signer (KMS/HSM), or the host-local run402 ' +
@@ -311,7 +311,7 @@ server.registerTool(
         .url()
         .optional()
         .describe('https URL the service fetches the PDF from server-side (the large-document escape).'),
-      signers: z.array(signerSchema).min(1).max(20).describe('1–20 signers (email + display name)'),
+      signers: z.array(signerSchema).min(1).max(20).describe('1 to 20 signers (email + display name)'),
       message: z.string().optional().describe('Optional message included in the signing-request email'),
       expiry_days: z
         .number()
@@ -357,8 +357,8 @@ server.registerTool(
       if (!presence.configured) {
         return textResult(
           `Error: no run402 payer is configured (allowance expected at ${presence.allowancePath}). Run \`run402 init\` ` +
-            `to create one, point KYSIGNED_RUN402_ALLOWANCE_PATH at an explicit allowance file, fund it, then retry — ` +
-            `or use create_envelope with a KYSIGNED_AUTHORIZATION key instead.`,
+            `to create one, point KYSIGNED_RUN402_ALLOWANCE_PATH at an explicit allowance file, fund it, then retry. ` +
+            `Or use create_envelope with a KYSIGNED_AUTHORIZATION key instead.`,
           true,
         );
       }
@@ -394,7 +394,7 @@ server.registerTool(
               ...projectEnvelopeResult(envelope),
               replayed: true,
               spending_intent_key: intentKey,
-              note: 'This spending intent already produced this envelope — nothing was paid or created on this call.',
+              note: 'This spending intent already produced this envelope. Nothing was paid or created on this call.',
             },
             null,
             2,
@@ -411,7 +411,7 @@ server.registerTool(
           `Error: ${JSON.stringify(
             {
               code: 'payer_unavailable_for_network',
-              message: `The configured payer source (${presence.sourceKind}) has no payer for ${terms.network} — the priced route settles there. Nothing was charged.`,
+              message: `The configured payer source (${presence.sourceKind}) has no payer for ${terms.network}, where the priced route settles. Nothing was charged.`,
             },
             null,
             2,
@@ -432,7 +432,7 @@ server.registerTool(
           balance,
           retry: {
             tool: 'create_envelope_x402',
-            note: `Retry with the SAME idempotency_key (${intentKey}) after funding — the spending intent replays without double-paying.`,
+            note: `Retry with the SAME idempotency_key (${intentKey}) after funding: the spending intent replays without double-paying.`,
           },
         });
         // Machine-readable underfunded outcome (AC-172): prose for humans +
@@ -442,7 +442,7 @@ server.registerTool(
             {
               code: 'insufficient_funds',
               message:
-                `Insufficient wallet balance — nothing was charged. Send at least ${(price - balance).toString()} ` +
+                `Insufficient wallet balance. Nothing was charged. Send at least ${(price - balance).toString()} ` +
                 `atomic units of ${assetLabel} on ${terms.network} to ${address} (one envelope costs ${terms.amountAtomic}` +
                 (terms.amountUsdMicros !== undefined ? ` = $${(terms.amountUsdMicros / 1_000_000).toFixed(2)}` : '') +
                 `; current balance ${balance.toString()}). Check readiness any time with wallet_status.`,
@@ -460,7 +460,7 @@ server.registerTool(
       const paidFetch = await seams.paidFetchFactory();
       if (!paidFetch) {
         return textResult(
-          'Error: the x402 payment stack is unavailable (wallet unreadable or payment libraries missing) — cannot pay. ' +
+          'Error: the x402 payment stack is unavailable (wallet unreadable or payment libraries missing), so it cannot pay. ' +
             'Nothing was charged. Re-run `run402 init` or reinstall kysigned-mcp, then retry.',
           true,
         );

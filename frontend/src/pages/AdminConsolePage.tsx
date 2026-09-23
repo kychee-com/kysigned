@@ -197,7 +197,7 @@ function DrillPanel({ title, columns, rows, cap, onClose }: {
               {shown.map((r, i) => (
                 <tr key={String(r[columns[0]!.key] ?? i) + i} className="border-t border-gray-100">
                   {columns.map((c) => (
-                    <td key={c.key} className="px-4 py-2 whitespace-nowrap text-gray-700">{r[c.key] ?? '—'}</td>
+                    <td key={c.key} className="px-4 py-2 whitespace-nowrap text-gray-700">{r[c.key] ?? 'n/a'}</td>
                   ))}
                 </tr>
               ))}
@@ -231,9 +231,9 @@ function FetchedDrillPanel<T>({ title, columns, path, extra, window, excludeInte
 
 type LedgerGroup = 'paid_in' | 'granted' | 'consumed';
 const LEDGER_TITLES: Record<LedgerGroup, string> = {
-  paid_in: 'Paid in — ledger',
-  granted: 'Free credit granted — ledger',
-  consumed: 'Credit consumed — ledger',
+  paid_in: 'Paid in (ledger)',
+  granted: 'Free credit granted (ledger)',
+  consumed: 'Credit consumed (ledger)',
 };
 
 interface LedgerRow {
@@ -281,7 +281,7 @@ function LedgerPanel({ group, window, excludeInternal, onClose }: {
                   <td className="px-4 py-2 whitespace-nowrap">{r.email}</td>
                   <td className="px-4 py-2 whitespace-nowrap">{formatUsd(r.delta_usd_micros)}</td>
                   <td className="px-4 py-2 whitespace-nowrap">{r.source}</td>
-                  <td className="px-4 py-2 whitespace-nowrap text-gray-600">{r.external_ref ?? '—'}</td>
+                  <td className="px-4 py-2 whitespace-nowrap text-gray-600">{r.external_ref ?? 'none'}</td>
                   <td className="px-4 py-2 whitespace-nowrap text-gray-600">{new Date(r.created_at).toLocaleString()}</td>
                 </tr>
               ))}
@@ -426,8 +426,8 @@ function AccountsTab({ window, excludeInternal }: { window: WindowKey; excludeIn
               </td>
               <td className="px-4 py-2 text-xs text-gray-600">{r.envelopes.created} / {r.envelopes.completed} / {r.envelopes.inProcess}</td>
               <td className="px-4 py-2 text-xs text-gray-600">{formatUsd(r.balanceUsdMicros)}</td>
-              <td className="px-4 py-2 text-xs text-gray-600">{r.lastSeen ? new Date(r.lastSeen).toLocaleDateString() : '—'}</td>
-              <td className="px-4 py-2 text-xs text-gray-600">{r.joined ? new Date(r.joined).toLocaleDateString() : '—'}</td>
+              <td className="px-4 py-2 text-xs text-gray-600">{r.lastSeen ? new Date(r.lastSeen).toLocaleDateString() : 'never'}</td>
+              <td className="px-4 py-2 text-xs text-gray-600">{r.joined ? new Date(r.joined).toLocaleDateString() : 'unknown'}</td>
             </tr>
           ))}
         </tbody>
@@ -459,7 +459,7 @@ function EnvelopesTab({ window, excludeInternal }: { window: WindowKey; excludeI
   if (denied) return <Denied />;
   if (loading) return <Spinner />;
   if (error || !data) return <p className="text-sm text-red-700 py-8 text-center" data-testid="admin-error">{error || 'Failed to load'}</p>;
-  const days = data.avgTimeToCompleteMs == null ? '—' : `${(data.avgTimeToCompleteMs / 86_400_000).toFixed(1)}d`;
+  const days = data.avgTimeToCompleteMs == null ? 'n/a' : `${(data.avgTimeToCompleteMs / 86_400_000).toFixed(1)}d`;
   const list = data.list;
   const open = (d: EnvDrill) => () => setDrill(d);
   return (
@@ -470,7 +470,7 @@ function EnvelopesTab({ window, excludeInternal }: { window: WindowKey; excludeI
         {/* AC-204 — a ratio opens the cohort it is computed OVER, so the number is auditable. */}
         <Tile id="funnelRate" label="Completion rate" value={`${Math.round(data.completionRate * 100)}%`} onClick={open({ title: 'Completion-rate cohort (all created)', keep: () => true })} />
         {/* AC-204 — an average opens the set it averages, each row carrying its own duration. */}
-        <Tile id="funnelAvg" label="Avg time-to-complete" value={days} onClick={open({ title: 'Completed envelopes — time to complete', keep: (e) => e.status === 'completed' && !!e.completed_at, withDuration: true })} />
+        <Tile id="funnelAvg" label="Avg time-to-complete" value={days} onClick={open({ title: 'Completed envelopes: time to complete', keep: (e) => e.status === 'completed' && !!e.completed_at, withDuration: true })} />
         <Tile
           id="funnelAging"
           label="Aging (1/3/7/7+ d)"
@@ -479,7 +479,7 @@ function EnvelopesTab({ window, excludeInternal }: { window: WindowKey; excludeI
             label: `In process, ${b.label}`,
             value: data.aging[b.id],
             onClick: open({
-              title: `In process — ${b.label}`,
+              title: `In process: ${b.label}`,
               keep: (e) => IN_PROCESS_STATUSES.has(e.status) && ageDays(e.created_at) >= b.min && ageDays(e.created_at) < b.max,
             }),
           }))}

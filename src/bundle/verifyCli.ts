@@ -97,12 +97,12 @@ export function formatVerdict(v: BundleVerdict): string {
   );
   lines.push('');
   lines.push(`Original document (SHA-256): ${v.originalDocSha256 ?? '(none embedded)'}`);
-  lines.push('  Every signer signed this exact document — each .eml reconstruction is checked against it.');
+  lines.push('  Every signer signed this exact document: each .eml reconstruction is checked against it.');
   lines.push('');
   for (const s of v.signers) lines.push(formatSigner(s), '');
   lines.push(`OVERALL: ${TIER_LABEL[v.tier]}`);
   if (v.tier === 'FAILED') {
-    lines.push('(kysigned is not part of the trust set — this verdict comes only from the embedded evidence.)');
+    lines.push('(kysigned is not part of the trust set: this verdict comes only from the embedded evidence.)');
   }
   return lines.join('\n');
 }

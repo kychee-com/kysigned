@@ -309,7 +309,7 @@ export function PasskeysPage() {
 
       <h2 className="text-lg font-semibold mb-2">Passkeys</h2>
       <p className="text-sm text-gray-500 mb-6">
-        Passkeys let you sign in with Touch ID, Face ID, or a security key — no email
+        Passkeys let you sign in with Touch ID, Face ID, or a security key, with no email
         roundtrip. Add one to make next sign-in one tap. Delete the ones you no longer use.
       </p>
 
@@ -436,7 +436,7 @@ export function PasskeysPage() {
                       {new Date(p.created_at).toLocaleDateString()}
                     </td>
                     <td className="px-4 py-2 text-xs text-gray-600">
-                      {p.last_used_at ? new Date(p.last_used_at).toLocaleDateString() : '—'}
+                      {p.last_used_at ? new Date(p.last_used_at).toLocaleDateString() : 'never'}
                     </td>
                     <td className="px-4 py-2 text-right">
                       {confirmDeleteId === p.id ? (
@@ -476,7 +476,7 @@ export function PasskeysPage() {
       {/* Last-passkey warning footnote */}
       {passkeys.length === 1 && (
         <p className="text-xs text-yellow-700 mt-4">
-          Heads up — deleting your last passkey on a browser without an active session may
+          Heads up: deleting your last passkey on a browser without an active session may
           lock you out of one-tap sign-in. The email magic-link still works as recovery.
         </p>
       )}

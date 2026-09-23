@@ -36,7 +36,7 @@ function statusMeta(s: string) {
   return STATUS_META[s] ?? { label: s as 'Open', cls: 'bg-gray-100 text-gray-600 border-gray-200' }
 }
 function fmtDate(iso: string | null): string {
-  if (!iso) return '—'
+  if (!iso) return '(date unknown)'
   return new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 

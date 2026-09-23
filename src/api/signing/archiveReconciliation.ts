@@ -106,7 +106,7 @@ export async function runArchiveReconciliation(
   if (alerted) {
     const lines = failing.map(
       ({ artifact, outcome, detail }) =>
-        `- envelope ${artifact.envelope_id} / signer ${artifact.signer_email} — ` +
+        `- envelope ${artifact.envelope_id} / signer ${artifact.signer_email}, key ` +
         `${artifact.dkim_domain}/${artifact.dkim_selector}: ${outcome}${detail ? ` (${detail})` : ''}`,
     );
     const text =
@@ -115,7 +115,7 @@ export async function runArchiveReconciliation(
       `${lines.join('\n')}\n\n` +
       `The sealed bundles remain valid and self-heal if the archive observes the key while it is ` +
       `still live in DNS. If a provider rotated the key away before any observation, the affected ` +
-      `bundle is capped below PROVEN (DURABLE) permanently — deciding whether to ask the customer ` +
+      `bundle is capped below PROVEN (DURABLE) permanently. Deciding whether to ask the customer ` +
       `to re-sign (optionally with a credit grant) is YOUR call; this sweep never contacts customers.`;
     await deps.emailProvider.send({
       to: deps.alertEmail ?? `info@${deps.operatorDomain}`,

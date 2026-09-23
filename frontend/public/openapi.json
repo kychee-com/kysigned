@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "kysigned API",
-    "description": "Self-verifying e-signatures: create an envelope from a PDF plus signers; each human signer signs by forwarding one email (their provider DKIM-signs it); every party receives an offline-verifiable evidence bundle. This document describes the public /v1 surface of a kysigned instance. Machine-readable errors: every error response is `{ \"error\": string, \"code\": string }` where `code` is a stable taxonomy value (`auth_*`, `csrf_*`, `payment_*`, `validation_*`, `state_*`, `not_found`, `rate_size_*`, `idempotency_*`, `internal_*`). Completion webhooks: pass `callback_url` at create; deliveries are signed with `X-Kysigned-Signature: t=<unix>,v1=<hex hmac-sha256(callback_secret, \"<t>.<rawBody>\")>` — verify by recomputing the HMAC over `t + \".\" + rawBody` with the `callback_secret` returned once in the create response, comparing constant-time, and rejecting timestamps outside your tolerance window.",
+    "description": "Self-verifying e-signatures: create an envelope from a PDF plus signers; each human signer signs by forwarding one email (their provider DKIM-signs it); every party receives an offline-verifiable evidence bundle. This document describes the public /v1 surface of a kysigned instance. Machine-readable errors: every error response is `{ \"error\": string, \"code\": string }` where `code` is a stable taxonomy value (`auth_*`, `csrf_*`, `payment_*`, `validation_*`, `state_*`, `not_found`, `rate_size_*`, `idempotency_*`, `internal_*`). Completion webhooks: pass `callback_url` at create; deliveries are signed with `X-Kysigned-Signature: t=<unix>,v1=<hex hmac-sha256(callback_secret, \"<t>.<rawBody>\")>`. Verify by recomputing the HMAC over `t + \".\" + rawBody` with the `callback_secret` returned once in the create response, comparing constant-time, and rejecting timestamps outside your tolerance window.",
     "version": "0.73.2",
     "license": {
       "name": "Apache-2.0",
@@ -31,7 +31,7 @@
       "trackingToken": {
         "type": "http",
         "scheme": "bearer",
-        "description": "An envelope-scoped, READ-ONLY tracking token (`ktt_…`) returned in every create response's `tracking.token` (F-30.7). Sent in the Authorization header (bare or `Bearer`), it authorizes GET /v1/envelope/{id} for exactly its own envelope — no account, API key, or session. Any other envelope id answers 404; every mutating/listing/download route refuses it (403 auth_tracking_scope)."
+        "description": "An envelope-scoped, READ-ONLY tracking token (`ktt_…`) returned in every create response's `tracking.token` (F-30.7). Sent in the Authorization header (bare or `Bearer`), it authorizes GET /v1/envelope/{id} for exactly its own envelope, with no account, API key, or session. Any other envelope id answers 404; every mutating/listing/download route refuses it (403 auth_tracking_scope)."
       }
     },
     "schemas": {
@@ -129,7 +129,7 @@
               "creator_email": {
                 "type": "string",
                 "format": "email",
-                "description": "The creator record this paid envelope attaches to — a deliverable address (creation/completion mail and the evidence bundle land there). No prior account needed; sign in later with this email (magic link / passkey) to see the envelope and the wallet-sourced ledger entries in the dashboard."
+                "description": "The creator record this paid envelope attaches to: a deliverable address where the creation and completion mail and the evidence bundle land. No prior account needed; sign in later with this email (magic link / passkey) to see the envelope and the wallet-sourced ledger entries in the dashboard."
               }
             }
           }
@@ -179,15 +179,15 @@
           },
           "callback_secret": {
             "type": "string",
-            "description": "whs_… webhook signing secret — returned EXACTLY ONCE, only when callback_url was supplied"
+            "description": "whs_… webhook signing secret, returned EXACTLY ONCE and only when callback_url was supplied"
           },
           "delivery": {
             "type": "object",
-            "description": "Per-envelope send outcome (sent / undeliverable / failed) - sent means run402 accepted the email; confirmed delivery is the per-signer delivery_status"
+            "description": "Per-envelope send outcome (sent / undeliverable / failed): sent means run402 accepted the email; confirmed delivery is the per-signer delivery_status"
           },
           "tracking": {
             "type": "object",
-            "description": "The envelope-observer handle (returned on EVERY create). `token` (ktt_…) is an envelope-scoped READ-ONLY credential: present it as the Authorization on GET /v1/envelope/{id} to poll status (full signer roster + delivery) with no account, API key, or session. It reads exactly this one envelope — any other id answers 404, and every mutation/list/download refuses it (403 auth_tracking_scope). Lost after a restart? The free POST /v1/envelope/preflight spending-intent replay (creator_email + your idempotency_key) returns this same create body, token included. Valid while the envelope exists (completion and void stay readable); dies with retention expiry or account deletion.",
+            "description": "The envelope-observer handle (returned on EVERY create). `token` (ktt_…) is an envelope-scoped READ-ONLY credential: present it as the Authorization on GET /v1/envelope/{id} to poll status (full signer roster + delivery) with no account, API key, or session. It reads exactly this one envelope: any other id answers 404, and every mutation/list/download refuses it (403 auth_tracking_scope). Lost after a restart? The free POST /v1/envelope/preflight spending-intent replay (creator_email + your idempotency_key) returns this same create body, token included. Valid while the envelope exists (completion and void stay readable); dies with retention expiry or account deletion.",
             "properties": {
               "token": {
                 "type": "string",
@@ -244,7 +244,7 @@
                 },
                 "delivery_status": {
                   "type": "string",
-                  "description": "pending | delivered | undeliverable — whether the signing-request email reached the signer (distinct from signing status)"
+                  "description": "pending | delivered | undeliverable: whether the signing-request email reached the signer (distinct from signing status)"
                 },
                 "last_rejection": {
                   "type": [
@@ -427,8 +427,8 @@
     },
     "/v1/x402/envelope": {
       "post": {
-        "summary": "Machine-paid create (x402): a wallet pays the flat per-envelope price — no account, no key, no session",
-        "description": "Operator-dependent (enabled on kysigned.com; a fork without x402 config answers 404 payment_x402_not_enabled). An UNPAID call is challenged by the platform with a standard x402 402 (payment requirements: the per-envelope price, the operator's payout wallet, mainnet networks) — that challenge is the x402 protocol shape, not this API's error envelope. An x402-capable client pays and retries; the platform verifies and settles BEFORE this endpoint runs. The settled payment credits the creator's ledger exactly once (keyed on the stable payment id) and the create debits it, so a same-proof retry replays the SAME 201 — one payment, one envelope. The body is the standard create body PLUS the required creator_email. Optional Idempotency-Key header: send your own spending-intent key so a retry with the same key replays the same envelope (else dedupe is keyed on the settled payment id). Discovery: an unfunded POST /v1/envelope names this route and price in its 402 body (x402_route, x402_price_usd_micros).",
+        "summary": "Machine-paid create (x402): a wallet pays the flat per-envelope price, with no account, key or session",
+        "description": "Operator-dependent (enabled on kysigned.com; a fork without x402 config answers 404 payment_x402_not_enabled). An UNPAID call is challenged by the platform with a standard x402 402 (payment requirements: the per-envelope price, the operator's payout wallet, mainnet networks). That challenge is the x402 protocol shape, not this API's error envelope. An x402-capable client pays and retries; the platform verifies and settles BEFORE this endpoint runs. The settled payment credits the creator's ledger exactly once (keyed on the stable payment id) and the create debits it, so a same-proof retry replays the SAME 201: one payment, one envelope. The body is the standard create body PLUS the required creator_email. Optional Idempotency-Key header: send your own spending-intent key so a retry with the same key replays the same envelope (else dedupe is keyed on the settled payment id). Discovery: an unfunded POST /v1/envelope names this route and price in its 402 body (x402_route, x402_price_usd_micros).",
         "security": [],
         "parameters": [
           {
@@ -454,7 +454,7 @@
         },
         "responses": {
           "201": {
-            "description": "Created. Identical to POST /v1/envelope PLUS a `payment` receipt (payment_id, network, amount_usd_micros, asset, pay_to, settlement_reference, settled_at) and a merged `tracking` block LED by the ktt_ tracking token — a wallet-only creator polls GET /v1/envelope/{id} with it, no account needed (status_url_auth: creator_or_tracking_token); creator_email sign-in stays available for the full dashboard. Reconcile the spend via `payment.payment_id` / `settlement_reference`.",
+            "description": "Created. Identical to POST /v1/envelope PLUS a `payment` receipt (payment_id, network, amount_usd_micros, asset, pay_to, settlement_reference, settled_at) and a merged `tracking` block LED by the ktt_ tracking token: a wallet-only creator polls GET /v1/envelope/{id} with it and needs no account (status_url_auth: creator_or_tracking_token); creator_email sign-in stays available for the full dashboard. Reconcile the spend via `payment.payment_id` / `settlement_reference`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -464,7 +464,7 @@
             }
           },
           "400": {
-            "description": "Deterministic validation failed (plus-alias signer, bad email, unparseable/oversize PDF, …). If the payment already settled, the response carries `payment_banked: true` + `credit_email` + `next_actions` — the money became recoverable account credit for creator_email, not a loss. Call POST /v1/envelope/preflight (free) BEFORE paying to avoid this.",
+            "description": "Deterministic validation failed (plus-alias signer, bad email, unparseable/oversize PDF, …). If the payment already settled, the response carries `payment_banked: true` + `credit_email` + `next_actions`: the money became recoverable account credit for creator_email, not a loss. Call POST /v1/envelope/preflight (free) BEFORE paying to avoid this.",
             "content": {
               "application/json": {
                 "schema": {
@@ -474,7 +474,7 @@
             }
           },
           "402": {
-            "description": "x402 payment challenge for an unpaid call — emitted by the platform (x402 protocol payment-requirements shape, not the {error, code} envelope). Pay per the challenge and retry. A paid retry from a wallet with insufficient USDC on Base mainnet returns 402 payment_insufficient_funds with a fund_wallet next_action (network, asset, minimum_amount_usd_micros) — fund the wallet and retry."
+            "description": "x402 payment challenge for an unpaid call, emitted by the platform (x402 protocol payment-requirements shape, not the {error, code} envelope). Pay per the challenge and retry. A paid retry from a wallet with insufficient USDC on Base mainnet returns 402 payment_insufficient_funds with a fund_wallet next_action (network, asset, minimum_amount_usd_micros). Fund the wallet and retry."
           },
           "404": {
             "$ref": "#/components/responses/Error"
@@ -493,8 +493,8 @@
     },
     "/v1/envelope/preflight": {
       "post": {
-        "summary": "Validate a create body for FREE (no charge, no create) — check inputs and replay-check a spending intent before paying the x402 create",
-        "description": "Runs the same deterministic create validations (creator_email shape, signer addresses incl. the plus-alias rule, document_name, PDF presence/size/parseability for pdf_base64) without creating or charging. Use it before POST /v1/x402/envelope so a request that would be rejected does not consume the on-chain payment (run402 settles before the app validates). A PASS means these checks won't reject the paid create. creator_email is optional (omit it for a keyed/session create). pdf_url is not fetched here. Spending-intent replay check: include creator_email + the idempotency_key you will send on the paid call — if that intent already produced an envelope, the 200 returns { ok: true, already_created: true, envelope: <the stored create result> } and you MUST NOT pay again (the route is always-priced, so re-sending a completed intent settles a second payment; the money would be banked as credit, not lost, but the right move is to not pay). With a key and no prior envelope the 200 carries already_created: false.",
+        "summary": "Validate a create body for FREE (no charge, no create): check inputs and replay-check a spending intent before paying the x402 create",
+        "description": "Runs the same deterministic create validations (creator_email shape, signer addresses incl. the plus-alias rule, document_name, PDF presence/size/parseability for pdf_base64) without creating or charging. Use it before POST /v1/x402/envelope so a request that would be rejected does not consume the on-chain payment (run402 settles before the app validates). A PASS means these checks won't reject the paid create. creator_email is optional (omit it for a keyed/session create). pdf_url is not fetched here. Spending-intent replay check: include creator_email + the idempotency_key you will send on the paid call. If that intent already produced an envelope, the 200 returns { ok: true, already_created: true, envelope: <the stored create result> } and you MUST NOT pay again (the route is always-priced, so re-sending a completed intent settles a second payment; the money would be banked as credit, not lost, but the right move is to not pay). With a key and no prior envelope the 200 carries already_created: false.",
         "security": [],
         "requestBody": {
           "required": true,
@@ -519,7 +519,7 @@
     "/v1/envelope/{id}": {
       "get": {
         "summary": "Envelope status: per-signer signing state, signed times, delivery_status",
-        "description": "Three accepted authorities: creator session, creator API key (ksk_…), or the envelope's OWN tracking token (ktt_…, from the create response's `tracking.token`) sent as the Authorization header. The tracking token is the read-only observer path (F-30.7): no account needed, full signer roster returned, exactly this envelope readable — any other envelope id answers the same 404 a stranger gets, and the token is refused (403 auth_tracking_scope) by every mutating or listing route.",
+        "description": "Three accepted authorities: creator session, creator API key (ksk_…), or the envelope's OWN tracking token (ktt_…, from the create response's `tracking.token`) sent as the Authorization header. The tracking token is the read-only observer path (F-30.7): no account needed, full signer roster returned, exactly this envelope readable: any other envelope id answers the same 404 a stranger gets, and the token is refused (403 auth_tracking_scope) by every mutating or listing route.",
         "security": [
           {
             "apiKey": []
@@ -967,7 +967,7 @@
         }
       },
       "get": {
-        "summary": "List the creator's API keys (metadata only — never the key value)",
+        "summary": "List the creator's API keys (metadata only, never the key value)",
         "security": [
           {
             "session": []

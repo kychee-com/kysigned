@@ -196,9 +196,9 @@ export function SigningPage() {
     if (info.status === 'completed') {
       statusMessage = `This signing was completed${completedAt ? ` on ${completedAt}` : ''}. We deleted the document after delivering the signing record to every party.`
     } else if (info.status === 'voided') {
-      statusMessage = `This signing was cancelled by the sender. We deleted the document at that point — no further signing is possible.`
+      statusMessage = `This signing was cancelled by the sender. We deleted the document at that point, so no further signing is possible.`
     } else if (info.status === 'expired') {
-      statusMessage = `This signing expired without all signatures. We deleted the document — contact the sender to start over.`
+      statusMessage = `This signing expired without all signatures. We deleted the document. Contact the sender to start over.`
     } else {
       statusMessage = `This document is no longer stored on our servers (status: ${info.status}).`
     }

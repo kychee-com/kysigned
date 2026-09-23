@@ -70,7 +70,7 @@ export async function stampWithCalendars(
 
   const results = await Promise.allSettled(calendarUrls.map((u) => submitDigest(u, leaf, deps)));
   const trees = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
-  if (trees.length === 0) throw new Error('all calendars failed — stamping aborted');
+  if (trees.length === 0) throw new Error('all calendars failed, so stamping was aborted');
 
   const leafTimestamp: Timestamp = { msg: leaf, branches: trees.flatMap((t) => t.branches) };
   const appendedTimestamp: Timestamp = {

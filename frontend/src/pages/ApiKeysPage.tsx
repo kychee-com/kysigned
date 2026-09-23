@@ -93,7 +93,7 @@ export function ApiKeysPage() {
     <div className="max-w-3xl mx-auto px-4 py-8" data-testid="apikeys-page">
       <h1 className="text-2xl font-semibold mb-2">API keys</h1>
       <p className="text-sm text-gray-600 mb-6">
-        Keys let an agent or script send and track documents as you — pass one in the{' '}
+        Keys let an agent or script send and track documents as you. Pass one in the{' '}
         <code className="font-mono text-xs">Authorization</code> header (works with{' '}
         <code className="font-mono text-xs">kysigned-mcp</code> via{' '}
         <code className="font-mono text-xs">KYSIGNED_AUTHORIZATION</code>). A key cannot manage
@@ -110,10 +110,10 @@ export function ApiKeysPage() {
       {minted && (
         <div className="mb-8 p-4 border border-green-200 bg-green-50 rounded-lg" data-testid="apikeys-minted">
           <h2 className="text-sm font-semibold text-green-900 mb-1">
-            Key created{minted.label ? ` — ${minted.label}` : ''}
+            Key created{minted.label ? `: ${minted.label}` : ''}
           </h2>
           <p className="text-xs text-green-800 mb-3">
-            Copy it now — this is the only time it is shown. Anyone holding it can act as you on
+            Copy it now. This is the only time it is shown. Anyone holding it can act as you on
             document-sending actions until you revoke it.
           </p>
           <div className="flex gap-2 items-center">
@@ -193,7 +193,7 @@ export function ApiKeysPage() {
                     {new Date(k.created_at).toLocaleDateString()}
                   </td>
                   <td className="px-4 py-2 text-xs text-gray-600">
-                    {k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : '—'}
+                    {k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : 'never'}
                   </td>
                   <td className="px-4 py-2 text-right">
                     {k.revoked_at ? (

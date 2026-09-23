@@ -106,7 +106,7 @@ export async function evaluateCreateGate(ctx: CreateGateContext): Promise<GateVe
       return {
         ok: false,
         status: 402,
-        error: `Insufficient credit — your balance is ${formatUsdMicros(balance)}, but sending an envelope costs ${formatUsdMicros(cost)}.`,
+        error: `Insufficient credit: your balance is ${formatUsdMicros(balance)}, but sending an envelope costs ${formatUsdMicros(cost)}.`,
         code: 'payment_required',
         cost,
       };

@@ -78,7 +78,7 @@ export function AdminReconciliationPage({ excludeInternal = true }: { excludeInt
       <p className="text-sm text-gray-600 mb-6">
         Signature artifacts whose third-party archive confirmation is not yet clean. These self-heal
         when the archive observes the key; a row that never clears may need a re-sign, which is your
-        call — signers are never contacted automatically.
+        call: signers are never contacted automatically.
       </p>
       {error && (
         <div className="mb-4 px-4 py-3 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm" data-testid="admin-error">
@@ -115,7 +115,7 @@ export function AdminReconciliationPage({ excludeInternal = true }: { excludeInt
                   <td className="px-4 py-2 font-mono text-xs break-all">{r.envelope_id}</td>
                   <td className="px-4 py-2">{r.signer_email}</td>
                   <td className="px-4 py-2 text-xs text-gray-600">
-                    {r.dkim_domain ?? '—'}
+                    {r.dkim_domain ?? 'unknown'}
                     {r.dkim_selector ? ` / ${r.dkim_selector}` : ''}
                   </td>
                   <td className="px-4 py-2">
@@ -124,7 +124,7 @@ export function AdminReconciliationPage({ excludeInternal = true }: { excludeInt
                     </span>
                   </td>
                   <td className="px-4 py-2 text-xs text-gray-600">
-                    {r.checked_at ? new Date(r.checked_at).toLocaleString() : '—'}
+                    {r.checked_at ? new Date(r.checked_at).toLocaleString() : 'not yet'}
                   </td>
                   <td className="px-4 py-2 text-xs text-gray-600">
                     {new Date(r.created_at).toLocaleDateString()}

@@ -33,5 +33,5 @@ export function isUploadTooLarge(bytes: number): boolean {
 
 /** The sized, user-facing rejection message (matches the frontend copy). */
 export function uploadTooLargeMessage(bytes: number): string {
-  return `That PDF is too large (${(bytes / 1_000_000).toFixed(1)} MB). The maximum is 3 MB — please compress it or split the document, then try again.`;
+  return `That PDF is too large (${(bytes / 1_000_000).toFixed(1)} MB). The maximum is 3 MB. Please compress it or split the document, then try again.`;
 }

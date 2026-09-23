@@ -106,7 +106,7 @@ export function checkSignerAddresses(
         code: 'validation_plus_alias',
         message:
           `Signer address "${s.email.trim()}" is a plus-alias. Use the primary address ` +
-          `"${primaryOf(s.email)}" instead — kysigned needs each signer's primary mailbox so ` +
+          `"${primaryOf(s.email)}" instead: kysigned needs each signer's primary mailbox so ` +
           `their signature can be told apart.`,
       };
     }

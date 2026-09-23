@@ -334,7 +334,7 @@ export async function generateCoverPage(
   // (Family B, F-22 / #30). Empty for a generic cover.
   for (const a of buildSignerAffirmation(metadata)) paragraph(a.text, { size: 9.5, bold: a.bold, gapAfter: 5 });
   paragraph(
-    'By forwarding the signing-request email for this envelope — with the first line "I sign this document" and the document still attached — you affirm:',
+    'By forwarding the signing-request email for this envelope, with the first line "I sign this document" and the document still attached, you affirm:',
     { gapAfter: 8 },
   );
   paragraph('You have read and understood this document in its entirety.', { marker: '1.', gapAfter: 6 });

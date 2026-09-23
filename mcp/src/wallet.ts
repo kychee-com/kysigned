@@ -70,7 +70,7 @@ export async function fetchChallengeTerms(
   if (res.status !== 402) {
     throw new X402RouteError(
       'not_priced',
-      `${url} answered ${res.status}, not an x402 402 challenge — this instance has no wallet-payable create (operator has not wired x402).`,
+      `${url} answered ${res.status}, not an x402 402 challenge: this instance has no wallet-payable create (the operator has not wired x402).`,
     );
   }
   const header = res.headers.get('payment-required');
@@ -146,7 +146,7 @@ export function resolvePayerSourceKind(config: PayerSourceConfig): PayerSourceKi
   if (config.allowancePath && config.paymentSigner) {
     throw new PayerConfigError(
       'payer_source_conflict',
-      'Both an explicit allowance path (KYSIGNED_RUN402_ALLOWANCE_PATH) and an injected payment signer are configured — they are mutually exclusive. Remove one; there is no fallback between explicit sources.',
+      'Both an explicit allowance path (KYSIGNED_RUN402_ALLOWANCE_PATH) and an injected payment signer are configured, and they are mutually exclusive. Remove one; there is no fallback between explicit sources.',
       [{ type: 'fix_config', why: 'unset KYSIGNED_RUN402_ALLOWANCE_PATH or construct the server without paymentSigner' }],
     );
   }
@@ -183,7 +183,7 @@ export class BalanceUnknownError extends Error {
   constructor(network: string, providers: Array<{ provider: string; error: string }>) {
     super(
       `Could not read the wallet balance on ${network}: every RPC provider failed (${providers.length} tried). ` +
-        `The balance is UNKNOWN — this is NOT an insufficient-funds result and no payment was dispatched. Safe to retry.`,
+        `The balance is UNKNOWN. This is NOT an insufficient-funds result and no payment was dispatched. Safe to retry.`,
     );
     this.name = 'BalanceUnknownError';
     this.providers = providers;
@@ -234,7 +234,7 @@ export async function readBalanceResilient(
   if (rpcs.length === 0) {
     throw new X402RouteError(
       'bad_challenge',
-      `No RPC known for ${q.network} — set KYSIGNED_RPC_URL to read the wallet balance on that network.`,
+      `No RPC known for ${q.network}. Set KYSIGNED_RPC_URL to read the wallet balance on that network.`,
     );
   }
   const attemptsPerProvider = options.attemptsPerProvider ?? 2;
@@ -350,7 +350,7 @@ export function buildFundWalletAction(args: {
     instruction:
       `Send at least ${token ? atomicToDecimal(shortfall, token.decimals) : shortfall.toString() + ' atomic units of'} ` +
       `${symbol ?? terms.asset} on ${label ?? terms.network} to ${address}. ` +
-      `${symbol ?? 'This token'} on ${label ?? terms.network} ONLY — other tokens or networks will not arrive.`,
+      `${symbol ?? 'This token'} on ${label ?? terms.network} ONLY. Other tokens or networks will not arrive.`,
     retry,
   };
   if (label) action.network_label = label;
@@ -461,7 +461,7 @@ export async function getWalletStatus(endpoint: string, seams: WalletSeams): Pro
       hint:
         `No run402 payer is configured (allowance expected at ${presence.allowancePath}). ` +
         `Run \`run402 init\` to create one, point KYSIGNED_RUN402_ALLOWANCE_PATH at an explicit allowance file, ` +
-        `or (embedders) inject an opaque payment signer — the create tool pays from that payer.`,
+        `or (embedders) inject an opaque payment signer. The create tool pays from that payer.`,
     };
   }
   const terms = await fetchChallengeTerms(endpoint, seams.fetchFn);
@@ -471,7 +471,7 @@ export async function getWalletStatus(endpoint: string, seams: WalletSeams): Pro
       configured: false,
       payer_source: presence.sourceKind,
       allowance_path: presence.allowancePath,
-      hint: `The configured payer source (${presence.sourceKind}) has no payer for ${terms.network} — the priced route settles there.`,
+      hint: `The configured payer source (${presence.sourceKind}) has no payer for ${terms.network}, where the priced route settles.`,
     };
   }
   let balance: bigint;
@@ -495,7 +495,7 @@ export async function getWalletStatus(endpoint: string, seams: WalletSeams): Pro
           providers: err.providers,
         },
         hint:
-          'Every RPC provider failed — the balance is UNKNOWN (this is NOT an insufficient-funds result and ' +
+          'Every RPC provider failed, so the balance is UNKNOWN (this is NOT an insufficient-funds result and ' +
           'nothing was dispatched). Retry wallet_status; if it persists, set KYSIGNED_RPC_URL to a private RPC.',
       };
       if (terms.assetName) status.asset_name = terms.assetName;
@@ -526,9 +526,9 @@ export async function getWalletStatus(endpoint: string, seams: WalletSeams): Pro
     const priceUsd = usd(terms.amountUsdMicros);
     status.fund_hint =
       `Insufficient balance: send at least ${short} atomic units of ${assetLabel} on ${terms.network} ` +
-      `to ${address} — one envelope costs ${terms.amountAtomic} atomic units` +
+      `to ${address}. One envelope costs ${terms.amountAtomic} atomic units` +
       (priceUsd ? ` (${priceUsd})` : '') +
-      `, current balance ${balance.toString()}.`;
+      `; current balance ${balance.toString()}.`;
     status.next_actions = [
       buildFundWalletAction({
         terms,

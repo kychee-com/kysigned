@@ -81,7 +81,7 @@ export async function withCreateIdempotency(
         return {
           status: 409,
           body: {
-            error: 'A request with this Idempotency-Key is still in flight — retry shortly',
+            error: 'A request with this Idempotency-Key is still in flight. Retry shortly.',
             code: 'idempotency_in_flight',
           },
         };
@@ -101,7 +101,7 @@ export async function withCreateIdempotency(
       return {
         status: 409,
         body: {
-          error: 'A request with this Idempotency-Key is still in flight — retry shortly',
+          error: 'A request with this Idempotency-Key is still in flight. Retry shortly.',
           code: 'idempotency_in_flight',
         },
       };

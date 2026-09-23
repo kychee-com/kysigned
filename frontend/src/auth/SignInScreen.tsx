@@ -666,7 +666,7 @@ export function SignInScreen({
             // finishes sign-in in THIS tab (no tab switch, held draft intact).
             <div className="space-y-2" data-testid="signin-code-entry">
               <p className="text-sm font-medium text-gray-900">
-                Or type the 6-digit code from that email — you finish right here:
+                Or type the 6-digit code from that email to finish right here:
               </p>
               <div className="flex gap-2 justify-center">
                 <input
@@ -728,7 +728,7 @@ export function SignInScreen({
               data-testid="signin-continue"
               className="w-full px-6 py-3 bg-gray-900 text-white rounded-lg font-medium transition-colors duration-150 hover:bg-gray-700 active:bg-gray-950 cursor-pointer"
             >
-              I&rsquo;ve clicked the link &mdash; continue
+              I&rsquo;ve clicked the link, continue
             </button>
           )}
           <details className="text-xs text-gray-500 mt-6">

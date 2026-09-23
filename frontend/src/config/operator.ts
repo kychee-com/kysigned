@@ -148,7 +148,7 @@ export const GENERIC_OPERATOR_CONFIG: OperatorConfig = {
       subtitle: 'Simple, secure signing, powered by your email.',
       bodyHtml:
         'Sign documents by forwarding an email. The <strong>DKIM</strong> signature your ' +
-        'email provider already adds <em>is</em> the signature — no accounts and no apps for signers.',
+        'email provider already adds <em>is</em> the signature. Signers need no account and no app.',
       note:
         'This is placeholder copy for your own deployment. Replace the home content, brand, ' +
         'and pricing in your operator config (VITE_OPERATOR_CONFIG).',

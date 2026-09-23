@@ -1,8 +1,8 @@
 # Adding an information site to your kysigned instance
 
-When you deploy kysigned, you get the **app**: a dashboard, the signing pages, the `/hashcheck` and `/verify` tools, and the signing API — all served from one origin (one domain). What you don't get out of the box is a public front door — if someone browses to your domain's root, kysigned sends them to the sign-in screen (`/` redirects to `/dashboard`).
+When you deploy kysigned, you get the **app**: a dashboard, the signing pages, the `/hashcheck` and `/verify` tools, and the signing API, all served from one origin (one domain). What you don't get out of the box is a public front door: if someone browses to your domain's root, kysigned sends them to the sign-in screen (`/` redirects to `/dashboard`).
 
-That's fine for a tool your users already know about. But if you want a public landing page that explains what your service is — for visitors who land on your domain before they have an account — you'll want to layer an **information site** alongside the app on the **same domain**.
+That's fine for a tool your users already know about. But if you want a public landing page that explains what your service is (for visitors who land on your domain before they have an account), you'll want to layer an **information site** alongside the app on the **same domain**.
 
 > This is **your** site, not kysigned's. The kysigned repo ships the app only; the marketing/info pages for the hosted service at kysigned.com live in a private repo and are intentionally not part of the fork. You build the front door you want.
 
@@ -27,10 +27,10 @@ One project. One custom hostname binding. No CORS to configure. No two-subdomain
 
 run402's apply spec lets you put marketing static files and the SPA bundle in the same project. The gateway resolves paths in this order:
 
-1. **Exact static-file match** — e.g. `yourbrand.com/about.html` serves `dist-site/about.html`.
-2. **Function route match** — e.g. `yourbrand.com/v1/auth/user` routes to your kysigned-api Lambda.
-3. **Static-alias route** — if you've explicitly mapped `/` → `marketing-home.html`, that alias serves.
-4. **spa_fallback** — anything else (e.g. `/dashboard`, `/account/passkeys`) falls through to the SPA's `index.html`, where React Router takes over.
+1. **Exact static-file match**: e.g. `yourbrand.com/about.html` serves `dist-site/about.html`.
+2. **Function route match**: e.g. `yourbrand.com/v1/auth/user` routes to your kysigned-api Lambda.
+3. **Static-alias route**: if you've explicitly mapped `/` → `marketing-home.html`, that alias serves.
+4. **spa_fallback**: anything else (e.g. `/dashboard`, `/account/passkeys`) falls through to the SPA's `index.html`, where React Router takes over.
 
 You only need to handle conflicts where a path could match both a static file AND a SPA route (e.g. both `index.html` and the SPA's `index.html` want to be at `/`). The kysigned reference deploy script shows the pattern: rename the marketing landing during staging, then use a static-alias route to map `/` to the renamed file. SPA paths fall through naturally.
 
@@ -39,12 +39,12 @@ You only need to handle conflicts where a path could match both a static file AN
 1. **Drop your marketing files into the same project.** If you're using the kysigned reference deploy script as a base, copy your `info-site/` directory into the deploy staging step (model on how `stageMarketingSite()` works). If you're using a custom deploy, just include your marketing static files in your apply spec's `site.replace` alongside the SPA bundle.
 
 2. **Decide how `/` resolves.** Two simple options:
-   - **Marketing landing at `/`** — rename your marketing landing to `marketing-home.html` (or any name that won't collide with the SPA's `/index.html`), add a static-alias route `{ pattern: '/', methods: ['GET', 'HEAD'], target: { type: 'static', file: 'marketing-home.html' } }`. SPA serves at every other unmatched path via spa_fallback.
-   - **SPA at `/`** — let the SPA's `/index.html` serve at `/` directly (the default). Marketing pages live at explicit URLs like `/welcome.html` or `/about.html`. Simpler but `/` shows the sign-in screen.
+   - **Marketing landing at `/`**: rename your marketing landing to `marketing-home.html` (or any name that won't collide with the SPA's `/index.html`), add a static-alias route `{ pattern: '/', methods: ['GET', 'HEAD'], target: { type: 'static', file: 'marketing-home.html' } }`. SPA serves at every other unmatched path via spa_fallback.
+   - **SPA at `/`**: let the SPA's `/index.html` serve at `/` directly (the default). Marketing pages live at explicit URLs like `/welcome.html` or `/about.html`. Simpler but `/` shows the sign-in screen.
 
-3. **No operator-config change needed.** Under DD-73, the SPA, the API, and your marketing pages all share one origin (`yourbrand.com`). The SPA's `fetch('/v1/...')` calls land on the same origin same-origin — cookie auth, marketing nav state, sign-out from any page, all Just Work. The previous v0.18.x guidance to set `spaDomain` separately from `operatorDomain` is no longer needed; they're the same value.
+3. **No operator-config change needed.** Under DD-73, the SPA, the API, and your marketing pages all share one origin (`yourbrand.com`). The SPA's `fetch('/v1/...')` calls land on the same origin, so cookie auth, marketing nav state and sign-out from any page all Just Work. The previous v0.18.x guidance to set `spaDomain` separately from `operatorDomain` is no longer needed; they're the same value.
 
-4. **Link from your info site to the app.** Your "Sign in" / "Create an envelope" buttons point at `/dashboard` (relative — same origin). Example:
+4. **Link from your info site to the app.** Your "Sign in" / "Create an envelope" buttons point at `/dashboard` (relative, same origin). Example:
 
    ```html
    <a href="/dashboard">Sign in →</a>
@@ -55,7 +55,7 @@ You only need to handle conflicts where a path could match both a static file AN
 
 ## A minimal starter page
 
-Drop this in your project as `marketing-home.html` (so it doesn't collide with the SPA's `index.html`), wire up the static-alias route for `/`, and replace the copy with your own. It uses no framework — just HTML and inline CSS.
+Drop this in your project as `marketing-home.html` (so it doesn't collide with the SPA's `index.html`), wire up the static-alias route for `/`, and replace the copy with your own. It uses no framework, just HTML and inline CSS.
 
 ```html
 <!DOCTYPE html>
@@ -63,7 +63,7 @@ Drop this in your project as `marketing-home.html` (so it doesn't collide with t
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>YourBrand — secure document signing</title>
+  <title>YourBrand: secure document signing</title>
   <style>
     body { font-family: system-ui, sans-serif; color: #1a1a2e; max-width: 640px;
            margin: 0 auto; padding: 80px 24px; text-align: center; line-height: 1.6; }
@@ -84,7 +84,7 @@ Drop this in your project as `marketing-home.html` (so it doesn't collide with t
 
 ## Marketing nav signed-in awareness (optional)
 
-The SPA already handles "Signed in as X" / "Sign out" in its own header. But if you want your marketing pages (the static HTML ones, not SPA routes) to also reflect signed-in state — e.g. show "Sign in" when logged out, "{email} ▾" when logged in — you can read the same `kysigned_session_display` cookie the SPA uses:
+The SPA already handles "Signed in as X" / "Sign out" in its own header. But if you want your marketing pages (the static HTML ones, not SPA routes) to also reflect signed-in state (e.g. show "Sign in" when logged out, "{email} ▾" when logged in), you can read the same `kysigned_session_display` cookie the SPA uses:
 
 ```html
 <script>
@@ -125,10 +125,10 @@ The key distinction: the leading dot on `cookieDomain` is only emitted when you 
 
 Override only if your defaults don't match what you actually serve from:
 
-- `KYSIGNED_COOKIE_DOMAIN` — set explicitly if the derivation lands on the wrong scope. Be careful: setting this to a domain you don't fully control means another site on that apex could clear your cookies or set spoofed display cookies.
-- `KYSIGNED_WEBAUTHN_RP_ID` — set explicitly if you serve the SPA from a different host than what your WebAuthn relying party should claim. `run402`'s gateway also enforces a `validateWebAuthnAppOrigin` check, so a mismatched rpId here will reject the WebAuthn ceremony cleanly — surface misconfiguration is loud, not silent.
+- `KYSIGNED_COOKIE_DOMAIN`: set explicitly if the derivation lands on the wrong scope. Be careful: setting this to a domain you don't fully control means another site on that apex could clear your cookies or set spoofed display cookies.
+- `KYSIGNED_WEBAUTHN_RP_ID`: set explicitly if you serve the SPA from a different host than what your WebAuthn relying party should claim. `run402`'s gateway also enforces a `validateWebAuthnAppOrigin` check, so a mismatched rpId here will reject the WebAuthn ceremony cleanly, so a misconfiguration is loud, not silent.
 
-> **WARNING:** never set `webauthnRpId` to a domain you don't control. WebAuthn's security model binds credentials to the rpId; a mismatch is either rejected by the platform or — worse — silently binds credentials to the wrong relying party.
+> **WARNING:** never set `webauthnRpId` to a domain you don't control. WebAuthn's security model binds credentials to the rpId; a mismatch is either rejected by the platform or, worse, silently binds credentials to the wrong relying party.
 
 ## What changed from older guidance
 
@@ -138,4 +138,4 @@ If you're migrating from a two-host deployment: collapse to one project, delete 
 
 ## What stays cryptographically identical
 
-However you host the front door, the signing guarantees don't change — your instance produces the same self-verifying evidence bundles (the signer's provider-DKIM-signed emails sealed into one PDF), verifiable the same way as any other kysigned deployment, with no dependency on your instance staying online. The info site is presentation only; it has no bearing on the trust model. See the technical how-it-works page for the full picture.
+However you host the front door, the signing guarantees don't change: your instance produces the same self-verifying evidence bundles (the signer's provider-DKIM-signed emails sealed into one PDF), verifiable the same way as any other kysigned deployment, with no dependency on your instance staying online. The info site is presentation only; it has no bearing on the trust model. See the technical how-it-works page for the full picture.

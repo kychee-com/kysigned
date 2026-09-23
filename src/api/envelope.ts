@@ -792,8 +792,8 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
     tracking = {
       token: minted.raw,
       poll:
-        `GET ${ctx.baseUrl}/v1/envelope/${result.envelope.id} with header "Authorization: <tracking token>" — ` +
-        `read-only status (per-signer signing + delivery), no account needed.`,
+        `GET ${ctx.baseUrl}/v1/envelope/${result.envelope.id} with header "Authorization: <tracking token>" ` +
+        `returns the read-only status (per-signer signing and delivery), with no account needed.`,
     };
   } catch (err) {
     console.error(`tracking-token store failed for ${result.envelope.id}: ${(err as Error).message}`);
@@ -968,7 +968,7 @@ export async function handleVoidEnvelope(
     if (sgnrs.length > 0 && sgnrs.every((s) => s.status === 'signed')) {
       return {
         status: 409,
-        body: { error: 'Everyone has signed — the completed bundle is on its way, so this envelope can no longer be cancelled.', code: 'state_completed' },
+        body: { error: 'Everyone has signed and the completed bundle is on its way, so this envelope can no longer be cancelled.', code: 'state_completed' },
       };
     }
   }
@@ -1095,7 +1095,7 @@ export async function handleRemind(
   // (completed / voided / expired) has nobody to nudge. (Barry QA: reminding an
   // awaiting_seal envelope 400'd "Envelope is not active".)
   if (!isEnvelopeEditable(envelope.status)) {
-    return { status: 400, body: { error: `Envelope is ${envelope.status} — reminders only apply while it's open`, code: 'validation_envelope_not_open' } };
+    return { status: 400, body: { error: `Envelope is ${envelope.status}: reminders only apply while it's open`, code: 'validation_envelope_not_open' } };
   }
 
   const pending = await getOutstandingSigners(ctx.pool, envelopeId);
@@ -1586,7 +1586,7 @@ export async function handleAddSigner(
   if (!envelope) return { status: 404, body: { error: 'Envelope not found', code: 'not_found' } };
   if (envelope.sender_email !== senderIdentity) return { status: 403, body: { error: 'Not the envelope sender', code: 'auth_forbidden' } };
   if (!isEnvelopeEditable(envelope.status)) {
-    return { status: 409, body: { error: `Envelope is ${envelope.status} — the signer set is frozen (F-23.5)`, code: 'state_not_active' } };
+    return { status: 409, body: { error: `Envelope is ${envelope.status}, so the signer set is frozen (F-23.5)`, code: 'state_not_active' } };
   }
   if (!req.email || !req.email.includes('@')) {
     return { status: 400, body: { error: 'A valid signer email is required', code: 'validation_email' } };
@@ -1638,7 +1638,7 @@ export async function handleEditSigner(
   if (!envelope) return { status: 404, body: { error: 'Envelope not found', code: 'not_found' } };
   if (envelope.sender_email !== senderIdentity) return { status: 403, body: { error: 'Not the envelope sender', code: 'auth_forbidden' } };
   if (!isEnvelopeEditable(envelope.status)) {
-    return { status: 409, body: { error: `Envelope is ${envelope.status} — the signer set is frozen (F-23.5)`, code: 'state_not_active' } };
+    return { status: 409, body: { error: `Envelope is ${envelope.status}, so the signer set is frozen (F-23.5)`, code: 'state_not_active' } };
   }
 
   const current = await getSignerByEnvelopeAndEmail(ctx.pool, envelopeId, signerEmail);
@@ -1731,7 +1731,7 @@ export async function handleDeleteSigner(
   if (!envelope) return { status: 404, body: { error: 'Envelope not found', code: 'not_found' } };
   if (envelope.sender_email !== senderIdentity) return { status: 403, body: { error: 'Not the envelope sender', code: 'auth_forbidden' } };
   if (!isEnvelopeEditable(envelope.status)) {
-    return { status: 409, body: { error: `Envelope is ${envelope.status} — the signer set is frozen (F-23.5)`, code: 'state_not_active' } };
+    return { status: 409, body: { error: `Envelope is ${envelope.status}, so the signer set is frozen (F-23.5)`, code: 'state_not_active' } };
   }
 
   const current = await getSignerByEnvelopeAndEmail(ctx.pool, envelopeId, signerEmail);

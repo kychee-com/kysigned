@@ -130,7 +130,7 @@ export async function evaluateStatementGate(
     if (claimed) {
       const lines = missing.map(
         (a) =>
-          `- envelope ${a.envelope_id} / signer ${a.signer_email} — ` +
+          `- envelope ${a.envelope_id} / signer ${a.signer_email}, key ` +
           `${a.dkim_domain ?? '?'}/${a.dkim_selector ?? '?'} (receipt confirmation: ${a.archive_confirmation ?? 'unknown'})`,
       );
       const text =
@@ -139,7 +139,7 @@ export async function evaluateStatementGate(
         `${lines.join('\n')}\n\n` +
         `The bundle was delivered and verifies via the live archive fallback; it self-heals to full ` +
         `provenance once the archive observes the key. If the provider rotated the key away before any ` +
-        `observation, the affected signature is capped below PROVEN (DURABLE) permanently — asking the ` +
+        `observation, the affected signature is capped below PROVEN (DURABLE) permanently. Asking the ` +
         `customer to re-sign (optionally with a credit grant) is YOUR call; nothing here contacts customers.`;
       try {
         await deps.emailProvider.send({

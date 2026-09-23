@@ -116,7 +116,7 @@ export async function handleX402CreateEnvelope(
     return {
       status: 503,
       body: {
-        error: 'x402 payment is not active on this route — no settled payment context',
+        error: 'x402 payment is not active on this route: no settled payment context',
         code: 'payment_x402_unavailable',
       },
     };
@@ -146,7 +146,7 @@ export async function handleX402CreateEnvelope(
       status: 400,
       body: {
         error:
-          'creator_email (a deliverable address — creation/completion mail and the evidence bundle land there) is required on the x402 create',
+          'creator_email (a deliverable address where the creation and completion mail and the evidence bundle land) is required on the x402 create',
         code: 'validation_creator_email',
       },
     };
@@ -229,8 +229,8 @@ export async function handleX402CreateEnvelope(
           why:
             `Your $${(payment.amountUsdMicros / 1_000_000).toFixed(2)} payment settled and was banked as ` +
             `account credit for ${creatorEmail} (it was NOT lost). Fix the input, then sign in to ${creatorEmail} ` +
-            `(magic link) and create via the authenticated POST /v1/envelope — the banked credit covers it, no new ` +
-            `payment needed. Tip: call POST /v1/envelope/preflight (free) to validate inputs BEFORE paying.`,
+            `(magic link) and create via the authenticated POST /v1/envelope. The banked credit covers it, so no new ` +
+            `payment is needed. Tip: call POST /v1/envelope/preflight (free) to validate inputs BEFORE paying.`,
         },
       ],
     },

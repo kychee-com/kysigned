@@ -43,7 +43,7 @@ function builtinProviders(): Record<string, TimestampProvider> {
 }
 
 function usage(providers: Record<string, TimestampProvider>): string {
-  return `timestamp-module — stamp & verify a hash via a TimestampProvider
+  return `timestamp-module: stamp & verify a hash via a TimestampProvider
 
 Usage:
   timestamp [--provider <id>] stamp   <hash-hex | file>
@@ -122,7 +122,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<CliRes
 
     if (cmd === 'verify') {
       if (!rest[1] || !rest[2]) {
-        return { code: 2, out: '', err: 'verify: missing argument(s) — usage: verify <proof> <hash-hex | file>\n' };
+        return { code: 2, out: '', err: 'verify: missing argument(s). Usage: verify <proof> <hash-hex | file>\n' };
       }
       const proof = await resolveProof(rest[1], fs);
       const res = await p.verify(proof, await resolveHash(rest[2], fs));

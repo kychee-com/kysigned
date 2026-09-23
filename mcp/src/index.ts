@@ -23,7 +23,7 @@ function maskedAuth(): string {
   return t.length <= 8 ? 'set' : `${t.slice(0, 4)}…${t.slice(-4)}`;
 }
 
-const HELP = `kysigned-mcp ${VERSION} — MCP server for kysigned (self-verifying e-signatures)
+const HELP = `kysigned-mcp ${VERSION}: the MCP server for kysigned (self-verifying e-signatures)
 
 Usage:
   kysigned-mcp            start the stdio MCP server (how an MCP host launches it)
@@ -57,7 +57,7 @@ async function doctor(): Promise<number> {
     ok = false;
   }
   if (maskedAuth() === 'unset') {
-    process.stdout.write('  auth: MISSING — set KYSIGNED_AUTHORIZATION (mint a key at <endpoint>/account/api-keys)\n');
+    process.stdout.write('  auth: MISSING (set KYSIGNED_AUTHORIZATION; mint a key at <endpoint>/account/api-keys)\n');
     ok = false;
   } else {
     process.stdout.write(`  auth: present (${maskedAuth()})\n`);

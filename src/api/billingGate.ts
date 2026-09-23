@@ -60,7 +60,7 @@ export function buildHostedSenderGate(pool: DbPool, costUsdMicros: number): Send
           // ledger's UNIQUE(source, external_ref) idempotency lets debit + refund
           // coexist for the same envelope while still de-duping a double refund.
           externalRef: envelopeId,
-          description: `Refund — voided unsigned envelope ${envelopeId}`,
+          description: `Refund for voided unsigned envelope ${envelopeId}`,
         });
         return { ok: true };
       } catch (e) {

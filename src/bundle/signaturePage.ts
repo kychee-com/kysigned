@@ -121,7 +121,7 @@ export async function renderSignaturePages(doc: PDFDocument, input: SignaturePag
   page.drawText(nf.prepare(cap), { x: centerX(cap, helv, 7.5), y: PANEL_BOTTOM + 17, size: 7.5, font: helv, color: rgb(0.4, 0.4, 0.4) });
   page.drawText(nf.prepare(verifyHost), { x: centerX(verifyHost, helv, 7.5), y: PANEL_BOTTOM + 7, size: 7.5, font: helv, color: rgb(0.4, 0.4, 0.4) });
 
-  draw('kysigned - Signing record', { size: 16, bold: true, gap: 4 });
+  draw('kysigned: Signing record', { size: 16, bold: true, gap: 4 });
   draw('Signature page', { size: 11, bold: true, gap: 3 });
   draw('This PDF is the signing record: the document below, plus who signed it and when.', { size: 9, gap: 12 });
 
@@ -159,7 +159,7 @@ export async function renderSignaturePages(doc: PDFDocument, input: SignaturePag
   draw('This PDF is intentionally unsigned: no certificate, no seal. It', { size: 9, gap: 2 });
   draw('opens clean in any viewer. Its authenticity comes entirely from the', { size: 9, gap: 2 });
   draw('evidence embedded inside it (each signer\'s original provider-signed email', { size: 9, gap: 2 });
-  draw('+ independent timestamps), which anyone can re-verify - offline, forever,', { size: 9, gap: 2 });
+  draw('+ independent timestamps), which anyone can re-verify offline, forever,', { size: 9, gap: 2 });
   draw('even if kysigned no longer exists. See the embedded VERIFY-README.txt.', { size: 9, gap: 8 });
   draw('Verify independently: scan the QR panel on page 1, or visit', { size: 9, gap: 1 });
   draw(`${base}/verify`, { size: 9, bold: true });
