@@ -29,8 +29,15 @@ import {
   checkAllSigned,
   markSignerAcceptanceNotified,
   getActiveEnvelopesWithPendingSigner,
+  recordSignerRejection,
+  claimRejectionNotice,
 } from '../../db/envelopes.js';
-import { templates, type GenericRejectionReason } from '../../email/templates.js';
+import {
+  templates,
+  type GenericRejectionReason,
+  type ProviderNoDkimReason,
+  type RejectionReason,
+} from '../../email/templates.js';
 import { processForward, type ForwardOutcome } from './processForward.js';
 import { assembleSignatureArtifact, type ArtifactAssemblyDeps } from './artifactAssembly.js';
 import { scheduleTimestampUpgrade } from './timestampSchedule.js';
@@ -196,8 +203,16 @@ export async function handleReplyReceived(
       await enqueueCompletionIfAllSigned(ctx, outcome.envelopeId);
       return { messageId, action: 'already_signed', envelopeId: outcome.envelopeId };
 
-    case 'rejected':
-      await sendCorrectiveBounce(ctx, outcome);
+    case 'rejected': {
+      const rejectionClass = rejectionClassFor(outcome);
+      const c = await resolveContext(ctx.pool, outcome.envelopeId, outcome.signerEmail);
+      await sendCorrectiveBounce(ctx, outcome, rejectionClass, c);
+      // F-45.3 / F-45.5 — a closed envelope has nothing left to fix: the terminal
+      // note above is the whole response. Otherwise record the signer's latest
+      // problem (dashboard + API) and tell the creator once per kind of problem.
+      if (rejectionClass !== 'envelope_inactive') {
+        await recordAndNotifyRejection(ctx, outcome, rejectionClass, c);
+      }
       // F-36 — signer_declined with the rejection-code enum. Keyed (envelope,
       // message) so a redelivered event dedupes; a fresh rejected forward is a
       // new message id → its own event.
@@ -211,7 +226,8 @@ export async function handleReplyReceived(
           code: outcome.code,
         });
       }
-      return { messageId, action: 'rejected', code: outcome.code };
+      return { messageId, action: 'rejected', code: outcome.code, rejectionClass };
+    }
 
     case 'dropped':
       return { messageId, action: 'dropped', reason: outcome.reason }; // silent (AC-16)
@@ -276,26 +292,88 @@ async function sendAcceptanceAck(ctx: InboundEmailCtx, envelopeId: string, signe
   if (c) await sendCreatorProgress(ctx, envelopeId, c);
 }
 
-/** F-7.1 — the class-specific corrective bounce for a rejected forward (AC-20). */
+type RejectedOutcome = Extract<ForwardOutcome, { outcome: 'rejected' }>;
+
+/** F-45.1 — the bounce class for a rejected forward: a provider diagnosis wins. */
+export function rejectionClassFor(outcome: RejectedOutcome): RejectionReason {
+  if (outcome.providerNoDkim === 'google_workspace') return 'google_workspace_no_dkim';
+  if (outcome.providerNoDkim === 'microsoft_365') return 'microsoft_365_no_dkim';
+  return rejectionReasonForCode(outcome.code);
+}
+
+function isProviderNoDkim(c: RejectionReason): c is ProviderNoDkimReason {
+  return c === 'google_workspace_no_dkim' || c === 'microsoft_365_no_dkim';
+}
+
+function emailDomain(email: string): string {
+  return email.slice(email.lastIndexOf('@') + 1).toLowerCase();
+}
+
+/** F-7.1 / F-45.2 — the class-specific corrective bounce for a rejected forward (AC-20, AC-272). */
 async function sendCorrectiveBounce(
   ctx: InboundEmailCtx,
-  outcome: Extract<ForwardOutcome, { outcome: 'rejected' }>,
+  outcome: RejectedOutcome,
+  rejectionClass: RejectionReason,
+  c: NotifyContext | null,
 ): Promise<void> {
-  const c = await resolveContext(ctx.pool, outcome.envelopeId, outcome.signerEmail);
   const d = ctx.operatorDomain;
-  const t = templates.rejectionBounce({
-    signerName: c?.signerName ?? outcome.signerEmail,
-    documentName: c?.documentName ?? '',
-    operatorDomain: d,
-    reason: rejectionReasonForCode(outcome.code),
-    howItWorksLink: `https://${d}/how-it-works`,
-    faqHowToSignLink: `https://${d}/faq#how-to-sign`,
-    faqWrongEmailLink: `https://${d}/faq#wrong-email`,
-  });
+  const signerName = c?.signerName ?? outcome.signerEmail;
+  const documentName = c?.documentName ?? '';
+  const t = isProviderNoDkim(rejectionClass)
+    ? templates.providerNoDkimBounce({
+        signerName,
+        documentName,
+        operatorDomain: d,
+        reason: rejectionClass,
+        signerDomain: emailDomain(outcome.signerEmail),
+        senderName: c?.creatorEmail ?? 'the sender',
+      })
+    : templates.rejectionBounce({
+        signerName,
+        documentName,
+        operatorDomain: d,
+        reason: rejectionClass,
+        howItWorksLink: `https://${d}/how-it-works`,
+        faqHowToSignLink: `https://${d}/faq#how-to-sign`,
+        faqWrongEmailLink: `https://${d}/faq#wrong-email`,
+      });
   try {
     await ctx.emailProvider.send({ to: outcome.signerEmail, subject: t.subject, html: t.html, text: t.text, from: t.from, replyTo: t.replyTo });
   } catch (err) {
     console.error(`corrective bounce send failed for ${outcome.signerEmail}:`, err);
+  }
+}
+
+/**
+ * F-45.3 / F-45.5 (DD-70) — record the signer's latest problem for the dashboard +
+ * API, then tell the creator once per (signer, kind of problem). The notice is
+ * claim-first (only the run that claims the class sends it), skipped when the signer
+ * IS the creator, and best-effort throughout: the signer's bounce already went out,
+ * so a failure here is logged and never fails (or re-runs) the rejection.
+ */
+async function recordAndNotifyRejection(
+  ctx: InboundEmailCtx,
+  outcome: RejectedOutcome,
+  rejectionClass: Exclude<RejectionReason, 'envelope_inactive'>,
+  c: NotifyContext | null,
+): Promise<void> {
+  try {
+    await recordSignerRejection(ctx.pool, outcome.envelopeId, outcome.signerEmail, rejectionClass);
+    if (!c?.creatorEmail || c.signerIsCreator) return;
+    if (!(await claimRejectionNotice(ctx.pool, outcome.envelopeId, outcome.signerEmail, rejectionClass))) return;
+    const common = {
+      signerName: c.signerName,
+      signerEmail: outcome.signerEmail,
+      documentName: c.documentName,
+      operatorDomain: ctx.operatorDomain,
+      statusPageLink: `https://${ctx.operatorDomain}/dashboard/envelope/${outcome.envelopeId}`,
+    };
+    const t = isProviderNoDkim(rejectionClass)
+      ? templates.signerBlockedCreatorNotice({ ...common, reason: rejectionClass, signerDomain: emailDomain(outcome.signerEmail) })
+      : templates.signerRejectedCreatorNotice({ ...common, reason: rejectionClass });
+    await ctx.emailProvider.send({ to: c.creatorEmail, subject: t.subject, html: t.html, text: t.text, from: t.from, replyTo: t.replyTo });
+  } catch (err) {
+    console.error(`rejection record/notice failed for ${outcome.signerEmail} on ${outcome.envelopeId}:`, err);
   }
 }
 

@@ -161,6 +161,138 @@ describe('inboundEmail — handleReplyReceived (F-29.6)', () => {
   });
 });
 
+// F-45 (spec 0.72.0) — a rejected forward picks the provider bounce when diagnosed,
+// records the signer's latest problem, and tells the creator once per kind of problem.
+describe('inboundEmail — rejection visibility (F-45.2 / F-45.3 / F-45.5)', () => {
+  type Q = { text: string; values: unknown[] };
+  function recordingPool(answers: Array<{ match: string; rows?: unknown[]; throws?: boolean }>) {
+    const queries: Q[] = [];
+    const pool: DbPool = {
+      async query(text: string, values?: unknown[]) {
+        queries.push({ text, values: values ?? [] });
+        for (const a of answers) {
+          if (!text.includes(a.match)) continue;
+          if (a.throws) throw new Error('db down');
+          return { rows: a.rows ?? [], rowCount: (a.rows ?? []).length } as never;
+        }
+        return { rows: [], rowCount: 0 } as never;
+      },
+      async end() {},
+    };
+    return { pool, queries };
+  }
+  const PENDING = [{ id: 's-1', envelope_id: 'env-1', email: 'alice@x.com', name: 'Alice', status: 'pending' }];
+  const RECORD = 'SET last_rejection_class';
+  const CLAIM = 'array_append(rejection_notice_classes';
+  const baseAnswers = (claimed: boolean) => [
+    { match: 'FROM envelopes WHERE id', rows: ENV_ROWS },
+    { match: 'ORDER BY name', rows: PENDING },
+    { match: RECORD, rows: [{ id: 's-1' }] },
+    { match: CLAIM, rows: claimed ? [{ id: 's-1' }] : [] },
+  ];
+  const rejectedWith = (extra: Partial<Extract<ForwardOutcome, { outcome: 'rejected' }>>): ForwardOutcome => ({
+    outcome: 'rejected', code: 'misaligned', reason: 'x', envelopeId: 'env-1', signerEmail: 'alice@x.com', ...extra,
+  });
+  const classOf = (qs: Q[], match: string) => qs.filter((q) => q.text.includes(match)).map((q) => q.values[2]);
+
+  it('Google Workspace diagnosis → provider bounce to the signer + provider notice to the creator (AC-271/272/273)', async () => {
+    const r = recorder();
+    const { pool, queries } = recordingPool(baseAnswers(true));
+    const out = await handleReplyReceived(ctxWith(pool, r, rejectedWith({ providerNoDkim: 'google_workspace' })), { event: { message_id: 'msg-1' } });
+    assert.equal(out.action, 'rejected');
+    assert.equal(r.sent.length, 2);
+    assert.equal(r.sent[0].to, 'alice@x.com');
+    assert.match(r.sent[0].html ?? '', /Google Workspace/);
+    assert.match(r.sent[0].html ?? '', /faq#email-setup-google/);
+    assert.match(r.sent[0].html ?? '', /creator@x\.com/, 'the sign-sooner line names the sender');
+    assert.equal(r.sent[1].to, 'creator@x.com');
+    assert.match(r.sent[1].subject ?? '', /Alice can.t sign "Doc" until their email is set up/);
+    assert.match(r.sent[1].html ?? '', /dashboard\/envelope\/env-1/);
+    assert.deepEqual(classOf(queries, RECORD), ['google_workspace_no_dkim']);
+    assert.deepEqual(classOf(queries, CLAIM), ['google_workspace_no_dkim']);
+  });
+
+  it('Microsoft 365 diagnosis → the Microsoft versions (AC-278)', async () => {
+    const r = recorder();
+    const { pool, queries } = recordingPool(baseAnswers(true));
+    await handleReplyReceived(ctxWith(pool, r, rejectedWith({ providerNoDkim: 'microsoft_365' })), { event: { message_id: 'msg-1' } });
+    assert.match(r.sent[0].html ?? '', /Microsoft 365/);
+    assert.match(r.sent[0].html ?? '', /faq#email-setup-microsoft/);
+    assert.match(r.sent[1].html ?? '', /Microsoft Defender portal/);
+    assert.deepEqual(classOf(queries, RECORD), ['microsoft_365_no_dkim']);
+  });
+
+  it('a misaligned forward WITHOUT a diagnosis keeps the generic bounce, and the creator gets the general notice', async () => {
+    const r = recorder();
+    const { pool, queries } = recordingPool(baseAnswers(true));
+    await handleReplyReceived(ctxWith(pool, r, rejectedWith({})), { event: { message_id: 'msg-1' } });
+    assert.match(r.sent[0].html ?? '', /verify your email/i);
+    assert.doesNotMatch(r.sent[0].html ?? '', /Google Workspace|Microsoft 365/);
+    assert.match(r.sent[1].subject ?? '', /Alice.s signature on "Doc" wasn.t accepted/);
+    assert.deepEqual(classOf(queries, RECORD), ['dkim_unverifiable']);
+  });
+
+  it('wrong_phrase → generic bounce + general creator notice with its reason line (AC-277)', async () => {
+    const r = recorder();
+    const { pool, queries } = recordingPool(baseAnswers(true));
+    await handleReplyReceived(ctxWith(pool, r, rejectedWith({ code: 'wrong_phrase' })), { event: { message_id: 'msg-1' } });
+    assert.match(r.sent[0].html ?? '', /Your forward needs the exact signing line/);
+    assert.equal(r.sent[1].to, 'creator@x.com');
+    assert.match(r.sent[1].html ?? '', /first line of their forward/);
+    assert.deepEqual(classOf(queries, CLAIM), ['wrong_phrase']);
+  });
+
+  it('the same problem again (claim not granted) → only the signer bounce, no second creator notice', async () => {
+    const r = recorder();
+    const { pool } = recordingPool(baseAnswers(false));
+    await handleReplyReceived(ctxWith(pool, r, rejectedWith({ providerNoDkim: 'google_workspace' })), { event: { message_id: 'msg-2' } });
+    assert.equal(r.sent.length, 1);
+    assert.equal(r.sent[0].to, 'alice@x.com');
+  });
+
+  it('the signer IS the creator → no creator notice and no claim', async () => {
+    const r = recorder();
+    const { pool, queries } = recordingPool([
+      { match: 'FROM envelopes WHERE id', rows: [{ ...ENV_ROWS[0], sender_email: 'alice@x.com' }] },
+      { match: 'ORDER BY name', rows: PENDING },
+      { match: RECORD, rows: [{ id: 's-1' }] },
+      { match: CLAIM, rows: [{ id: 's-1' }] },
+    ]);
+    await handleReplyReceived(ctxWith(pool, r, rejectedWith({ code: 'wrong_phrase' })), { event: { message_id: 'msg-1' } });
+    assert.equal(r.sent.length, 1);
+    assert.deepEqual(classOf(queries, CLAIM), []);
+    assert.deepEqual(classOf(queries, RECORD), ['wrong_phrase'], 'the dashboard still shows it');
+  });
+
+  it('envelope_inactive → the terminal note only: no state write, no creator notice', async () => {
+    const r = recorder();
+    const { pool, queries } = recordingPool(baseAnswers(true));
+    await handleReplyReceived(ctxWith(pool, r, rejectedWith({ code: 'envelope_inactive' })), { event: { message_id: 'msg-1' } });
+    assert.equal(r.sent.length, 1);
+    assert.match(r.sent[0].html ?? '', /no longer active/);
+    assert.deepEqual(classOf(queries, RECORD), []);
+    assert.deepEqual(classOf(queries, CLAIM), []);
+  });
+
+  it('never sends the creator a progress email for a rejection (AC-54)', async () => {
+    const r = recorder();
+    const { pool } = recordingPool(baseAnswers(true));
+    await handleReplyReceived(ctxWith(pool, r, rejectedWith({ code: 'attachment_missing' })), { event: { message_id: 'msg-1' } });
+    assert.ok(!r.sent.some((m) => /complete|signed "Doc"/i.test(m.subject ?? '')), 'no progress email');
+  });
+
+  it('a failing creator send or state write never fails the run (best-effort)', async () => {
+    const r = recorder();
+    const flaky = { send: async (m: EmailMessage) => { if (m.to === 'creator@x.com') throw new Error('smtp down'); r.sent.push(m); return { messageId: 'm' }; } };
+    const { pool } = recordingPool(baseAnswers(true));
+    const out = await handleReplyReceived({ ...ctxWith(pool, r, rejectedWith({ code: 'wrong_phrase' })), emailProvider: flaky as never }, { event: { message_id: 'msg-1' } });
+    assert.equal(out.action, 'rejected');
+    const broken = recordingPool([{ match: 'FROM envelopes WHERE id', rows: ENV_ROWS }, { match: 'ORDER BY name', rows: PENDING }, { match: RECORD, throws: true }]);
+    const out2 = await handleReplyReceived(ctxWith(broken.pool, recorder(), rejectedWith({ code: 'wrong_phrase' })), { event: { message_id: 'msg-2' } });
+    assert.equal(out2.action, 'rejected');
+  });
+});
+
 describe('inboundEmail — handleBounce (F-9.8 / F-29.6)', () => {
   it('a permanent bounce processes (marks undeliverable across active envelopes)', async () => {
     const r = recorder();
