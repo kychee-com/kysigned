@@ -17,7 +17,11 @@
       .brand img { width: 32px; height: 32px; border-radius: 6px; }
       h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.05; letter-spacing: 0; margin: 64px 0 14px; }
       h2 { margin: 38px 0 10px; font-size: 22px; }
-      p { color: #444; max-width: 760px; }
+      h3 { margin: 22px 0 8px; font-size: 17px; }
+      [id] { scroll-margin-top: 24px; }
+      p, ol, ul { color: #444; max-width: 760px; }
+      li { margin-bottom: 6px; }
+      .muted { color: #666; font-size: 14px; }
       .lede { font-size: 18px; color: #666; }
       .section { padding-bottom: 22px; border-bottom: 1px solid #f0f0f0; }
       footer { padding: 34px 0 46px; color: #666; font-size: 13px; }
@@ -50,6 +54,40 @@
       <section class="section" id="wrong-email">
         <h2>What if I forward from the wrong email address?</h2>
         <p>Kysigned checks the email address that created the DKIM signature. Forward from the same address that received the signing request, or ask the document creator to send a new request to the address you want to use.</p>
+      </section>
+
+      <section class="section" id="email-setup">
+        <h2>My signature wasn&rsquo;t accepted because my email isn&rsquo;t set up. What now?</h2>
+        <p>You did everything right. Your organization&rsquo;s email domain isn&rsquo;t set up to prove that its messages really come from it. That proof is a signature your email system adds to every message, called DKIM, and only your organization&rsquo;s email administrator can switch it on. It&rsquo;s a one-time setting, so forwarding again won&rsquo;t help until it&rsquo;s on.</p>
+        <p>Send this to whoever manages your organization&rsquo;s email, together with a link to this page: <em>&ldquo;Please turn on DKIM email signing for our domain.&rdquo;</em> Once they confirm it&rsquo;s on, forward the original signing email again, exactly as before. Need to sign sooner? Ask the sender to send the document to a different email address of yours.</p>
+
+        <h3>Why turn this on (even if you never use Kysigned)</h3>
+        <ul>
+          <li><strong>Your mail reaches inboxes instead of spam.</strong> Major mailbox providers require senders to prove their identity, and mail sent in volume without it can be rejected.</li>
+          <li><strong>It stops impersonation of your domain.</strong> Without DKIM anyone can send email that looks like it comes from you. DKIM is also the foundation for DMARC, which tells mail systems to block those fakes.</li>
+          <li><strong>It survives forwarding.</strong> SPF breaks when mail passes through a forwarder or mailing list; a DKIM signature travels inside the message.</li>
+          <li><strong>Security reviews expect it.</strong> Security questionnaires, cyber insurance forms and rating tools check for DKIM and DMARC.</li>
+          <li><strong>It costs nothing and changes nothing for your users.</strong> One admin setting plus one DNS record.</li>
+        </ul>
+
+        <h3 id="email-setup-google">Google Workspace</h3>
+        <ol>
+          <li>In the Google Admin console, go to Apps, then Google Workspace, then Gmail, and open <strong>Authenticate email</strong> for your domain.</li>
+          <li>Click <strong>Generate new record</strong> (2048-bit key, prefix <code>google</code>).</li>
+          <li>Add the TXT record Google shows at your DNS host.</li>
+          <li>Click <strong>Start authentication</strong>. DNS can take up to 48 hours to update.</li>
+        </ol>
+
+        <h3 id="email-setup-microsoft">Microsoft 365</h3>
+        <ol>
+          <li>In the Microsoft Defender portal, go to Email &amp; collaboration, then Policies &amp; rules, then Threat policies, then Email authentication settings, and open the DKIM tab.</li>
+          <li>Select your domain and switch its toggle toward Enabled to see the two CNAME records.</li>
+          <li>Create both CNAME records at your DNS host, then switch the toggle to Enabled once they are detected.</li>
+        </ol>
+
+        <h3 id="email-setup-other">Other email providers</h3>
+        <p>Look for a DKIM or &ldquo;email authentication&rdquo; setting in your provider&rsquo;s admin console. The pattern is the same: generate a key, publish the DNS record it shows, then switch signing on.</p>
+        <p class="muted">Sending from an alias (a &ldquo;send mail as&rdquo; address in another account)? Sign from the mailbox that owns the address instead.</p>
       </section>
 
       <section class="section">
