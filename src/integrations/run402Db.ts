@@ -18,7 +18,8 @@ import type { DbPool } from '../db/pool.js';
 /**
  * The subset of `@run402/functions` `adminDb()` kysigned uses: raw SQL → result.
  *
- * ⚠️ run402's `/projects/v1/admin/:id/sql` endpoint returns a WRAPPER object
+ * ⚠️ run402's service-key SQL endpoint (`/projects/v1/:id/sql`; formerly
+ * `/projects/v1/admin/:id/sql`, now retiring) returns a WRAPPER object
  * `{ status, schema, rows, row_count, fields }`, NOT a bare rows array — even
  * though the SDK types `.sql()` as `Promise<Record<string,unknown>[]>`. We type
  * the result `unknown` so that SDK lie can't make the pool consume the wrapper
