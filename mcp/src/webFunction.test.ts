@@ -66,6 +66,22 @@ describe('dispatch', () => {
     }
   });
 
+  // The skills directory's route takes every method (a GET/HEAD-only wildcard cannot pass both
+  // the run402 SDK and gateway checks, scripts/lib/agentRoutes.mjs), so the function itself must
+  // answer the other methods: OPTIONS as the CORS preflight, a mutation as its own JSON 405.
+  it('the skills directory answers every method: OPTIONS is the preflight, a mutation is a JSON 405', async () => {
+    const path = '/.well-known/agent-skills/index.json';
+    const pre = (await call(path, { method: 'OPTIONS' })).res;
+    assert.equal(pre.status, 204);
+    assert.match(pre.headers.get('access-control-allow-methods') ?? '', /GET, HEAD/);
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      const { res } = await call(path, { method, body: method === 'DELETE' ? undefined : '{}' });
+      assert.equal(res.status, 405, method);
+      assert.equal(res.headers.get('allow'), 'GET, HEAD, OPTIONS', method);
+      assert.equal(((await res.json()) as { code: string }).code, 'method_not_allowed', method);
+    }
+  });
+
   it('the negotiated pages are served from the staged copies', async () => {
     const { res, host } = await call('/faq', { headers: { Accept: 'text/markdown' } });
     assert.equal(res.status, 200);

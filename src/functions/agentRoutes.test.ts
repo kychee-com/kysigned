@@ -39,9 +39,9 @@ describe('agentRoutes', () => {
     assert.equal(AGENT_FUNCTION_NAME, 'kysigned-agent');
   });
 
-  it('/mcp takes every method (a GET must never fall to the SPA); everything else is GET and HEAD', () => {
+  it('/mcp and the skills directory take every method; everything else is GET and HEAD', () => {
     for (const r of agentRoutes(KYSIGNED_COM_PAGES)) {
-      if (r.pattern === '/mcp') assert.equal(r.methods, undefined);
+      if (r.pattern === '/mcp' || r.pattern === '/.well-known/agent-skills/*') assert.equal(r.methods, undefined, r.pattern);
       else assert.deepEqual(r.methods, ['GET', 'HEAD'], r.pattern);
     }
   });
@@ -56,18 +56,21 @@ describe('agentRoutes', () => {
     }
   });
 
-  // The run402 SDK raises WILDCARD_ROUTE_EXCLUDES_MUTATION_METHODS (requires_confirmation: true,
-  // so the apply stops before upload) for a final-wildcard function route limited to GET/HEAD,
-  // unless the route carries acknowledge_readonly: true, which its validation accepts on exactly
-  // those routes and rejects anywhere else (@run402/sdk dist/namespaces/deploy.js,
-  // clientRoutePlanWarnings and validateRouteReadOnlyAcknowledgement).
-  it('acknowledges the read-only skills wildcard, and only it, so neither apply stops on a plan warning', () => {
-    for (const r of agentRoutes(KYSIGNED_COM_PAGES) as Array<{ pattern: string; methods?: string[]; acknowledge_readonly?: true }>) {
+  // Two platform checks meet here. run402's release validator accepts exactly these route keys
+  // and refuses any other with INVALID_SPEC before a plan exists (run402-core
+  // packages/release/src/routes.ts:82 at 61d1f9f); the first live apply of this table was refused
+  // for `acknowledge_readonly` (2026-09-25, plan 82.10). And the run402 SDK raises
+  // WILDCARD_ROUTE_EXCLUDES_MUTATION_METHODS (requires confirmation, so the apply stops before
+  // upload) for a final-wildcard function route limited to GET/HEAD; its acknowledgement field is
+  // the one the gateway refuses. So no route may carry another key, and no function wildcard may
+  // be read-only: the skills directory takes every method and the function answers the rest.
+  it('carries only the route keys run402 accepts, and no read-only function wildcard', () => {
+    const accepted = new Set(['pattern', 'methods', 'target', 'pricing']);
+    for (const r of agentRoutes(KYSIGNED_COM_PAGES) as Array<Record<string, unknown> & { pattern: string; methods?: string[] }>) {
+      for (const key of Object.keys(r)) assert.ok(accepted.has(key), `${r.pattern}: run402 refuses the route key ${key}`);
       const readOnlyWildcard = r.pattern.endsWith('/*') && !!r.methods && r.methods.every((m) => m === 'GET' || m === 'HEAD');
-      if (readOnlyWildcard) assert.equal(r.acknowledge_readonly, true, `${r.pattern} needs acknowledge_readonly`);
-      else assert.equal(r.acknowledge_readonly, undefined, `${r.pattern} may not carry acknowledge_readonly`);
+      assert.ok(!readOnlyWildcard, `${r.pattern}: a GET/HEAD-only function wildcard stops the SDK apply`);
     }
-    assert.equal(agentRoutes(TEMPLATE_AGENT_PAGES).find((r) => r.pattern === '/.well-known/agent-skills/*')?.acknowledge_readonly, true);
   });
 
   it('kysigned.com adds pricing; the template does not have it', () => {

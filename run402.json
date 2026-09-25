@@ -193,12 +193,10 @@
         },
         {
           "pattern": "/.well-known/agent-skills/*",
-          "methods": ["GET", "HEAD"],
           "target": {
             "type": "function",
             "name": "kysigned-agent"
-          },
-          "acknowledge_readonly": true
+          }
         },
         {
           "pattern": "/.well-known/api-catalog",

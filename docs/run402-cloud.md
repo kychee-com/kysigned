@@ -113,9 +113,12 @@ KYSIGNED_ALLOWED_CREATORS='*@example.com' run402 up --yes
   wallet signature) and `ROUTE_SHADOWS_STATIC_PATH` (its routes serve the info
   pages, whose static files stay in place). Confirm them when asked;
   `scripts/deploy.mjs` passes both as allowed warning codes. The one prefix
-  route, `/.well-known/agent-skills/*`, is read-only on purpose and says so
-  with `acknowledge_readonly: true`, so the SDK's read-only wildcard warning
-  (`WILDCARD_ROUTE_EXCLUDES_MUTATION_METHODS`) does not stop the apply.
+  route, `/.well-known/agent-skills/*`, takes every method, like `/mcp`, and
+  the function answers the rest itself (a JSON 405 for anything but GET, HEAD
+  and OPTIONS). A GET/HEAD-only wildcard would raise the SDK's
+  `WILDCARD_ROUTE_EXCLUDES_MUTATION_METHODS` warning, which stops the apply,
+  and run402 refuses the `acknowledge_readonly` route field the SDK suggests
+  for it.
 - The build stages copies of the info pages under `/_agent/pages/`, where the
   agent function reads them. The template ships no `robots.txt`; a fork that
   adds one may disallow `/_agent/` (each copy also keeps its page's canonical
