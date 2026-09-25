@@ -7,6 +7,8 @@
 > How it works: /how-it-works (technical: /how-it-works-technical.html)
 > Verify a bundle: /verify (offline, no account, no server lookup)
 > FAQ: /faq
+> Web MCP (no install, no key): /mcp. Every way in: /auth.md. API catalog: /.well-known/api-catalog
+> Markdown: /how-it-works.md, /how-it-works-technical.md, /faq.md
 > Health: /v1/health
 > Pricing / access: operator-configured. This instance may charge per envelope, gate creators by
 >   an allowlist, or both. Signing is always free for signers.
@@ -199,10 +201,47 @@ The full surface is also machine-readable as OpenAPI 3.1 at `/openapi.json`.
    your receiver gets the signed `envelope.completed` webhook. The bundle is the durable record:
    verify it any time at `/verify`. (No server-side verify endpoint exists; verification is client-side.)
 
+## Web MCP endpoint (no install, no key)
+
+This instance's origin + `/mcp` speaks MCP over streamable HTTP (stateless): point any MCP client
+that supports remote servers at it. Nothing to install, no account and no key. Four tools:
+
+- **explain_kysigned**: how signing works, every way to create and pay, tracking, and how to verify
+  the bundle on your own machine. Free.
+- **check_price**: the live per-envelope price, read from the x402 route's own unpaid challenge.
+  Free; it never pays or creates anything.
+- **check_envelope_status**: one envelope, with its tracking token (`ktt_…`, from any create
+  result). It accepts no creator API key: a `ksk_…` key answers `api_key_not_accepted`.
+- **create_envelope_x402**: the paid create, from your own wallet, with x402 inside the tool call.
+  The free preflight runs first, so an invalid request is refused before any payment is asked for.
+  Then the call answers with the route's own terms (`isError: true`, the x402 `PaymentRequired`
+  object as `structuredContent`); an x402 MCP client signs and calls again with the payment in
+  `_meta["x402/payment"]`, and the result carries the envelope, the `payment` receipt and the
+  `tracking` token, with the settlement in `_meta["x402/payment-response"]`. The endpoint never
+  holds keys or funds. Retries are safe: the same request (or the returned `spending_intent_key`
+  passed as `idempotency_key`) returns the stored envelope with `replayed: true`, paying nothing.
+  Where the operator has not enabled x402, it answers `x402_not_enabled`.
+
+Verification is never a web tool: check a bundle at `/verify` (inside your browser) or with the
+reference verifier in the public repo. For keys, lists, reminders and voids, use the local server
+("Agent tools (MCP)" below).
+
+Discovery documents (public, no auth):
+
+- MCP server card: `/.well-known/mcp/server-card.json` (the same card at `/mcp/server-card`).
+- Agent skills: `/.well-known/agent-skills/index.json` (send a document for signature; track an
+  envelope).
+- API catalog (RFC 9727): `/.well-known/api-catalog` (the `/v1` API and the web endpoint).
+- Every way in, in plain words: `/auth.md`. There is no OAuth server: the OAuth discovery
+  addresses answer 404 and point to `/auth.md`.
+
+Markdown pages: `/how-it-works.md`, `/how-it-works-technical.md` and `/faq.md`. The page URLs
+themselves answer markdown to `Accept: text/markdown`.
+
 ## Agent tools (MCP)
 
-`npx kysigned-mcp` exposes seven tools. The five ops tools are key-authenticated; configure
-`KYSIGNED_ENDPOINT` + `KYSIGNED_AUTHORIZATION`:
+On your own machine, `npx kysigned-mcp` exposes seven tools. The five ops tools are
+key-authenticated; configure `KYSIGNED_ENDPOINT` + `KYSIGNED_AUTHORIZATION`:
 
 - **create_envelope**: `POST /v1/envelope` (`document_name`, `pdf_base64` | `pdf_url`, `signers[]`, `message?`)
 - **check_envelope_status**: `GET /v1/envelope/:id`; also accepts `tracking_token` (`ktt_…` from any

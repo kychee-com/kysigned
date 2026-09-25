@@ -2,6 +2,25 @@
 
 Model Context Protocol (MCP) server for [kysigned](https://kysigned.com), DKIM-based e-signatures that produce a self-contained **evidence-bundle** PDF. Lets any MCP-compatible AI agent (Claude Desktop, Claude Code, Cursor, custom agents using the Anthropic SDK, etc.) send documents for signing and check status, without writing HTTP code.
 
+## Web endpoint (no install)
+
+A kysigned instance also serves MCP itself, over streamable HTTP, at `<instance>/mcp` (kysigned.com: `https://kysigned.com/mcp`). Nothing to install, no account and no key: point any MCP host that supports remote servers at that URL. In Claude Code:
+
+```bash
+claude mcp add --transport http kysigned https://kysigned.com/mcp
+```
+
+It has four tools:
+
+- `explain_kysigned`: how signing works, every way to create and pay, tracking, and how to verify the bundle on your own machine. Free.
+- `check_price`: the live per-envelope price, read from the x402 route's own challenge. Free.
+- `check_envelope_status`: one envelope, with its tracking token (`ktt_…`). It accepts no API key.
+- `create_envelope_x402`: the paid create, from the caller's own wallet, with x402 inside the tool call. The first call answers with the payment terms; an x402-capable MCP client (for example `@x402/mcp`) signs and calls again with the payment attached. The free preflight runs first, and a retry of the same request replays the envelope instead of paying twice.
+
+Verifying a bundle is never a web tool: it stays on your machine (`/verify` in a browser, or the reference verifier). The endpoint's server card is at `<instance>/.well-known/mcp/server-card.json`, its agent skills at `/.well-known/agent-skills/index.json`, the API catalog at `/.well-known/api-catalog`, and every way to authenticate at `/auth.md`.
+
+Install this package (below) instead for the full tool set: creator API keys, listing, reminders and voids, or paying from a local run402 wallet.
+
 ## Install
 
 ```bash

@@ -231,4 +231,36 @@ describe('API Documentation Alignment', () => {
     }
     assert.match(t, /"code"|error code/i, 'documents the machine-readable error codes');
   });
+
+  // ── F-46.11 / AC-296: the agent front door, checked against its own sources ──
+
+  it('llms.txt names the web MCP endpoint, its tools, the discovery documents and every markdown address (F-46.11 / AC-296)', { skip: !llmsExists ? 'llms.txt missing' : undefined }, async () => {
+    const t = readFileSync(LLMS_TXT, 'utf-8');
+    // Loaded here, not at the top, so a checkout without mcp/'s packages fails this test alone.
+    const { WEB_TOOL_NAMES } = await import('../mcp/src/webServer.ts');
+    const { WEB_FACTS } = await import('../mcp/src/webFacts.ts');
+    const docs = await import('../mcp/src/webDocuments.ts');
+    const { TEMPLATE_AGENT_PAGES } = await import('../scripts/lib/agentPages.mjs');
+
+    assert.ok(t.includes(`\`${WEB_FACTS.mcpPath}\``), `names the web endpoint ${WEB_FACTS.mcpPath}`);
+    for (const tool of WEB_TOOL_NAMES) assert.ok(t.includes(`**${tool}**`), `lists the web tool ${tool}`);
+    for (const path of [...docs.SERVER_CARD_PATHS, docs.SKILLS_INDEX_PATH, docs.API_CATALOG_PATH, docs.AUTH_MD_PATH]) {
+      assert.ok(t.includes(`\`${path}\``), `names ${path}`);
+    }
+    for (const page of TEMPLATE_AGENT_PAGES) assert.ok(t.includes(`/${page}.md`), `lists the markdown address /${page}.md`);
+    assert.ok(!t.includes('/pricing.md'), 'the template has no pricing page, so no /pricing.md');
+    assert.match(t, /`npx kysigned-mcp` exposes seven tools/, 'the local server keeps its seven tools');
+  });
+
+  it('the MCP README names the web endpoint, its tools and its documents (F-46.11 / AC-296)', async () => {
+    const readme = readFileSync(join(ROOT, 'mcp', 'README.md'), 'utf-8');
+    const { WEB_TOOL_NAMES } = await import('../mcp/src/webServer.ts');
+    const docs = await import('../mcp/src/webDocuments.ts');
+    assert.match(readme, /^## Web endpoint \(no install\)$/m, 'has the web endpoint section');
+    assert.ok(readme.includes('`<instance>/mcp`') && readme.includes('https://kysigned.com/mcp'), 'names the endpoint');
+    for (const tool of WEB_TOOL_NAMES) assert.ok(readme.includes(`\`${tool}\``), `names the web tool ${tool}`);
+    for (const path of [docs.SERVER_CARD_PATHS[0], docs.SKILLS_INDEX_PATH, docs.API_CATALOG_PATH, docs.AUTH_MD_PATH]) {
+      assert.ok(readme.includes(path), `names ${path}`);
+    }
+  });
 });
