@@ -32,8 +32,9 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@run402/sdk": "^4.8.0",
+    "@x402/core": "~2.18.0",
     "@x402/evm": "^2.9.0",
     "@x402/fetch": "^2.9.0",
     "viem": "^2.47.10",
@@ -41,6 +42,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@x402/mcp": "~2.18.0",
     "tsx": "^4.0.0",
     "typescript": "^5.7.0"
   }

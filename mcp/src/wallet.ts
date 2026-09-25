@@ -29,83 +29,11 @@
  * runs the function). Nothing operator-specific is baked into the package.
  */
 
-export interface ChallengeTerms {
-  network: string;
-  asset: string;
-  assetName?: string;
-  /** Atomic units of `asset` as a decimal string (USDC: atomic == usd micros). */
-  amountAtomic: string;
-  amountUsdMicros?: number;
-  payTo: string;
-}
-
-export class X402RouteError extends Error {
-  readonly kind: 'not_priced' | 'bad_challenge';
-  constructor(kind: 'not_priced' | 'bad_challenge', message: string) {
-    super(message);
-    this.name = 'X402RouteError';
-    this.kind = kind;
-  }
-}
-
-/** The x402 create route relative to the configured endpoint (F-30.2). */
-export const X402_CREATE_PATH = '/v1/x402/envelope';
-
-/**
- * Probe the priced route unpaid and parse its x402 v2 challenge terms.
- * Throws X402RouteError: `not_priced` when the route answers anything but a
- * 402 challenge (e.g. a fork where the operator has not wired x402), and
- * `bad_challenge` when a 402 arrives without a parseable challenge.
- */
-export async function fetchChallengeTerms(
-  endpoint: string,
-  fetchFn: typeof fetch = globalThis.fetch,
-): Promise<ChallengeTerms> {
-  const url = `${endpoint}${X402_CREATE_PATH}`;
-  const res = await fetchFn(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: '{}',
-  });
-  if (res.status !== 402) {
-    throw new X402RouteError(
-      'not_priced',
-      `${url} answered ${res.status}, not an x402 402 challenge: this instance has no wallet-payable create (the operator has not wired x402).`,
-    );
-  }
-  const header = res.headers.get('payment-required');
-  if (!header) {
-    throw new X402RouteError('bad_challenge', `402 from ${url} carried no Payment-Required challenge header.`);
-  }
-  let accept: Record<string, unknown>;
-  try {
-    const decoded = JSON.parse(Buffer.from(header, 'base64').toString('utf8')) as {
-      accepts?: Array<Record<string, unknown>>;
-    };
-    const accepts = Array.isArray(decoded.accepts) ? decoded.accepts : [];
-    const found = accepts.find((a) => a['scheme'] === 'exact') ?? accepts[0];
-    if (!found) throw new Error('no accepts entries');
-    accept = found;
-  } catch (err) {
-    throw new X402RouteError(
-      'bad_challenge',
-      `Could not parse the Payment-Required challenge from ${url}: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-  const network = accept['network'];
-  const asset = accept['asset'];
-  const amount = accept['amount'];
-  const payTo = accept['payTo'];
-  if (typeof network !== 'string' || typeof asset !== 'string' || typeof payTo !== 'string' ||
-      typeof amount !== 'string' || !/^\d+$/.test(amount)) {
-    throw new X402RouteError('bad_challenge', `Challenge accepts entry from ${url} is missing network/asset/amount/payTo.`);
-  }
-  const extra = (accept['extra'] ?? {}) as Record<string, unknown>;
-  const terms: ChallengeTerms = { network, asset, amountAtomic: amount, payTo };
-  if (typeof extra['name'] === 'string') terms.assetName = extra['name'];
-  if (typeof extra['amount_usd_micros'] === 'number') terms.amountUsdMicros = extra['amount_usd_micros'];
-  return terms;
-}
+// The unpaid-challenge probe lives in x402Challenge.ts (82.1): one
+// implementation, shared with the web front door (F-46) without the wallet
+// stack. Re-exported here so every existing importer keeps working.
+import { X402_CREATE_PATH, X402RouteError, fetchChallengeTerms, type ChallengeTerms } from './x402Challenge.js';
+export { X402_CREATE_PATH, X402RouteError, fetchChallengeTerms, type ChallengeTerms };
 
 // ── payer sources (F-30.6, #151) ─────────────────────────────────────────────
 
