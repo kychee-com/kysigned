@@ -9,6 +9,12 @@
  * would let other methods fall through to the static host and the SPA shell.
  * Everything else is GET and HEAD. Never routed here: `/`, `/dashboard` (the
  * GH#20 magic-link landing) and the legal pages.
+ *
+ * The one prefix route, the skills directory, is read-only on purpose, so it
+ * carries `acknowledge_readonly: true`: without it the SDK raises
+ * WILDCARD_ROUTE_EXCLUDES_MUTATION_METHODS, which requires confirmation and
+ * stops the apply before upload. The field is valid only on a GET/HEAD
+ * final-wildcard function route.
  */
 
 export const AGENT_FUNCTION_NAME = 'kysigned-agent';
@@ -34,7 +40,9 @@ export const AGENT_DOCUMENT_PATTERNS = Object.freeze([
 export function agentRoutes(pages) {
   const target = () => ({ type: 'function', name: AGENT_FUNCTION_NAME });
   const routes = [{ pattern: '/mcp', target: target() }];
-  for (const pattern of AGENT_DOCUMENT_PATTERNS) routes.push({ pattern, methods: [...READ], target: target() });
+  for (const pattern of AGENT_DOCUMENT_PATTERNS) {
+    routes.push({ pattern, methods: [...READ], target: target(), ...(pattern.endsWith('/*') ? { acknowledge_readonly: true } : {}) });
+  }
   for (const page of pages) {
     for (const pattern of [`/${page}`, `/${page}.html`, `/${page}.md`]) {
       routes.push({ pattern, methods: [...READ], target: target() });

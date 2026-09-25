@@ -56,6 +56,20 @@ describe('agentRoutes', () => {
     }
   });
 
+  // The run402 SDK raises WILDCARD_ROUTE_EXCLUDES_MUTATION_METHODS (requires_confirmation: true,
+  // so the apply stops before upload) for a final-wildcard function route limited to GET/HEAD,
+  // unless the route carries acknowledge_readonly: true, which its validation accepts on exactly
+  // those routes and rejects anywhere else (@run402/sdk dist/namespaces/deploy.js,
+  // clientRoutePlanWarnings and validateRouteReadOnlyAcknowledgement).
+  it('acknowledges the read-only skills wildcard, and only it, so neither apply stops on a plan warning', () => {
+    for (const r of agentRoutes(KYSIGNED_COM_PAGES) as Array<{ pattern: string; methods?: string[]; acknowledge_readonly?: true }>) {
+      const readOnlyWildcard = r.pattern.endsWith('/*') && !!r.methods && r.methods.every((m) => m === 'GET' || m === 'HEAD');
+      if (readOnlyWildcard) assert.equal(r.acknowledge_readonly, true, `${r.pattern} needs acknowledge_readonly`);
+      else assert.equal(r.acknowledge_readonly, undefined, `${r.pattern} may not carry acknowledge_readonly`);
+    }
+    assert.equal(agentRoutes(TEMPLATE_AGENT_PAGES).find((r) => r.pattern === '/.well-known/agent-skills/*')?.acknowledge_readonly, true);
+  });
+
   it('kysigned.com adds pricing; the template does not have it', () => {
     assert.ok(agentRoutes(KYSIGNED_COM_PAGES).some((r) => r.pattern === '/pricing.html'));
     assert.ok(!agentRoutes(TEMPLATE_AGENT_PAGES).some((r) => r.pattern.startsWith('/pricing')));

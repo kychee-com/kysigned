@@ -197,7 +197,8 @@
           "target": {
             "type": "function",
             "name": "kysigned-agent"
-          }
+          },
+          "acknowledge_readonly": true
         },
         {
           "pattern": "/.well-known/api-catalog",

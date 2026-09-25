@@ -112,7 +112,10 @@ KYSIGNED_ALLOWED_CREATORS='*@example.com' run402 up --yes
   design: no auth, no cookies, and its only paid tool needs the caller's own
   wallet signature) and `ROUTE_SHADOWS_STATIC_PATH` (its routes serve the info
   pages, whose static files stay in place). Confirm them when asked;
-  `scripts/deploy.mjs` passes both as allowed warning codes.
+  `scripts/deploy.mjs` passes both as allowed warning codes. The one prefix
+  route, `/.well-known/agent-skills/*`, is read-only on purpose and says so
+  with `acknowledge_readonly: true`, so the SDK's read-only wildcard warning
+  (`WILDCARD_ROUTE_EXCLUDES_MUTATION_METHODS`) does not stop the apply.
 - The build stages copies of the info pages under `/_agent/pages/`, where the
   agent function reads them. The template ships no `robots.txt`; a fork that
   adds one may disallow `/_agent/` (each copy also keeps its page's canonical
