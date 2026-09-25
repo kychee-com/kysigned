@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { KYSIGNED_RUN402_FUNCTIONS, ROOT, bundleRun402Function } from "./run402-functions.mjs";
+import { TEMPLATE_AGENT_PAGES, stageAgentPages } from "./lib/agentPages.mjs";
 
 export const CLOUD_FUNCTION_OUT_DIR = path.join(ROOT, "dist", "run402", "cloud-functions");
 
@@ -32,7 +33,12 @@ async function main() {
     },
   });
 
-  console.log(`Bundling ${KYSIGNED_RUN402_FUNCTIONS.length} Run402 Cloud function...`);
+  // F-46.8: the agent function serves the negotiated pages from copies staged with the site.
+  console.log("Staging the agent pages and their markdown twins...");
+  const staged = stageAgentPages(path.join(ROOT, "frontend", "dist"), TEMPLATE_AGENT_PAGES);
+  console.log(`  ${staged.join(", ")}`);
+
+  console.log(`Bundling ${KYSIGNED_RUN402_FUNCTIONS.length} Run402 Cloud functions...`);
   await mkdir(CLOUD_FUNCTION_OUT_DIR, { recursive: true });
   for (const fn of KYSIGNED_RUN402_FUNCTIONS) {
     const source = await bundleRun402Function(fn);

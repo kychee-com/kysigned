@@ -48,6 +48,10 @@
         "argv": ["npm", "ci", "--prefix", "frontend"]
       },
       {
+        "id": "install-mcp",
+        "argv": ["npm", "ci", "--prefix", "mcp"]
+      },
+      {
         "id": "build",
         "argv": ["npm", "run", "build:run402-cloud"]
       }
@@ -141,6 +145,12 @@
               }
             }
           ]
+        },
+        "kysigned-agent": {
+          "runtime": "node22",
+          "source": {
+            "path": "dist/run402/cloud-functions/kysigned-agent.js"
+          }
         }
       }
     },
@@ -159,19 +169,146 @@
     "routes": {
       "replace": [
         {
-          "pattern": "/faq",
+          "pattern": "/mcp",
+          "target": {
+            "type": "function",
+            "name": "kysigned-agent"
+          }
+        },
+        {
+          "pattern": "/mcp/server-card",
           "methods": ["GET", "HEAD"],
           "target": {
-            "type": "static",
-            "file": "faq.html"
+            "type": "function",
+            "name": "kysigned-agent"
+          }
+        },
+        {
+          "pattern": "/.well-known/mcp/server-card.json",
+          "methods": ["GET", "HEAD"],
+          "target": {
+            "type": "function",
+            "name": "kysigned-agent"
+          }
+        },
+        {
+          "pattern": "/.well-known/agent-skills/*",
+          "methods": ["GET", "HEAD"],
+          "target": {
+            "type": "function",
+            "name": "kysigned-agent"
+          }
+        },
+        {
+          "pattern": "/.well-known/api-catalog",
+          "methods": ["GET", "HEAD"],
+          "target": {
+            "type": "function",
+            "name": "kysigned-agent"
+          }
+        },
+        {
+          "pattern": "/.well-known/oauth-authorization-server",
+          "methods": ["GET", "HEAD"],
+          "target": {
+            "type": "function",
+            "name": "kysigned-agent"
+          }
+        },
+        {
+          "pattern": "/.well-known/oauth-protected-resource",
+          "methods": ["GET", "HEAD"],
+          "target": {
+            "type": "function",
+            "name": "kysigned-agent"
+          }
+        },
+        {
+          "pattern": "/.well-known/openid-configuration",
+          "methods": ["GET", "HEAD"],
+          "target": {
+            "type": "function",
+            "name": "kysigned-agent"
+          }
+        },
+        {
+          "pattern": "/auth.md",
+          "methods": ["GET", "HEAD"],
+          "target": {
+            "type": "function",
+            "name": "kysigned-agent"
           }
         },
         {
           "pattern": "/how-it-works",
           "methods": ["GET", "HEAD"],
           "target": {
-            "type": "static",
-            "file": "how-it-works.html"
+            "type": "function",
+            "name": "kysigned-agent"
+          }
+        },
+        {
+          "pattern": "/how-it-works.html",
+          "methods": ["GET", "HEAD"],
+          "target": {
+            "type": "function",
+            "name": "kysigned-agent"
+          }
+        },
+        {
+          "pattern": "/how-it-works.md",
+          "methods": ["GET", "HEAD"],
+          "target": {
+            "type": "function",
+            "name": "kysigned-agent"
+          }
+        },
+        {
+          "pattern": "/how-it-works-technical",
+          "methods": ["GET", "HEAD"],
+          "target": {
+            "type": "function",
+            "name": "kysigned-agent"
+          }
+        },
+        {
+          "pattern": "/how-it-works-technical.html",
+          "methods": ["GET", "HEAD"],
+          "target": {
+            "type": "function",
+            "name": "kysigned-agent"
+          }
+        },
+        {
+          "pattern": "/how-it-works-technical.md",
+          "methods": ["GET", "HEAD"],
+          "target": {
+            "type": "function",
+            "name": "kysigned-agent"
+          }
+        },
+        {
+          "pattern": "/faq",
+          "methods": ["GET", "HEAD"],
+          "target": {
+            "type": "function",
+            "name": "kysigned-agent"
+          }
+        },
+        {
+          "pattern": "/faq.html",
+          "methods": ["GET", "HEAD"],
+          "target": {
+            "type": "function",
+            "name": "kysigned-agent"
+          }
+        },
+        {
+          "pattern": "/faq.md",
+          "methods": ["GET", "HEAD"],
+          "target": {
+            "type": "function",
+            "name": "kysigned-agent"
           }
         },
         {

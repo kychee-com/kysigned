@@ -65,12 +65,28 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { run402, fileSetFromDir } from '@run402/sdk/node';
 import { KYSIGNED_RUN402_FUNCTIONS, ROOT, bundleRun402Function } from './run402-functions.mjs';
+import { AGENT_FUNCTION_NAME, agentRoutes } from './lib/agentRoutes.mjs';
+import { TEMPLATE_AGENT_PAGES, stageAgentPages } from './lib/agentPages.mjs';
 
-// The forker deploys exactly ONE function: the api entry (HTTP + durable-run). Its
-// name + entry come from the SHARED bundler manifest (also used by
+// The forker deploys two functions: the api entry (HTTP + durable-run) and the
+// F-46 agent front door (/mcp, the discovery documents, the negotiated pages).
+// Names + entries come from the SHARED bundler manifest (also used by
 // build:run402-cloud / run402.json) so this path and `run402 up` can never drift on
-// the function set. Named `kysigned-api` to match run402.json + the operator.
-const API_FN = KYSIGNED_RUN402_FUNCTIONS[0]; // { name: 'kysigned-api', entryPath: … }
+// the function set. Named to match run402.json + the operator.
+const API_FN = KYSIGNED_RUN402_FUNCTIONS.find((f) => f.name === 'kysigned-api');
+const AGENT_FN = KYSIGNED_RUN402_FUNCTIONS.find((f) => f.name === AGENT_FUNCTION_NAME);
+
+/**
+ * The apply options: two intended route warnings, reviewed for F-46.
+ * - ROUTE_SHADOWS_STATIC_PATH: the agent routes shadow the negotiated pages'
+ *   public static paths (the originals stay in the upload, so dropping the
+ *   routes restores static serving).
+ * - PUBLIC_ROUTED_FUNCTION: kysigned-agent is public same-origin ingress by
+ *   design. Reviewed: no auth and no cookies (nothing to forge), CORS open with
+ *   no credentials, read-only free tools, and a paid tool that cannot act
+ *   without the caller's own wallet signature.
+ */
+export const FORKER_APPLY_OPTIONS = Object.freeze({ allowWarningCodes: ['ROUTE_SHADOWS_STATIC_PATH', 'PUBLIC_ROUTED_FUNCTION'] });
 
 const API_BASE = process.env.RUN402_API_BASE ?? 'https://api.run402.com';
 
@@ -122,13 +138,22 @@ export async function loadMigrations(root = ROOT) {
   return Promise.all(migs.map(async (m) => ({ id: m.id, sql: await readFile(path.join(root, m.sql_path), 'utf8') })));
 }
 
+/**
+ * Stage the agent copies and markdown twins of the template's negotiated pages
+ * (F-46.8) into a built site, then load it as a run402 file set.
+ */
+export async function loadSiteFrom(dist) {
+  stageAgentPages(dist, TEMPLATE_AGENT_PAGES);
+  return fileSetFromDir(dist);
+}
+
 /** Load the built SPA as a run402 file set (fails clearly if the SPA isn't built). */
 async function defaultLoadSite() {
   const dist = path.join(ROOT, 'frontend/dist');
   if (!existsSync(dist)) {
     throw new Error(`SPA not built: ${dist} is missing — run \`npm run build --prefix frontend\` (or \`npm run build:run402-cloud\`) first`);
   }
-  return fileSetFromDir(dist);
+  return loadSiteFrom(dist);
 }
 
 /**
@@ -151,8 +176,11 @@ export async function buildForkerReleaseSpec({
   x402PriceUsdMicros = 0,
 } = {}) {
   const source = await bundle(API_FN);
+  const agentSource = await bundle(AGENT_FN);
   const functionsReplace = {
     [API_FN.name]: { runtime: 'node22', source, triggers: buildApiTriggers(signingMailboxId) },
+    // F-46: no triggers, no secrets; it reaches the app only through its own public origin.
+    [AGENT_FN.name]: { runtime: 'node22', source: agentSource },
   };
   const spec = {
     project: projectId,
@@ -175,6 +203,8 @@ export async function buildForkerReleaseSpec({
               pricing: { mode: 'always', amount_usd_micros: x402PriceUsdMicros, pay_to: 'org_default_payout' },
             }]
           : []),
+        // F-46 — every agent URL is an exact route to the agent function (one table, scripts/lib/agentRoutes.mjs).
+        ...agentRoutes(TEMPLATE_AGENT_PAGES),
         { pattern: '/v1/*', target: { type: 'function', name: API_FN.name } },
       ],
     },
@@ -210,9 +240,12 @@ export async function resolveSigningMailboxId({ apiBase = API_BASE, env = proces
  */
 export function assertForkerSpecShape(spec) {
   const fns = spec.functions?.replace ?? {};
-  const names = Object.keys(fns);
-  if (names.length !== 1) throw new Error(`expected exactly 1 function, got ${names.length}: ${names.join(', ')}`);
-  if (!fns[API_FN.name]) throw new Error(`the one function must be ${API_FN.name}, got ${names[0]}`);
+  const names = Object.keys(fns).sort();
+  const expected = [API_FN.name, AGENT_FN.name].sort();
+  if (names.join(',') !== expected.join(',')) {
+    throw new Error(`expected exactly the functions ${expected.join(', ')}, got ${names.join(', ') || 'none'}`);
+  }
+  if (fns[AGENT_FN.name].triggers?.length) throw new Error('the agent function carries no triggers');
   for (const [name, fn] of Object.entries(fns)) {
     if ('schedule' in fn) throw new Error(`cron-less violated: function ${name} carries a top-level schedule (F-29.6 removed all crons)`);
   }
@@ -228,6 +261,8 @@ export function assertForkerSpecShape(spec) {
   const routes = spec.routes?.replace ?? [];
   const apiRoute = routes.find((r) => r.pattern === '/v1/*');
   if (!apiRoute || apiRoute.target?.name !== API_FN.name) throw new Error('/v1/* must route to the api function');
+  const mcpRoute = routes.find((r) => r.pattern === '/mcp');
+  if (!mcpRoute || mcpRoute.target?.name !== AGENT_FN.name) throw new Error('/mcp must route to the agent function');
   return true;
 }
 
@@ -298,11 +333,13 @@ async function main() {
     });
     assertForkerSpecShape(spec);
     const fn = spec.functions.replace[API_FN.name];
+    const agent = spec.functions.replace[AGENT_FN.name];
     console.log(`  • ${API_FN.name} — ${(fn.source.length / 1024).toFixed(0)} KiB`);
+    console.log(`  • ${AGENT_FN.name} — ${(agent.source.length / 1024).toFixed(0)} KiB`);
     console.log(`  • triggers: ${fn.triggers.map((t) => `${t.id}(${t.type})`).join(', ')}`);
     console.log(`  • migrations: ${spec.database.migrations.map((m) => m.id).join(', ')}`);
     console.log(`  • routes: ${spec.routes.replace.map((r) => `${r.pattern} → ${r.target.name}`).join(', ')}`);
-    console.log('DRY RUN complete — parse + bundle OK, 1 function, 0 cron functions, nothing applied.');
+    console.log('DRY RUN complete — parse + bundle OK, 2 functions, 0 cron functions, nothing applied.');
     return;
   }
 
@@ -332,6 +369,7 @@ async function main() {
   const r = run402({ apiBase: API_BASE });
   const project = await r.project(projectId);
   const result = await project.apply(spec, {
+    ...FORKER_APPLY_OPTIONS,
     onEvent: (e) => {
       if (e.type === 'commit.phase') console.log(`  [${e.phase}] ${e.status}`);
       else if (e.type === 'ready') console.log(`  ready → ${JSON.stringify(e.urls)}`);

@@ -51,8 +51,14 @@ notifications@my-kysigned.mail.run402.com
 - Runs the local build commands declared in `run402.json`.
 - Applies the database migrations, static site, routed API function, email
   triggers, subdomain, and route table.
-- Verifies `/`, `/v1/health`, `/faq.html`, `/pricing.html`, and
-  `/how-it-works`.
+- Applies the `kysigned-agent` function, the no-install front door for AI
+  agents: an MCP endpoint at `/mcp`, the discovery documents
+  (`/.well-known/mcp/server-card.json`, `/.well-known/agent-skills/index.json`,
+  `/.well-known/api-catalog`, `/auth.md`), and markdown versions of the info
+  pages (`/faq`, `/how-it-works`, `/how-it-works-technical`, each also at
+  `<page>.md`). It holds no secrets and reaches your app only through its own
+  public origin.
+- Verifies `/`, `/v1/health`, `/faq.html`, and `/how-it-works`.
 - Records app install state as `applying` and then `active`.
 
 ## Smoke Test
@@ -63,7 +69,8 @@ After deploy:
 curl -i https://my-kysigned.run402.com/
 curl -i https://my-kysigned.run402.com/v1/health
 curl -i https://my-kysigned.run402.com/faq.html
-curl -i https://my-kysigned.run402.com/pricing.html
+curl -i -H 'Accept: text/markdown' https://my-kysigned.run402.com/faq
+curl -i https://my-kysigned.run402.com/mcp/server-card
 ```
 
 Then open the site, sign in with an allowed creator email, create an envelope,
@@ -100,3 +107,13 @@ KYSIGNED_ALLOWED_CREATORS='*@example.com' run402 up --yes
   required; generated bindings and local environment values provide the values.
 - Custom sender domains are a later step. The zero-DNS path uses the managed
   project mail host.
+- The first release with the agent function raises two route warnings that
+  are expected: `PUBLIC_ROUTED_FUNCTION` (the agent function is public by
+  design: no auth, no cookies, and its only paid tool needs the caller's own
+  wallet signature) and `ROUTE_SHADOWS_STATIC_PATH` (its routes serve the info
+  pages, whose static files stay in place). Confirm them when asked;
+  `scripts/deploy.mjs` passes both as allowed warning codes.
+- The build stages copies of the info pages under `/_agent/pages/`, where the
+  agent function reads them. The template ships no `robots.txt`; a fork that
+  adds one may disallow `/_agent/` (each copy also keeps its page's canonical
+  link, if it has one).
