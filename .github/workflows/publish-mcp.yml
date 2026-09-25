@@ -5,7 +5,7 @@
 # OIDC model run402 uses (run402/.github/workflows/publish.yml).
 #
 # WHY OIDC INSTEAD OF A STORED TOKEN:
-#   No npm token is stored anywhere — not a GitHub Secret, not an AWS secret. The
+#   No npm token is stored anywhere — not a GitHub Secret, not in AWS. The
 #   job exchanges its short-lived GitHub OIDC token for an even-shorter-lived npm
 #   publish credential at the moment of publish. npm verifies the exchange against
 #   the Trusted Publisher configured on the kysigned-mcp package (owner, repo

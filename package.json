@@ -29,7 +29,7 @@
     "test:e2e": "node --test --import tsx test/e2e/*.test.ts",
     "test:e2e:smoke": "node --test --import tsx test/e2e-smoke/*.test.ts",
     "test:docs": "node --test --import tsx test/api-docs-alignment.test.ts",
-    "test:audit": "node --test --import tsx test/no-localstorage-tokens.test.ts test/no-app-subdomain.test.ts",
+    "test:audit": "node --test --import tsx test/no-localstorage-tokens.test.ts test/no-app-subdomain.test.ts test/no-secret-store-references.test.ts",
     "test:all": "node scripts/test-all.mjs"
   },
   "devDependencies": {

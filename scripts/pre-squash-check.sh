@@ -68,21 +68,21 @@ echo
 
 # ─── F17.11.1 — Canary addresses + wallet ─────────────────────────────────
 echo "[F17.11.1] Canary addresses + KMS wallet scan"
-echo "(values pulled from AWS Secrets Manager — requires aws profile + kysigned/canary-* secrets)"
+echo "(values pulled from Parameter Store — requires aws profile + the /secrets/kysigned/canary-* parameters)"
 if command -v aws &>/dev/null; then
-  for secret in kysigned/canary-signature-registry-address \
-                kysigned/canary-evidence-key-registry-address \
-                kysigned/canary-wallet-address; do
-    addr=$(aws secretsmanager get-secret-value --secret-id "${secret}" \
-            --query SecretString --output text --profile kychee --region us-east-1 2>/dev/null || echo "")
+  for parameter in /secrets/kysigned/canary-signature-registry-address \
+                   /secrets/kysigned/canary-evidence-key-registry-address \
+                   /secrets/kysigned/canary-wallet-address; do
+    addr=$(aws ssm get-parameter --name "${parameter}" --with-decryption \
+            --query Parameter.Value --output text --profile kychee --region us-east-1 2>/dev/null || echo "")
     if [[ -z "${addr}" ]]; then
-      echo "  (no ${secret} — skipping; expected if pre-Phase-13)"
+      echo "  (no ${parameter} — skipping; expected if pre-Phase-13)"
       continue
     fi
     if cd "${ROOT}" && git ls-files | xargs grep -lF "${addr}" 2>/dev/null | grep -q .; then
-      fail "F17.11.1 canary-address leak: ${secret} value found in tracked files"
+      fail "F17.11.1 canary-address leak: ${parameter} value found in tracked files"
     else
-      pass "F17.11.1 ${secret} — zero hits"
+      pass "F17.11.1 ${parameter} — zero hits"
     fi
   done
 else
@@ -91,9 +91,9 @@ fi
 echo
 
 # ─── F17.11.2 — AWS identifiers ───────────────────────────────────────────
-echo "[F17.11.2] AWS account IDs, Secrets Manager paths, IAM role ARNs, KMS key IDs"
+echo "[F17.11.2] AWS account IDs, secret parameter paths, IAM role ARNs, KMS key IDs"
 check "F17.11.2 AWS account ID 472210437512"     "472210437512"
-check "F17.11.2 AWS Secrets Manager paths"       "(aws secretsmanager|secret-id [\"']?(x402|kysigned|run402|agentdb)/)" "-i"
+check "F17.11.2 secret parameter paths"          "(aws ssm|/secrets/(x402|kysigned|run402|agentdb)/)" "-i"
 check "F17.11.2 IAM role ARNs"                   "arn:aws:iam::[0-9]+:role/"
 check "F17.11.2 KMS key IDs/aliases"             "arn:aws:kms:[^ \"']+:[0-9]+:key/|alias/kychee-"
 echo

@@ -51,7 +51,7 @@
  *                         (best-effort; hobby/team tiers — prototype keeps it locked).
  * Credentials for the apply come from the local run402 keystore (@run402/sdk/node
  * auto-loads ~/.config/run402/projects.json + the allowance), like the run402 CLI.
- * There are NO operator secrets, NO AWS Secrets Manager, and NO billing function
+ * There are NO operator secrets, NO secret store reads, and NO billing function
  * here — those are operator-only (private scripts/deploy.ts).
  *
  * ── UNCERTAINTY (flagged) ────────────────────────────────────────────────────
