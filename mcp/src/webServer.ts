@@ -16,7 +16,7 @@ import { z } from 'zod';
 import { apiRequest, textResult, type McpToolResult } from './http.js';
 import { fetchChallenge, X402RouteError, X402_CREATE_PATH } from './x402Challenge.js';
 import { WEB_FACTS, explainKysigned } from './webFacts.js';
-import { registerPaidTool } from './webPay.js';
+import { registerPaidTool, x402NotEnabled } from './webPay.js';
 
 export interface WebMcpDeps {
   /** The instance's public origin, e.g. https://kysigned.com (no trailing slash). */
@@ -46,18 +46,6 @@ const INSTRUCTIONS =
 
 function errorJson(body: Record<string, unknown>): McpToolResult {
   return textResult(`Error: ${JSON.stringify(body, null, 2)}`, true);
-}
-
-/** The answer on an instance whose operator has not wired the priced route. */
-export function x402NotEnabled(origin: string, detail: string): McpToolResult {
-  return errorJson({
-    code: 'x402_not_enabled',
-    message: `This instance has no wallet-payable create: ${detail}`,
-    alternatives: [
-      `A creator API key: a person mints one at ${origin}${WEB_FACTS.apiKeysPath} and uses it with the local ${WEB_FACTS.localPackage} server (create_envelope).`,
-      `See ${origin}/auth.md for every way in.`,
-    ],
-  });
 }
 
 export function buildWebMcpServer(deps: WebMcpDeps): McpServer {
