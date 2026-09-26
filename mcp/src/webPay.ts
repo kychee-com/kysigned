@@ -181,6 +181,29 @@ function readSettlement(res: Response): SettleResponse | undefined {
   }
 }
 
+/**
+ * The settlement when the platform sends no PAYMENT-RESPONSE header. run402 answers a settled
+ * priced route with its own X-Run402-Payment-* headers instead (seen live 2026-09-26), so the
+ * settlement is rebuilt from facts the route already returns: the receipt's settled transaction
+ * and network (from run402's routed payment context, src/api/x402Create.ts) and the payer who
+ * signed the relayed payload. Nothing is invented: no transaction reference, no settlement.
+ */
+function settlementFromReceipt(data: Record<string, unknown>, payment: PaymentPayload): SettleResponse | undefined {
+  const receipt = data['payment'];
+  if (!receipt || typeof receipt !== 'object') return undefined;
+  const transaction = (receipt as Record<string, unknown>)['settlement_reference'];
+  const network = (receipt as Record<string, unknown>)['network'];
+  if (typeof transaction !== 'string' || !transaction || typeof network !== 'string' || !network.includes(':')) return undefined;
+  const authorization = (payment.payload as Record<string, unknown>)['authorization'];
+  const from = authorization && typeof authorization === 'object' ? (authorization as Record<string, unknown>)['from'] : undefined;
+  return {
+    success: true,
+    transaction,
+    network: network as SettleResponse['network'],
+    ...(typeof from === 'string' && from ? { payer: from } : {}),
+  };
+}
+
 function priceLine(pr: PaymentRequired): string {
   const a = (pr.accepts.find((x) => x.scheme === 'exact') ?? pr.accepts[0]) as unknown as Record<string, unknown> | undefined;
   if (!a) return 'see check_price';
@@ -313,10 +336,10 @@ export async function handlePaidCreate(
       cause: err instanceof Error ? err.message : String(err),
     });
   }
-  const settlement = readSettlement(res);
+  const data = safeJson(await res.text()) ?? {};
+  const settlement = readSettlement(res) ?? settlementFromReceipt(data, payment);
   const withSettlement = (r: CallToolResult): CallToolResult =>
     settlement ? { ...r, _meta: { [MCP_PAYMENT_RESPONSE_META_KEY]: settlement } } : r;
-  const data = safeJson(await res.text()) ?? {};
 
   if (res.status === 201) {
     return withSettlement({

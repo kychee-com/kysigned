@@ -40,9 +40,28 @@ const ARGS = {
   signers: [{ email: 'signer@example.com', name: 'Sam Signer' }],
 };
 const SETTLE = { success: true, transaction: '0xsettled', network: 'eip155:8453', payer: '0xpayer' };
+const SETTLED_TX = '0x63ebba71057fae58dd1f569b825118851aa43196fc6567a5bb57e55f88423dd7';
 
-/** A stateful fake API: preflight validates and replays; the priced route settles, then creates. */
-function paidApi(opts: { priced?: boolean; createStatus?: number; createBody?: Record<string, unknown>; paid402?: boolean } = {}) {
+/**
+ * A stateful fake API: preflight validates and replays; the priced route settles, then creates.
+ * `run402` mirrors the live platform (2026-09-26): a settled priced route answers with run402's
+ * own X-Run402-Payment-* headers and no x402 PAYMENT-RESPONSE header, and the 201 carries the
+ * receipt kysigned builds from run402's routed payment context (`receiptTx: false` drops its
+ * transaction reference).
+ */
+function paidApi(
+  opts: { priced?: boolean; createStatus?: number; createBody?: Record<string, unknown>; paid402?: boolean; run402?: boolean; receiptTx?: boolean } = {},
+) {
+  const settledHeaders = (): Record<string, string> =>
+    opts.run402
+      ? { 'X-Run402-Payment-Id': 'txp_1', 'X-Run402-Payment-Delivery': 'settled', 'X-Run402-Payment-Settled-At': '2026-09-26T09:29:46.000Z' }
+      : { 'Payment-Response': encodePaymentResponseHeader(SETTLE as never) };
+  const receipt = {
+    payment_id: 'pay_1',
+    amount_usd_micros: 250000,
+    network: 'eip155:8453',
+    ...(opts.receiptTx === false ? {} : { settlement_reference: SETTLED_TX, settled_at: '2026-09-26T09:29:46.000Z' }),
+  };
   const created = new Map<string, Record<string, unknown>>();
   let settlements = 0;
   const preflight: FakeRoute = (c) => {
@@ -72,9 +91,7 @@ function paidApi(opts: { priced?: boolean; createStatus?: number; createBody?: R
     }
     settlements++;
     if (opts.createStatus && opts.createStatus !== 201) {
-      return jsonResponse(opts.createBody ?? { code: 'validation_failed', payment_banked: true }, opts.createStatus, {
-        'Payment-Response': encodePaymentResponseHeader(SETTLE as never),
-      });
+      return jsonResponse(opts.createBody ?? { code: 'validation_failed', payment_banked: true }, opts.createStatus, settledHeaders());
     }
     const env = {
       envelope_id: `env_${created.size + 1}`,
@@ -83,11 +100,11 @@ function paidApi(opts: { priced?: boolean; createStatus?: number; createBody?: R
       status_url: `${ORIGIN}/v1/envelope/env_${created.size + 1}`,
       verify_url: `${ORIGIN}/verify`,
       signing_links: [],
-      payment: { payment_id: 'pay_1', amount_usd_micros: 250000, network: 'eip155:8453' },
+      payment: receipt,
       tracking: { token: 'ktt_tracking_for_this_envelope', poll: 'GET /v1/envelope/:id' },
     };
     created.set(c.headers['idempotency-key'] ?? '', env);
-    return jsonResponse(env, 201, { 'Payment-Response': encodePaymentResponseHeader(SETTLE as never) });
+    return jsonResponse(env, 201, settledHeaders());
   };
   const api = fakeApi([preflight, paidCreate, opts.priced === false ? unpricedRoute : pricedRoute]);
   const deps: WebMcpDeps = { origin: ORIGIN, fetchFn: api.fetchFn, version: '9.9.9' };
@@ -186,6 +203,56 @@ describe('paid call through the reference x402 MCP client (AC-285, hermetic)', (
     assert.equal(paid[0]!.headers['idempotency-key'], deriveIntentKey(ARGS));
     assert.equal(JSON.parse(paid[0]!.body!).idempotency_key, undefined, 'the key rides the header, not the create body');
     await mcp.close();
+  });
+});
+
+describe('the settlement when the platform sends no PAYMENT-RESPONSE header (run402 today, AC-285)', () => {
+  it('is rebuilt from the priced route\'s receipt and the payer who signed the relayed payload', async () => {
+    const { deps } = paidApi({ run402: true });
+    const { account, payments } = payingClient();
+    const mcp = new Client({ name: 'x402-agent', version: '0.0.0' });
+    await connectClient((req) => handleMcpRequest(req, deps), { client: mcp });
+    const agent = wrapMCPClientWithPayment(mcp, payments, { autoPayment: true });
+    const result = await agent.callTool('create_envelope_x402', ARGS);
+    assert.equal(result.paymentMade, true);
+    assert.deepEqual(result.paymentResponse, { success: true, transaction: SETTLED_TX, network: 'eip155:8453', payer: account.address });
+    await mcp.close();
+  });
+
+  it('is never invented: no header and no transaction in the receipt means no settlement _meta', async () => {
+    const { deps } = paidApi({ run402: true, receiptTx: false });
+    const { payments } = payingClient();
+    const mcp = new Client({ name: 'x402-agent', version: '0.0.0' });
+    await connectClient((req) => handleMcpRequest(req, deps), { client: mcp });
+    const agent = wrapMCPClientWithPayment(mcp, payments, { autoPayment: true });
+    const result = await agent.callTool('create_envelope_x402', ARGS);
+    assert.equal(result.paymentMade, true);
+    assert.equal(result.paymentResponse, undefined);
+    await mcp.close();
+  });
+
+  it('a settled-but-failed create on run402 still reports the settlement from its receipt', async () => {
+    const { deps } = paidApi({
+      run402: true,
+      createStatus: 400,
+      createBody: {
+        code: 'validation_failed',
+        payment_banked: true,
+        payment: { payment_id: 'pay_1', network: 'eip155:8453', amount_usd_micros: 250000, settlement_reference: SETTLED_TX },
+      },
+    });
+    const { account, payments } = payingClient();
+    const client = await connectClient((req) => handleMcpRequest(req, deps));
+    const payload = await payments.createPaymentPayload(decodePaymentRequiredHeader(CAPTURED_PAYMENT_REQUIRED));
+    const r = await client.callTool({ name: 'create_envelope_x402', arguments: ARGS, _meta: { 'x402/payment': payload } });
+    await client.close();
+    assert.equal(r.isError, true);
+    assert.deepEqual((r._meta as Record<string, unknown>)['x402/payment-response'], {
+      success: true,
+      transaction: SETTLED_TX,
+      network: 'eip155:8453',
+      payer: account.address,
+    });
   });
 });
 
