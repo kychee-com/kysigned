@@ -17,7 +17,7 @@
  */
 import { createHash } from 'node:crypto';
 import { SUPPORTED_PROTOCOL_VERSIONS } from '@modelcontextprotocol/sdk/types.js';
-import { WEB_FACTS } from './webFacts.js';
+import { WEB_FACTS, cannotRunProgramsLine } from './webFacts.js';
 
 export interface DocumentDeps {
   /** The instance's public origin, e.g. https://kysigned.com (no trailing slash). */
@@ -75,7 +75,7 @@ export function serverCard(deps: DocumentDeps): Record<string, unknown> {
         transport: 'stdio',
         command: `npx -y ${WEB_FACTS.localPackage}`,
         environment: { KYSIGNED_ENDPOINT: origin },
-        note: 'The same tools plus key-authenticated ones, run on your own machine.',
+        note: 'On your own machine: the key-authenticated tools, the x402 create from a local wallet, and verify_bundle.',
       },
     },
   };
@@ -170,12 +170,61 @@ function skillList(origin: string): Skill[] {
       '## When it completes',
       '',
       'Every party, including the creator email, receives the evidence bundle. Verify it on your own machine, never by',
-      `uploading it anywhere: open ${origin}/verify in a browser (the check runs inside the page), or run the reference`,
-      `verifier from ${f.publicRepo}.`,
+      `uploading it anywhere: run \`${f.verifyCommand} <bundle.pdf>\` or call \`${f.verifyTool}\` on the local server. A person`,
+      `can open ${origin}${f.verifyPath} in a browser. The kysigned-verify-bundle skill has the details.`,
       '',
     ].join('\n'),
   };
-  return [send, track];
+  const verify: Skill = {
+    name: 'kysigned-verify-bundle',
+    description:
+      'Verify a kysigned evidence bundle (the signed PDF every party receives) on your own machine, with no account ' +
+      'and no upload: npx kysigned verify, or verify_bundle on the local MCP server. The web verifier page is for people.',
+    body: [
+      '# Verify a kysigned evidence bundle',
+      '',
+      'Use this when you have a completed kysigned bundle (the PDF every party receives when an envelope completes)',
+      'and need to know whether it holds. Verification always runs on the machine that holds the bundle: never upload',
+      'a bundle to anyone, including the service that produced it. The check uses public math and public keys, so',
+      'kysigned is not part of what you trust.',
+      '',
+      '## Option A: the command line (Node 22 or later, nothing to clone)',
+      '',
+      `\`${f.verifyCommand} <bundle.pdf>\``,
+      '',
+      '- Exit 0: verified at the tier it prints. Exit 1: FAILED, with the reasons. Exit 2: the file could not be read,',
+      '  or the command was wrong.',
+      '- `--json` prints one document (schema `kysigned.verdict.v1`): the bundle tier, each signer\'s tier, checks and',
+      '  reasons, and `originalDocSha256`, the SHA-256 of the document every signer signed.',
+      '- `--offline` skips the two online indicators (the Bitcoin timestamp anchor and the public key archive). They',
+      '  report pending, and the verdict still holds.',
+      '',
+      '## Option B: the local MCP server',
+      '',
+      `Run \`npx -y ${f.localPackage}\` and call \`${f.verifyTool}\` with exactly one of \`path\` (the file on that machine)`,
+      'or `pdf_base64`, and optionally `offline: true`. It needs no key and no wallet, and returns the same document as',
+      'structured content plus a readable report. A FAILED verdict is a result, not a tool error.',
+      `The web endpoint (${origin}${f.mcpPath}) has no verify tool, by design.`,
+      '',
+      '## Reading the verdict',
+      '',
+      'The tiers, weakest first: FAILED; INTEGRITY_VERIFIED (valid email signatures, the matching document, the intent',
+      'line and a timestamp); PROVIDER_KEY_CONFIRMED (the signing key is confirmed as the email provider\'s own);',
+      'PROVEN_DURABLE (also a Bitcoin-anchored time inside the key\'s observed lifetime). The bundle\'s tier is its',
+      'weakest signer\'s. To check that a document you hold is the one that was signed, compare its SHA-256 with',
+      '`originalDocSha256`.',
+      '',
+      '## If you cannot run programs',
+      '',
+      cannotRunProgramsLine(origin),
+      '',
+      '## For people',
+      '',
+      `${origin}${f.verifyPath} runs the same check in a browser, and the file never leaves the device.`,
+      '',
+    ].join('\n'),
+  };
+  return [send, track, verify];
 }
 
 function skillMarkdown(s: Skill): string {

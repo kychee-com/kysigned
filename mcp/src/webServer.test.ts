@@ -7,6 +7,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { handleMcpRequest, WEB_TOOL_NAMES, type WebMcpDeps } from './webServer.js';
+import { cannotRunProgramsLine } from './webFacts.js';
 import {
   ORIGIN,
   GOOD_TOKEN,
@@ -109,6 +110,20 @@ describe('explain_kysigned (AC-281, AC-287)', () => {
     assert.match(text, /never upload/i, 'verification stays on the holder\'s machine');
     assert.ok(!DASHES.test(text), 'no em or en dash in outbound copy');
     assert.equal(calls.length, 0, 'the explanation needs no network call');
+    await client.close();
+  });
+
+  it('names the programmatic verifiers first, then the page, and what an agent that cannot run programs does (AC-302)', async () => {
+    const { deps: d } = deps();
+    const client = await connectClient((req) => handleMcpRequest(req, d));
+    const text = firstText(await client.callTool({ name: 'explain_kysigned', arguments: {} }));
+    const section = text.slice(text.indexOf('Verifying a bundle'));
+    for (const needle of ['npx kysigned verify', 'verify_bundle', 'npx -y kysigned-mcp', '--json']) {
+      assert.ok(section.includes(needle), `the verification section names ${needle}`);
+    }
+    assert.ok(section.indexOf('npx kysigned verify') < section.indexOf(`${ORIGIN}/verify`), 'the command comes before the page');
+    assert.ok(text.includes(cannotRunProgramsLine(ORIGIN)), 'the line for an agent that cannot run programs');
+    assert.doesNotMatch(section, /bin\/verify-bundle\.mjs/, 'no clone-and-run path once the package ships');
     await client.close();
   });
 });

@@ -5,7 +5,7 @@
 > and allowlist. The URLs below are relative to this instance's origin.
 >
 > How it works: /how-it-works (technical: /how-it-works-technical.html)
-> Verify a bundle: /verify (offline, no account, no server lookup)
+> Verify a bundle on your own machine: `npx kysigned verify <bundle.pdf>` or the local MCP's `verify_bundle`; for people, /verify (in the browser, never uploaded)
 > FAQ: /faq
 > Web MCP (no install, no key): /mcp. Every way in: /auth.md. API catalog: /.well-known/api-catalog
 > Markdown: /how-it-works.md, /how-it-works-technical.md, /faq.md
@@ -222,15 +222,15 @@ that supports remote servers at it. Nothing to install, no account and no key. F
   passed as `idempotency_key`) returns the stored envelope with `replayed: true`, paying nothing.
   Where the operator has not enabled x402, it answers `x402_not_enabled`.
 
-Verification is never a web tool: check a bundle at `/verify` (inside your browser) or with the
-reference verifier in the public repo. For keys, lists, reminders and voids, use the local server
-("Agent tools (MCP)" below).
+Verification is never a web tool: verify a bundle on your own machine with
+`npx kysigned verify <bundle.pdf>` or the local server's `verify_bundle`, or, for a person, at `/verify`
+in the browser. For keys, lists, reminders and voids, use the local server ("Agent tools (MCP)" below).
 
 Discovery documents (public, no auth):
 
 - MCP server card: `/.well-known/mcp/server-card.json` (the same card at `/mcp/server-card`).
 - Agent skills: `/.well-known/agent-skills/index.json` (send a document for signature; track an
-  envelope).
+  envelope; verify a bundle).
 - API catalog (RFC 9727): `/.well-known/api-catalog` (the `/v1` API and the web endpoint).
 - Every way in, in plain words: `/auth.md`. There is no OAuth server: the OAuth discovery
   addresses answer 404 and point to `/auth.md`.
@@ -240,7 +240,7 @@ themselves answer markdown to `Accept: text/markdown`.
 
 ## Agent tools (MCP)
 
-On your own machine, `npx kysigned-mcp` exposes seven tools. The five ops tools are
+On your own machine, `npx kysigned-mcp` exposes eight tools. The five ops tools are
 key-authenticated; configure `KYSIGNED_ENDPOINT` + `KYSIGNED_AUTHORIZATION`:
 
 - **create_envelope**: `POST /v1/envelope` (`document_name`, `pdf_base64` | `pdf_url`, `signers[]`, `message?`)
@@ -263,8 +263,13 @@ the private key is never a tool argument and never appears in output):
   with `replayed: true`, paying nothing (the route is always-priced, so a blind re-send would
   settle a second payment).
 
-Verification is intentionally NOT a tool: the bundle verifies client-side at `/verify` or with the
-reference verifier in the public repo.
+The verifier needs no key and no wallet:
+
+- **verify_bundle**: verifies a completed bundle on this machine, from `path` or `pdf_base64` (exactly
+  one), with `offline` to skip the two online indicators. It returns the `kysigned.verdict.v1` document
+  (the bundle and per-signer tiers, checks and reasons, and `originalDocSha256`) as `structuredContent`
+  plus a readable report. A FAILED verdict is a result, not a tool error. The bundle never leaves the
+  machine and the operator is never contacted. The web endpoint has no verify tool.
 
 ## API reference (public surface)
 
@@ -295,17 +300,25 @@ reference verifier in the public repo.
 session-only by design: a leaked key can never mint more keys.
 
 Not part of the public agent surface: the operator allowlist admin, the inbound-mail webhook, and any
-operator-specific credit/billing routes. There is **no** server-side verify endpoint: verification is
-fully client-side (the `/verify` page or the CLI).
+operator-specific credit/billing routes. There is **no** server-side verify endpoint: verification runs
+on the holder's machine (`npx kysigned verify`, the local `verify_bundle`, or the `/verify` page).
 
 ## Verifying a bundle
 
-The bundle is an ordinary PDF anyone can verify with no account and no server:
+The bundle is an ordinary PDF anyone can verify on their own machine, with no account and no server:
 
+- **CLI**: `npx kysigned verify <bundle.pdf>` (Node 22 or later, nothing to clone). Exit 0 means verified
+  at the tier it prints, 1 means FAILED with the reasons, 2 means a usage or read error. `--json` prints
+  one `kysigned.verdict.v1` document; `--offline` skips the two online indicators, which then report pending.
+- **MCP**: `verify_bundle` in the local server (`npx -y kysigned-mcp`): the same verdict as structured content.
 - **Browser**: open `/verify` and drop the bundle in. It re-computes the document hash, checks each
   signer's DKIM signature against the embedded and publicly-archived keys, validates the RFC-3161 and
   OpenTimestamps time proofs, and confirms each signer signed THIS document.
-- **CLI**: a reference verifier ships in the public repository.
+
+If you are an AI assistant that cannot run programs on your user's machine (a chat assistant with no
+code execution), you cannot verify a bundle yourself. Say so plainly, then either point the person to
+/verify (the check runs in their own browser and the file is never uploaded) or suggest doing the check
+with a coding agent that can run npx kysigned verify or the local verify_bundle tool.
 
 The verdict is one of four honest assurance tiers, not a yes/no. Offline, anyone reaches INTEGRITY
 VERIFIED (valid signatures, matching document, intent line, timestamp present), and a record that embeds

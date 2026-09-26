@@ -1,9 +1,10 @@
 /**
- * webFacts — the web front door's one source of auth and payment facts
- * (F-46.11). The explanation tool, the skills and /auth.md all draw on it, and
- * webFacts.test.ts checks every fact against the API source, so a renamed
- * prefix, route or error code fails a test instead of leaving an agent
- * instruction the server no longer honors (the F-30.4 rule).
+ * webFacts — the web front door's one source of auth, payment and verification
+ * facts (F-46.11, F-47.4). The explanation tool, the skills and /auth.md all draw
+ * on it, and webFacts.test.ts checks every fact against its source (the API, the
+ * kysigned package, the local server, the SPA routes), so a renamed prefix,
+ * route, error code, command or tool fails a test instead of leaving an agent
+ * instruction that no longer holds (the F-30.4 rule).
  *
  * Outbound copy: no em or en dashes (the outbound-dash guard scans these
  * string literals).
@@ -20,12 +21,33 @@ export const WEB_FACTS = {
   localPackage: 'kysigned-mcp',
   mcpPath: '/mcp',
   publicRepo: 'https://github.com/kychee-com/kysigned',
+  // F-47 verification: the command, the local tool and the page for people (DD-81).
+  verifyPackage: 'kysigned',
+  verifyCommand: 'npx kysigned verify',
+  verifyTool: 'verify_bundle',
+  verifyPath: '/verify',
   errorCodes: {
     invalidKey: 'auth_invalid_key',
     keyScope: 'auth_key_scope',
     trackingScope: 'auth_tracking_scope',
   },
 } as const;
+
+/**
+ * What an agent that cannot run a program does instead of verifying (F-47.4): say so,
+ * then point the person to the web verifier or suggest a coding agent. Never a hosted
+ * check (F-46.3). An empty `origin` gives the instance-relative page (the template
+ * llms.txt).
+ */
+export function cannotRunProgramsLine(origin: string): string {
+  const f = WEB_FACTS;
+  return (
+    "If you are an AI assistant that cannot run programs on your user's machine (a chat assistant with no code " +
+    'execution), you cannot verify a bundle yourself. Say so plainly, then either point the person to ' +
+    `${origin}${f.verifyPath} (the check runs in their own browser and the file is never uploaded) or suggest doing ` +
+    `the check with a coding agent that can run ${f.verifyCommand} or the local ${f.verifyTool} tool.`
+  );
+}
 
 /** The explain_kysigned text (F-46.1): what kysigned is and every way to use it, for this instance. */
 export function explainKysigned(origin: string): string {
@@ -52,7 +74,11 @@ export function explainKysigned(origin: string): string {
     `Every create returns a tracking token (${f.trackingTokenPrefix}...). Pass it to check_envelope_status here, with no account. It reads that one envelope and nothing else.`,
     '',
     'Verifying a bundle',
-    `Verification runs on your own machine: never upload a bundle to anyone, including this service. Open ${origin}/verify in a browser (the check runs inside the page and the file never leaves your device), or run the reference verifier from the public repository (${f.publicRepo}, bin/verify-bundle.mjs).`,
+    'Verification runs on your own machine: never upload a bundle to anyone, including this service.',
+    `- Run ${f.verifyCommand} <bundle.pdf> (Node 22 or later, nothing to clone): exit 0 means verified at the tier it prints, 1 means FAILED with the reasons; add --json for one machine-readable document (each signer's tier and checks, and originalDocSha256, the SHA-256 of the signed document).`,
+    `- Or call ${f.verifyTool} on the local MCP server (npx -y ${f.localPackage}) with the file's path or its base64: the same verdict, with no key and no wallet. This endpoint has no verify tool.`,
+    `- A person can open ${origin}${f.verifyPath} in a browser: the check runs inside the page and the file never leaves their device.`,
+    cannotRunProgramsLine(origin),
     '',
     'More',
     `- Every way to authenticate: ${origin}/auth.md`,

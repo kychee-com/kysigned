@@ -249,7 +249,34 @@ describe('API Documentation Alignment', () => {
     }
     for (const page of TEMPLATE_AGENT_PAGES) assert.ok(t.includes(`/${page}.md`), `lists the markdown address /${page}.md`);
     assert.ok(!t.includes('/pricing.md'), 'the template has no pricing page, so no /pricing.md');
-    assert.match(t, /`npx kysigned-mcp` exposes seven tools/, 'the local server keeps its seven tools');
+    assert.match(t, /`npx kysigned-mcp` exposes eight tools/, 'the local server has its seven tools plus verify_bundle');
+  });
+
+  // ── F-47.4 / AC-302: verification wayfinding, programmatic paths first ──
+
+  it('llms.txt points agents at the command and the local tool first, with the line for an agent that cannot run programs (F-47.4 / AC-302)', { skip: !llmsExists ? 'llms.txt missing' : undefined }, async () => {
+    const t = readFileSync(LLMS_TXT, 'utf-8');
+    const flat = t.replace(/\s+/g, ' ');
+    const { WEB_FACTS, cannotRunProgramsLine } = await import('../mcp/src/webFacts.ts');
+    const pointer = t.split('\n').find((l) => l.startsWith('> Verify a bundle'));
+    assert.ok(pointer, 'the header has a verification pointer');
+    assert.ok(pointer!.includes(WEB_FACTS.verifyCommand) && pointer!.includes(WEB_FACTS.verifyTool), 'it names the command and the local tool');
+    assert.ok(pointer!.indexOf(WEB_FACTS.verifyCommand) < pointer!.indexOf(WEB_FACTS.verifyPath), 'before the page');
+    assert.ok(t.includes(`**${WEB_FACTS.verifyTool}**`), 'lists verify_bundle among the local tools');
+    assert.ok(flat.includes(cannotRunProgramsLine('')), 'the line for an agent that cannot run programs, instance-relative');
+    assert.ok(!/reference verifier/.test(t), 'no clone-and-run reference verifier once the package ships');
+    assert.match(flat, /Agent skills: `\/\.well-known\/agent-skills\/index\.json` \(send a document for signature; track an envelope; verify a bundle\)/);
+  });
+
+  it('the MCP README names the command, verify_bundle and the line for an agent that cannot run programs (F-47.4 / AC-302)', async () => {
+    const readme = readFileSync(join(ROOT, 'mcp', 'README.md'), 'utf-8');
+    const flat = readme.replace(/\s+/g, ' ');
+    const { WEB_FACTS, cannotRunProgramsLine } = await import('../mcp/src/webFacts.ts');
+    assert.match(readme, /^### `verify_bundle` \(no key needed\)$/m, 'documents the tool');
+    assert.ok(readme.includes(WEB_FACTS.verifyCommand), 'names the command');
+    assert.ok(flat.includes(cannotRunProgramsLine('https://kysigned.com')), 'the line for an agent that cannot run programs');
+    assert.match(readme, /The server exposes 8 tools/);
+    assert.ok(!/bin\/verify-bundle\.mjs|Verification is not an MCP tool/.test(readme), 'no stale verification path');
   });
 
   it('the MCP README names the web endpoint, its tools and its documents (F-46.11 / AC-296)', async () => {

@@ -19,23 +19,31 @@ import {
   SKILLS_INDEX_SCHEMA,
   type DocumentDeps,
 } from './webDocuments.js';
-import { WEB_FACTS } from './webFacts.js';
+import { WEB_FACTS, cannotRunProgramsLine } from './webFacts.js';
 import { WEB_TOOL_NAMES } from './webServer.js';
 
 const ORIGIN = 'https://kysigned.test';
 const DEPS: DocumentDeps = { origin: ORIGIN, version: '9.9.9' };
 const DASHES = /[\u2013\u2014]/;
 
-// The local stdio server's tools (pinned by contract.test.ts:69-83).
+// The local stdio server's tools (pinned by contract.test.ts:69-84).
 const LOCAL_TOOLS = [
   'check_envelope_status',
   'create_envelope',
   'create_envelope_x402',
   'list_envelopes',
   'send_reminder',
+  'verify_bundle',
   'void_envelope',
   'wallet_status',
 ];
+
+/** A served SKILL.md by name, with its line breaks folded, so a wrapped sentence still matches. */
+async function skillText(name: string): Promise<string> {
+  const res = await get(`/.well-known/agent-skills/${name}/SKILL.md`);
+  assert.equal(res.status, 200, `${name} is served`);
+  return (await res.text()).replace(/\s+/g, ' ');
+}
 
 async function get(path: string, init: RequestInit = {}): Promise<Response> {
   const res = handleDocumentRequest(new Request(`${ORIGIN}${path}`, init), DEPS);
@@ -98,7 +106,10 @@ describe('agent skills index (AC-289)', () => {
     const index = (await res.json()) as { $schema: string; skills: Array<Record<string, string>> };
     assert.equal(index.$schema, SKILLS_INDEX_SCHEMA);
     assert.equal(SKILLS_INDEX_SCHEMA, 'https://schemas.agentskills.io/discovery/0.2.0/schema.json');
-    assert.ok(index.skills.length >= 2);
+    assert.deepEqual(
+      index.skills.map((s) => s['name']),
+      ['kysigned-send-for-signature', 'kysigned-track-envelope', 'kysigned-verify-bundle'],
+    );
     for (const s of index.skills) {
       assert.deepEqual(Object.keys(s).sort(), ['description', 'digest', 'name', 'type', 'url']);
       assert.match(s['name']!, /^[a-z0-9]+(-[a-z0-9]+)*$/, 'lowercase, hyphens, no leading/trailing/double hyphens');
@@ -125,6 +136,25 @@ describe('agent skills index (AC-289)', () => {
     for (const tool of new Set([...WEB_TOOL_NAMES, ...LOCAL_TOOLS])) {
       assert.ok(all.includes(tool), `some skill covers ${tool}`);
     }
+  });
+
+  it('the verify skill: the command and the local tool first, then the page, the line for an agent that cannot run programs, no hosted check (AC-302)', async () => {
+    const t = await skillText('kysigned-verify-bundle');
+    for (const needle of [WEB_FACTS.verifyCommand, WEB_FACTS.verifyTool, `npx -y ${WEB_FACTS.localPackage}`, '--json', '--offline', 'originalDocSha256']) {
+      assert.ok(t.includes(needle), `names ${needle}`);
+    }
+    assert.ok(t.indexOf(WEB_FACTS.verifyCommand) < t.indexOf(`${ORIGIN}/verify`), 'the command comes before the page');
+    assert.ok(t.includes(cannotRunProgramsLine(ORIGIN)), 'tells an agent that cannot run programs what to do instead');
+    assert.match(t, /never upload/i);
+    assert.ok(!t.includes('/v1/'), 'no API route: there is no hosted check (F-46.3)');
+  });
+
+  it('the track skill hands a completed bundle to the programmatic verifiers first', async () => {
+    const t = await skillText('kysigned-track-envelope');
+    const done = t.slice(t.indexOf('## When it completes'));
+    assert.ok(done.includes(WEB_FACTS.verifyCommand) && done.includes(WEB_FACTS.verifyTool));
+    assert.ok(done.indexOf(WEB_FACTS.verifyCommand) < done.indexOf(`${ORIGIN}/verify`), 'the command comes before the page');
+    assert.ok(done.includes('kysigned-verify-bundle'), 'points to the verify skill');
   });
 
   it('HEAD has the headers and no body; an unknown skill is a JSON 404', async () => {

@@ -1,6 +1,6 @@
 # kysigned-mcp
 
-Model Context Protocol (MCP) server for [kysigned](https://kysigned.com), DKIM-based e-signatures that produce a self-contained **evidence-bundle** PDF. Lets any MCP-compatible AI agent (Claude Desktop, Claude Code, Cursor, custom agents using the Anthropic SDK, etc.) send documents for signing and check status, without writing HTTP code.
+Model Context Protocol (MCP) server for [kysigned](https://kysigned.com), DKIM-based e-signatures that produce a self-contained **evidence-bundle** PDF. Lets any MCP-compatible AI agent (Claude Desktop, Claude Code, Cursor, custom agents using the Anthropic SDK, etc.) send documents for signing, check status and verify the evidence bundle, without writing HTTP code.
 
 ## Web endpoint (no install)
 
@@ -17,7 +17,7 @@ It has four tools:
 - `check_envelope_status`: one envelope, with its tracking token (`ktt_…`). It accepts no API key.
 - `create_envelope_x402`: the paid create, from the caller's own wallet, with x402 inside the tool call. The first call answers with the payment terms; an x402-capable MCP client (for example `@x402/mcp`) signs and calls again with the payment attached. The free preflight runs first, and a retry of the same request replays the envelope instead of paying twice.
 
-Verifying a bundle is never a web tool: it stays on your machine (`/verify` in a browser, or the reference verifier). The endpoint's server card is at `<instance>/.well-known/mcp/server-card.json`, its agent skills at `/.well-known/agent-skills/index.json`, the API catalog at `/.well-known/api-catalog`, and every way to authenticate at `/auth.md`.
+Verifying a bundle is never a web tool: it stays on your machine (`npx kysigned verify <bundle.pdf>`, or this package's `verify_bundle`; for a person, `/verify` in a browser). The endpoint's server card is at `<instance>/.well-known/mcp/server-card.json`, its agent skills at `/.well-known/agent-skills/index.json`, the API catalog at `/.well-known/api-catalog`, and every way to authenticate at `/auth.md`.
 
 Install this package (below) instead for the full tool set: creator API keys, listing, reminders and voids, or paying from a local run402 wallet.
 
@@ -98,9 +98,9 @@ Cursor Settings → MCP → Add New Server:
 
 ## Tools
 
-The server exposes 7 tools: the five key-authenticated signing operations plus a **no-key wallet pair** (`wallet_status`, `create_envelope_x402`) that pays per envelope from the host-local run402 wallet. (Provisioning a new instance is a deploy-time concern, covered in the [main README](../README.md), not an MCP tool.) All take JSON arguments and return JSON results.
+The server exposes 8 tools: the five key-authenticated signing operations, a **no-key wallet pair** (`wallet_status`, `create_envelope_x402`) that pays per envelope from the host-local run402 wallet, and **`verify_bundle`**, which verifies a completed bundle on this machine with no key and no wallet. (Provisioning a new instance is a deploy-time concern, covered in the [main README](../README.md), not an MCP tool.) All take JSON arguments and return JSON results.
 
-Each tool carries MCP **annotations** so a host can tell them apart: `check_envelope_status`, `list_envelopes`, and `wallet_status` are read-only; `create_envelope` and `send_reminder` send email (and create consumes a creator credit); `void_envelope` is **destructive** (irreversible cancellation); `create_envelope_x402` is also marked **destructive** because it spends real funds, so hosts that gate destructive tools will ask before it pays. A non-2xx API response or a transport failure comes back as an MCP result with `isError: true`, carrying the HTTP status and the stable error `code` (e.g. `[402] payment_required: …`), so agents branch correctly instead of treating a failure as success.
+Each tool carries MCP **annotations** so a host can tell them apart: `check_envelope_status`, `list_envelopes`, `wallet_status` and `verify_bundle` are read-only; `create_envelope` and `send_reminder` send email (and create consumes a creator credit); `void_envelope` is **destructive** (irreversible cancellation); `create_envelope_x402` is also marked **destructive** because it spends real funds, so hosts that gate destructive tools will ask before it pays. A non-2xx API response or a transport failure comes back as an MCP result with `isError: true`, carrying the HTTP status and the stable error `code` (e.g. `[402] payment_required: …`), so agents branch correctly instead of treating a failure as success.
 
 ### `create_envelope`
 
@@ -156,12 +156,6 @@ List the envelopes created by the authenticated creator (the key holder). No arg
 ```json
 {}
 ```
-
-> **Verification is not an MCP tool.** In the evidence-bundle model anyone verifies a
-> completed bundle PDF entirely client-side: drag-and-drop at `https://<instance>/verify`,
-> or run the bundled `node bin/verify-bundle.mjs <bundle.pdf>`. It checks the signers' DKIM
-> signatures, the embedded provider keys, and the timestamps locally, with no server or
-> registry lookup, even if the originating instance is gone.
 
 ### `send_reminder`
 
@@ -223,6 +217,24 @@ Create an envelope **paying the per-envelope price from the host-local run402 al
 
 **Custody:** the payer resolves once from the explicit allowance file (`KYSIGNED_RUN402_ALLOWANCE_PATH`), an embedder-injected opaque signer, or the host-local run402 configuration (see `wallet_status` above). A private key is never a tool argument, never an environment variable of this server, and never appears in any tool output or error. An underfunded create fails before any payment attempt with the same structured `fund_wallet` action as `wallet_status` (ERC-681 QR URI for exactly the shortfall). Fund, re-check with `wallet_status`, then retry with the SAME `idempotency_key`.
 
+### `verify_bundle` (no key needed)
+
+Verify a completed evidence bundle on this machine, with the same verifier as `npx kysigned verify` and the web verifier at `https://<instance>/verify` (it comes from the published [`kysigned`](https://www.npmjs.com/package/kysigned) package). It needs no `KYSIGNED_AUTHORIZATION` and no wallet, and it is read-only.
+
+**Arguments:** exactly one of `path` (the bundle on this machine; an absolute path is safest, and a leading `~` is the home directory) or `pdf_base64` (a `data:` URL prefix is accepted), plus an optional `offline`.
+
+```json
+{ "path": "/home/me/Downloads/mutual-nda-signed.pdf", "offline": false }
+```
+
+**Returns:** the `kysigned.verdict.v1` document as `structuredContent` (the bundle tier; each signer's tier, assurance dimensions, checks and reasons; and `originalDocSha256`, the SHA-256 of the document every signer signed), plus a readable report and the same document as text. The tiers, weakest first: `FAILED`, `INTEGRITY_VERIFIED`, `PROVIDER_KEY_CONFIRMED`, `PROVEN_DURABLE`. A FAILED verdict is a result, not a tool error; only bad input (both inputs, neither, an unreadable path, invalid base64) comes back with `isError: true`.
+
+**Stays on this machine:** the bundle is never sent anywhere and the kysigned operator is never contacted. Online (the default), only the verifier's two additive indicators use the network: timestamp-commitment hashes to the public OpenTimestamps calendars and a Bitcoin block source, and the signer's public domain and selector to the key archive. `offline: true` skips both; they report pending and the verdict still holds.
+
+Without an MCP host, the same check is a command: `npx kysigned verify <bundle.pdf>` (add `--json` for the document).
+
+If you are an AI assistant that cannot run programs on your user's machine (a chat assistant with no code execution), you cannot verify a bundle yourself. Say so plainly, then either point the person to https://kysigned.com/verify (the check runs in their own browser and the file is never uploaded) or suggest doing the check with a coding agent that can run npx kysigned verify or the local verify_bundle tool.
+
 ## Usage examples
 
 ### Example 1: an agent sends an NDA from a local file
@@ -239,9 +251,11 @@ The agent:
 
 User: *"Someone sent me this signed PDF claiming it's verified by kysigned. Check it."*
 
-Verification is client-side, not an MCP call. The agent:
-1. Runs `node bin/verify-bundle.mjs <bundle.pdf>` (or opens `https://<instance>/verify` and drops the PDF in).
-2. Reports the verdict (the signers, their DKIM provider keys, and the timestamps), all confirmed locally, with no dependency on kysigned being online.
+The agent:
+1. Calls `verify_bundle` with the file's `path` (or runs `npx kysigned verify <bundle.pdf>`).
+2. Reports the verdict: the tier for the bundle and for each signer, and any failed check with its reason, all computed on this machine, with no dependency on kysigned being online.
+
+An assistant that cannot run programs cannot do this itself: it says so, and points the person to `https://kysigned.com/verify` or suggests a coding agent.
 
 ### Example 3: bulk reminder
 

@@ -11,7 +11,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { WEB_FACTS } from './webFacts.js';
+import { WEB_FACTS, cannotRunProgramsLine } from './webFacts.js';
 
 const root = new URL('../../', import.meta.url);
 const read = (rel: string) => readFileSync(new URL(rel, root), 'utf8');
@@ -50,5 +50,40 @@ describe('WEB_FACTS match the API', () => {
   it('the local package name is the published one', () => {
     const pkg = JSON.parse(read('mcp/package.json')) as { name: string };
     assert.equal(WEB_FACTS.localPackage, pkg.name);
+  });
+});
+
+// 83.6, F-47.4 / AC-302 (DD-81): the verification facts every agent-facing description draws on.
+describe('the verification facts match what ships', () => {
+  it('the command is the kysigned package\'s bin and its verify subcommand', () => {
+    const pkg = JSON.parse(read('cli/package.json')) as { name: string; bin: Record<string, string> };
+    assert.equal(WEB_FACTS.verifyPackage, pkg.name);
+    assert.ok(Object.keys(pkg.bin).includes(pkg.name), 'the package\'s command is named after it');
+    assert.equal(WEB_FACTS.verifyCommand, `npx ${pkg.name} verify`);
+    assert.match(read('cli/src/cli.ts'), /usage: kysigned verify \[--offline\] \[--json\] <bundle\.pdf>/);
+  });
+
+  it('the tool is registered on the local server', () => {
+    assert.equal(WEB_FACTS.verifyTool, 'verify_bundle');
+    assert.match(read('mcp/src/server.ts'), new RegExp(`server\\.registerTool\\(\\s*'${WEB_FACTS.verifyTool}'`));
+  });
+
+  it('the page is a real SPA route with a readable twin', () => {
+    assert.equal(WEB_FACTS.verifyPath, '/verify');
+    assert.ok(read('frontend/src/App.tsx').includes(`path="${WEB_FACTS.verifyPath}"`));
+    assert.ok(read('frontend/src/lib/readableVerifierPages.ts').includes(`route: '${WEB_FACTS.verifyPath}'`));
+  });
+
+  it('the line for an agent that cannot run programs: say so, then the page or a coding agent, never an upload', () => {
+    const line = cannotRunProgramsLine('https://kysigned.test');
+    assert.match(line, /cannot run programs/);
+    assert.match(line, /cannot verify a bundle yourself/);
+    assert.match(line, /Say so plainly/);
+    assert.ok(line.includes('https://kysigned.test/verify'), 'points the person to the web verifier on the origin');
+    assert.match(line, /never uploaded/);
+    assert.match(line, /coding agent/);
+    assert.ok(line.includes(WEB_FACTS.verifyCommand) && line.includes(WEB_FACTS.verifyTool), 'names what the coding agent runs');
+    assert.ok(cannotRunProgramsLine('').includes(' /verify '), 'an empty origin gives the instance-relative page');
+    assert.ok(!/[–—]/.test(line), 'no em or en dash');
   });
 });
