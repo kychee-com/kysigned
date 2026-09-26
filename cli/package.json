@@ -16,7 +16,9 @@
   ],
   "scripts": {
     "build": "node build.mjs",
-    "test": "node build.mjs && node --test \"test/*.test.mjs\""
+    "prepack": "node build.mjs",
+    "test": "node build.mjs && node --test \"test/*.test.mjs\"",
+    "smoke": "node smoke.mjs"
   },
   "engines": {
     "node": ">=22"

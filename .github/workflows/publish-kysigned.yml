@@ -1,0 +1,210 @@
+# Publish the kysigned verifier (npm package `kysigned`, built from cli/) via
+# Trusted Publisher OIDC.
+#
+# Trigger manually:  gh workflow run publish-kysigned.yml -f bump=<none|patch|minor|major>
+# Mirrors publish-mcp.yml; see there for why OIDC instead of a stored token, and
+# why the job needs id-token: write and contents: write.
+#
+# COLD START (first publish only, done once by hand):
+#   npm cannot OIDC-publish a package that has never been published (npm/cli#8544),
+#   so kysigned's first version is published once manually from cli/ (`npm login`,
+#   `node smoke.mjs`, `npm publish --access public`; prepack builds dist/ first).
+#   The Trusted Publisher (GitHub Actions, kychee-com/kysigned, this workflow's
+#   filename) is then attached on npmjs.com, and every release after runs here.
+#   No token is stored for either path.
+#
+# THE VERSION IS BUILT IN: cli/build.mjs inlines package.json's version into the
+# bundle, so the bump runs BEFORE the build and the tests, and the tarball smoke
+# checks that the installed `kysigned --version` prints the new version.
+
+name: Publish kysigned
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump kind, or none to publish the committed version'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - none
+          - patch
+          - minor
+          - major
+      dry_run:
+        description: 'Dry run (build, test and smoke only; no publish, no commit, no tag)'
+        type: boolean
+        default: false
+
+# One publish at a time so version-bump commits stay ordered.
+concurrency:
+  group: publish-kysigned
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Bump, build, test, smoke, publish, tag
+    runs-on: ubuntu-latest
+    # The canonical published commit comes from main only.
+    if: github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so the commit-back + tag operate against real HEAD.
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # Node 24 ships npm 11.x; the OIDC trusted-publisher exchange needs npm 11.5.1+.
+          node-version: '24'
+          # Writes a project .npmrc pointing at npmjs, which the OIDC exchange needs.
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Verify npm has OIDC publish support
+        run: |
+          NPM_VER=$(npm --version)
+          echo "npm version: $NPM_VER"
+          node -e "const [a,b,c] = process.argv[1].split('.').map(Number); if (a < 11 || (a === 11 && b < 5) || (a === 11 && b === 5 && c < 1)) { console.error('npm '+process.argv[1]+' lacks OIDC trusted-publisher exchange (needs 11.5.1+)'); process.exit(1); }" "$NPM_VER"
+
+      - name: Configure git for commit + push
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      # cli/ has no dependencies of its own: esbuild and the verifier core's
+      # dependencies come from the root, and the parity tests run the repo CLI
+      # (bin/verify-bundle.mjs) on the root build. Same as the test-cli CI job.
+      - name: Install dependencies (root)
+        run: npm ci
+
+      - name: Build (root)
+        run: npm run build
+
+      - name: Bump version
+        id: bump
+        working-directory: cli
+        run: |
+          set -euo pipefail
+          CUR=$(node -p "require('./package.json').version")
+          if [ "${{ inputs.bump }}" = "none" ]; then
+            NEW="$CUR"
+            echo "No bump requested; publishing committed version $NEW"
+          else
+            npm version "${{ inputs.bump }}" --no-git-tag-version >/dev/null
+            NEW=$(node -p "require('./package.json').version")
+          fi
+          echo "Bump: $CUR -> $NEW"
+          echo "old=$CUR" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+
+      - name: Build and test
+        working-directory: cli
+        run: npm test
+
+      # Packs exactly what npm would publish, installs it into a fresh directory,
+      # and runs it as a user does: --version, verify on a genuine and a tampered
+      # bundle, --json, and the library entry (cli/smoke.mjs).
+      - name: Tarball smoke test
+        working-directory: cli
+        run: node smoke.mjs "${{ steps.bump.outputs.new }}"
+
+      # Idempotent + transient-tolerant publish, as in publish-mcp.yml. prepack
+      # rebuilds dist/ from the same source and version the smoke just ran.
+      - name: Publish to npm (OIDC + provenance)
+        if: ${{ !inputs.dry_run }}
+        working-directory: cli
+        run: |
+          attempt=0
+          while [ "$attempt" -lt 3 ]; do
+            attempt=$((attempt + 1))
+            if out=$(npm publish --access public --provenance 2>&1); then
+              echo "$out"; echo "published (attempt $attempt)"; exit 0
+            fi
+            echo "$out"
+            if echo "$out" | grep -qiE "cannot publish over|previously published|EPUBLISHCONFLICT"; then
+              echo "already published at this version: idempotent skip."; exit 0
+            fi
+            if echo "$out" | grep -qiE "TLOG_CREATE_ENTRY_ERROR|rekor\.sigstore\.dev|tlog entry|ETIMEDOUT|ECONNRESET|socket hang up|aborted"; then
+              echo "transient provenance/network error, retry $attempt/3"; sleep 10; continue
+            fi
+            echo "non-retryable publish error."; exit 1
+          done
+          echo "exhausted retries."; exit 1
+
+      - name: Commit version bump (rebase-safe against a moving main)
+        if: ${{ !inputs.dry_run && inputs.bump != 'none' }}
+        run: |
+          set -euo pipefail
+          NEW="${{ steps.bump.outputs.new }}"
+          # kysigned is already published at v$NEW (irreversible). This only
+          # records the bump on main. Rebuild on the latest main each attempt so a
+          # concurrent merge can't leave npm ahead of main with no bump commit.
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git reset --hard origin/main
+            node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('cli/package.json','utf8')); p.version='$NEW'; fs.writeFileSync('cli/package.json', JSON.stringify(p,null,2)+'\n');"
+            git add cli/package.json
+            if git diff --cached --quiet; then
+              echo "main already at v$NEW, nothing to commit."; break
+            fi
+            git commit -m "chore(cli): bump kysigned to v$NEW"
+            if git push origin HEAD:main; then
+              echo "Pushed v$NEW on attempt $attempt."; break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::Could not push v$NEW after 5 attempts. kysigned IS published; main needs cli/package.json set to $NEW manually."; exit 1
+            fi
+            echo "Push rejected (main advanced); retry ($attempt/5)..."; sleep "$((attempt * 2))"
+          done
+
+      - name: Tag and push
+        if: ${{ !inputs.dry_run && inputs.bump != 'none' }}
+        run: |
+          set -euo pipefail
+          git tag "kysigned-v${{ steps.bump.outputs.new }}"
+          git push origin "kysigned-v${{ steps.bump.outputs.new }}"
+
+      # Notes start at the previous kysigned-v* tag, not at the latest tag of the
+      # repo (which is usually an mcp-v* tag).
+      - name: Create GitHub release
+        if: ${{ !inputs.dry_run && inputs.bump != 'none' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          NEW="kysigned-v${{ steps.bump.outputs.new }}"
+          PREV=$(git tag -l 'kysigned-v*' --sort=-v:refname | grep -vx "$NEW" | head -1 || true)
+          if [ -n "$PREV" ]; then
+            gh release create "$NEW" --title "kysigned ${NEW#kysigned-}" --generate-notes --notes-start-tag "$PREV" --target main
+          else
+            gh release create "$NEW" --title "kysigned ${NEW#kysigned-}" --generate-notes --target main
+          fi
+
+      - name: Summary
+        run: |
+          NEW="${{ steps.bump.outputs.new }}"
+          OLD="${{ steps.bump.outputs.old }}"
+          DRY="${{ inputs.dry_run }}"
+          {
+            echo "## kysigned publish summary"
+            echo ""
+            echo "- **Bump:** \`${{ inputs.bump }}\` ($OLD -> $NEW)"
+            echo "- **Dry run:** $DRY"
+            if [ "$DRY" = "true" ]; then
+              echo ""
+              echo "_Dry run: no publish, no commit, no tag._"
+            else
+              echo "- **Package:** https://www.npmjs.com/package/kysigned/v/$NEW"
+              echo "- **Tag:** \`kysigned-v$NEW\`"
+              echo "- **Provenance attestation:** auto-generated via OIDC"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
