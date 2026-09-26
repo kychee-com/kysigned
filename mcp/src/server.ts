@@ -1,11 +1,12 @@
 /**
- * server — the kysigned MCP server + its five ops tools, IMPORTABLE with no
+ * server — the kysigned MCP server + its tools, IMPORTABLE with no
  * side effects (no stdio start). The executable bin lives in `index.ts`; the
  * contract suite drives this module over an in-memory transport. Splitting the
  * importable server from the entrypoint is what lets the bin always start
  * stdio without an is-main guard (#126).
  *
- * Every tool:
+ * The wallet pair (F-30.5) needs no key, and verify_bundle (F-47.2) calls no
+ * API at all: it runs the verifier on this machine. The key-authenticated tools:
  *   - fast-fails locally when KYSIGNED_AUTHORIZATION is missing (#122);
  *   - routes through the shared `apiRequest` helper → coded `isError` results
  *     on any API/transport failure (#119/#120), endpoint normalized (#123);
@@ -19,6 +20,7 @@ import { z } from 'zod';
 import { VERSION } from './version.js';
 import { normalizeEndpoint, apiRequest, textResult, type McpToolResult } from './http.js';
 import { projectEnvelopeResult } from './envelopeResult.js';
+import { verifyBundle, VERIFY_BUNDLE_DESCRIPTION } from './verifyBundle.js';
 import {
   getWalletStatus,
   fetchChallengeTerms,
@@ -516,4 +518,25 @@ server.registerTool(
     if (!r.ok) return r.result;
     return textResult(`Envelope ${r.data['id']} has been voided.`);
   },
+);
+
+// ── verify_bundle (read-only; runs on this machine, no key, no wallet, F-47.2) ─
+server.registerTool(
+  'verify_bundle',
+  {
+    description: VERIFY_BUNDLE_DESCRIPTION,
+    inputSchema: {
+      path: z
+        .string()
+        .optional()
+        .describe('Path to the bundle PDF on this machine (an absolute path is safest; a leading ~ is the home directory).'),
+      pdf_base64: z.string().optional().describe('The bundle PDF as base64 (a data: URL prefix is accepted).'),
+      offline: z
+        .boolean()
+        .optional()
+        .describe('Skip the two online indicators (the Bitcoin timestamp anchor and the key archive); they report pending and the verdict still holds.'),
+    },
+    annotations: { title: 'Verify bundle', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+  },
+  async (params) => verifyBundle(params),
 );

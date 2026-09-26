@@ -25,7 +25,7 @@
     "dist"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
@@ -37,6 +37,7 @@
     "@x402/core": "~2.18.0",
     "@x402/evm": "^2.9.0",
     "@x402/fetch": "^2.9.0",
+    "kysigned": "^0.1.0",
     "viem": "^2.47.10",
     "zod": "^3.24.0"
   },

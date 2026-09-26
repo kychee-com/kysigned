@@ -66,7 +66,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
 }
 
 describe('tool registration', () => {
-  it('exposes the five key-authenticated ops tools + the wallet pair (F-30.5)', async () => {
+  it('exposes the five key-authenticated ops tools + the wallet pair (F-30.5) + verify_bundle (F-47.2)', async () => {
     const { tools } = await client.listTools();
     assert.deepEqual(
       tools.map((t) => t.name).sort(),
@@ -76,6 +76,7 @@ describe('tool registration', () => {
         'create_envelope_x402',
         'list_envelopes',
         'send_reminder',
+        'verify_bundle',
         'void_envelope',
         'wallet_status',
       ],
