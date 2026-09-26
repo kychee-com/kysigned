@@ -36,6 +36,7 @@ const DASH = new RegExp(DASH_SOURCE, 'i');
 const OUTBOUND_MARKDOWN = [
   'README.md',
   'mcp/README.md',
+  'cli/README.md',
   'legal.README.md',
   'docs/trust-model.md',
   'docs/adding-an-info-site.md',
@@ -43,7 +44,7 @@ const OUTBOUND_MARKDOWN = [
   'scripts/verification-tools/README.md',
 ];
 /** Every reader-visible root, relative to the repository root. */
-const ROOTS = ['frontend/index.html', 'frontend/public', 'frontend/src', 'src', 'mcp/src', 'scripts/verification-tools', ...OUTBOUND_MARKDOWN];
+const ROOTS = ['frontend/index.html', 'frontend/public', 'frontend/src', 'src', 'mcp/src', 'cli/src', 'scripts/verification-tools', ...OUTBOUND_MARKDOWN];
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'coverage', 'fixtures', '__fixtures__', 'test', 'tests', '__tests__']);
 
 type Kind = 'code' | 'html' | 'css' | 'markdown' | 'text';
@@ -65,7 +66,7 @@ function kindOf(rel: string): Kind | null {
     if (/\.css$/.test(rel)) return 'css';
     return null;
   }
-  if ((rel.startsWith('src/') || rel.startsWith('mcp/src/')) && /\.[cm]?ts$/.test(rel)) return 'code';
+  if ((rel.startsWith('src/') || rel.startsWith('mcp/src/') || rel.startsWith('cli/src/')) && /\.[cm]?ts$/.test(rel)) return 'code';
   if (rel.startsWith('scripts/verification-tools/') && /\.[cm]?js$/.test(rel)) return 'code';
   return null;
 }
@@ -184,6 +185,8 @@ test('the guard reaches every surface kind it claims to cover (FC32.10)', () => 
     'mcp/src/server.ts',
     'mcp/README.md',
     'scripts/verification-tools/README.md',
+    'cli/README.md',
+    'cli/src/cli.ts',
   ]) {
     assert.ok(rels.includes(must), `${must} is not scanned`);
   }

@@ -64,6 +64,23 @@ jobs:
       # publish fails here first.
       - run: node --test --import tsx src/*.test.ts
 
+  # cli/ is the published `kysigned` package (the verifier command, F-47.1). Its
+  # bundle is built from the root src/bundle with the root's esbuild, and its
+  # parity tests compare it with bin/verify-bundle.mjs, so it needs the root
+  # install and the root build first.
+  test-cli:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+      - run: npm ci && npm run build
+      - run: npm test
+        working-directory: cli
+
   test-frontend:
     runs-on: ubuntu-latest
     steps:
