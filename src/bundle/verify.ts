@@ -13,7 +13,8 @@
  *   4. performs the key-authenticity join (F-1.4 / AC-59): the archive's
  *      Bitcoin-timestamped observation window for (domain, selector, key) must
  *      contain the proven signing time T — when an archive resolver is supplied;
- *      offline, the verdict notes "pending online cross-check".
+ *      offline, the verdict notes "pending online cross-check" unless the bundle's
+ *      embedded archive statement (F-32.9) already confirms the key.
  *
  * kysigned is NOT in the trust set (it appears nowhere here). The verdict is
  * derived from the embedded `.eml`, never the rendered page (AC-28e). DKIM runs

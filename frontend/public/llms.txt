@@ -309,7 +309,9 @@ The bundle is an ordinary PDF anyone can verify on their own machine, with no ac
 
 - **CLI**: `npx kysigned verify <bundle.pdf>` (Node 22 or later, nothing to clone). Exit 0 means verified
   at the tier it prints, 1 means FAILED with the reasons, 2 means a usage or read error. `--json` prints
-  one `kysigned.verdict.v1` document; `--offline` skips the two online indicators, which then report pending.
+  one `kysigned.verdict.v1` document. `--offline` makes no network request: the Bitcoin anchor then reports
+  pending, and the key archive reports pending unless the bundle carries the archive's signed statement,
+  which confirms the key offline.
 - **MCP**: `verify_bundle` in the local server (`npx -y kysigned-mcp`): the same verdict as structured content.
 - **Browser**: open `/verify` and drop the bundle in. It re-computes the document hash, checks each
   signer's DKIM signature against the embedded and publicly-archived keys, validates the RFC-3161 and

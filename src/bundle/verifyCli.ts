@@ -125,8 +125,10 @@ export async function runVerifyCli(
   // The engine verifies the RFC-3161 `.tsr` (offline-capable). The Bitcoin anchor and
   // the key-archive presence are the SEPARATE online step below — IDENTICAL to the web
   // verifier's auto-run (`confirmBitcoinAnchorsWeb` + `confirmKeyArchiveWeb`), so /verify
-  // and the CLI always agree (web ≡ CLI). `--offline` skips that step, leaving both
-  // anchors `pending` like the offline-first web verifier.
+  // and the CLI always agree (web ≡ CLI). `--offline` skips that step, like the
+  // offline-first web verifier: the Bitcoin anchor stays `pending`, and the key archive
+  // stays `pending-online` unless the engine already confirmed it from the bundle's
+  // embedded archive statement (F-32.9, spec 0.75.1 AC-303).
   if (!deps.verifyTimestamp) {
     const { createRfc3161Provider } = await import('../timestamp/rfc3161/provider.js');
     const { verifyWith } = await import('../timestamp/contract.js');

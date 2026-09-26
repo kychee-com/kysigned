@@ -27,7 +27,25 @@ const SURFACES = [
   'frontend/public/how-it-works-technical.html',
   'frontend/public/how-it-works.html',
   'frontend/public/llms.txt',
+  // F-47 (spec 0.75.1, BT-36.2): the published verifiers, which describe what offline reports.
+  'cli/README.md',
+  'cli/src/cli.ts',
+  'mcp/README.md',
+  'mcp/src/verifyBundle.ts',
+  'mcp/src/server.ts',
+  'mcp/src/webDocuments.ts',
 ];
+
+/**
+ * A surface's text. TypeScript sources build their copy from adjacent string pieces
+ * (`'a ' + 'b'`, or array items joined by line breaks), so a sentence can be split across
+ * pieces: join them, and unescape quotes, so a phrase matches wherever the source wraps it.
+ */
+function readSurface(rel: string): string {
+  const text = readFileSync(root + rel, 'utf8');
+  if (!rel.endsWith('.ts')) return text;
+  return text.replace(/['"`]\s*[,+]?\s*\n\s*['"`]/g, ' ').replace(/\\(['"`])/g, '$1');
+}
 
 // Phrases that ONLY exist in the RETIRED (pre-F-32) model — each is a real regression signal.
 const FORBIDDEN = [
@@ -51,16 +69,38 @@ const FORBIDDEN = [
   // rebuild — their records are server-trusted plain JSON. Our own key observation carries
   // its own OTS anchor instead (AC-169). Never let the claim back onto a surface.
   { re: /witness\.co|witness[- ]timestamp|Witness (inclusion|→|Ethereum)|tlsnotary/i, why: 'the archive runs NO witness/on-chain timestamping (dropped in its rebuild; confirmed 2026-07-15 on zkemail/archive#46) — describing its records as chain-anchored is false (AC-161, spec 0.46.0)' },
+  // Spec 0.75.1 (BT-36.1/BT-36.2; AC-303, F-47.5, F-10.7): since F-32.9 a bundle can carry the
+  // archive's signed statement, which confirms the key archive indicator with NO network
+  // request. Offline, only the Bitcoin anchor is always pending; the key archive is pending
+  // unless the bundle carries that statement. Copy saying offline leaves both pending, or that
+  // going online is what confirms the provider's key, states the pre-F-32.9 model.
+  { re: /\b(?:they|which then|both)\s+(?:then\s+)?(?:report|stay|remain)s?\s+pending\b/i, why: "offline described as leaving BOTH indicators pending; a bundle carrying the archive's signed statement confirms the key archive offline (spec 0.75.1, AC-303, F-47.5)" },
+  { re: /going online (?:then )?(?:raises a genuine record to PROVIDER KEY CONFIRMED|confirms the provider(?:'|&rsquo;)s key)/i, why: "provider-key confirmation described as online-only; the archive's signed statement confirms it offline (spec 0.75.1, F-10.7, F-32.9)" },
 ];
 
 describe('verdict-model consistency across surfaces (AC-161 / F-019b regression)', () => {
   for (const rel of SURFACES) {
     it(`${rel} carries no retired pre-F-32 model phrasing`, () => {
-      const text = readFileSync(root + rel, 'utf8');
+      const text = readSurface(rel);
       for (const { re, why } of FORBIDDEN) {
         const m = re.exec(text);
         assert.equal(m, null, m ? `${rel}: retired-model phrasing found (${why}) → "${m[0]}"` : '');
       }
     });
   }
+});
+
+// Spec 0.75.1 (AC-303, F-47.5, F-10.7): the page that walks a reader through the tiers states
+// the offline rule itself, not only the absence of the old claim.
+describe('the technical page states what an offline check leaves pending (spec 0.75.1, BT-36.2)', () => {
+  it("frontend/public/how-it-works-technical.html: the Bitcoin anchor pending, the key archive pending unless the bundle carries the archive's signed statement", () => {
+    const flat = readSurface('frontend/public/how-it-works-technical.html')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&rsquo;/g, "'")
+      .replace(/&nbsp;/g, ' ')
+      .replace(/\s+/g, ' ');
+    assert.match(flat, /Offline, the Bitcoin anchor reports pending/);
+    assert.match(flat, /the key archive reports pending unless the bundle carries the archive's signed statement/);
+    assert.match(flat, /PROVIDER KEY CONFIRMED[^.]*with no network request/);
+  });
 });

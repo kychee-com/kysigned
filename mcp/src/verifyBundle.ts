@@ -32,7 +32,9 @@ export const VERIFY_BUNDLE_DESCRIPTION =
   'error. The bundle never leaves this machine and the kysigned operator is never contacted: online (the ' +
   'default), only two additive indicators use the network (timestamp-commitment hashes to the public ' +
   "OpenTimestamps calendars and a Bitcoin block source; the signer's public domain and selector to the key " +
-  'archive). offline: true skips them and they report pending. Needs no API key and no wallet.';
+  'archive). offline: true makes no network request: the Bitcoin anchor then reports pending, and the key ' +
+  "archive reports pending unless the bundle carries the archive's signed statement, which confirms the key " +
+  'offline. Needs no API key and no wallet.';
 
 const DATA_URL_PREFIX = /^data:[^,]*;base64,/i;
 const BASE64 = /^[A-Za-z0-9+/_-]*={0,2}$/;

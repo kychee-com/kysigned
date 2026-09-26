@@ -22,7 +22,9 @@ kysigned --help
 - `--json` prints the verdict as one JSON document (schema `kysigned.verdict.v1`): the bundle's
   assurance tier, each signer's tier and evidence dimensions, each check's result, and the
   SHA-256 of the original document every signer signed.
-- `--offline` skips the two online indicators. They report pending, and the verdict still holds.
+- `--offline` makes no network request. The Bitcoin timestamp anchor then reports pending, and
+  the key archive reports pending unless the bundle carries the archive's signed statement, which
+  confirms the key offline. The verdict still holds.
 
 ### Exit codes
 

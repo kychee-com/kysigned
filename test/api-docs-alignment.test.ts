@@ -279,6 +279,24 @@ describe('API Documentation Alignment', () => {
     assert.ok(!/bin\/verify-bundle\.mjs|Verification is not an MCP tool/.test(readme), 'no stale verification path');
   });
 
+  // ── spec 0.75.1 (AC-303, F-47.5; BT-36.2): what an offline check leaves pending ──
+  // Offline, the Bitcoin anchor is pending and the key archive is pending unless the bundle
+  // carries the archive's signed statement (F-32.9), which confirms it with no network request.
+
+  it("llms.txt and the MCP README say what offline leaves pending: the Bitcoin anchor, and the key archive unless the bundle carries the archive's signed statement (AC-303)", { skip: !llmsExists ? 'llms.txt missing' : undefined }, () => {
+    const docs: Array<[string, string]> = [
+      ['llms.txt', readFileSync(LLMS_TXT, 'utf-8')],
+      ['mcp/README.md', readFileSync(join(ROOT, 'mcp', 'README.md'), 'utf-8')],
+    ];
+    for (const [name, text] of docs) {
+      const flat = text.replace(/\s+/g, ' ');
+      assert.match(flat, /key archive reports pending unless the bundle carries the archive's signed statement/, `${name}: the statement exception`);
+      assert.doesNotMatch(flat, /\b(?:they|which then|both)\s+(?:then\s+)?(?:report|stay)s?\s+pending\b/i, `${name}: never "both pending"`);
+      assert.match(flat, /offline(?:: true)?` makes no network request/, `${name}: offline makes no network request`);
+      assert.match(flat, /Bitcoin anchor then reports pending/, `${name}: the Bitcoin anchor reports pending`);
+    }
+  });
+
   it('the MCP README names the web endpoint, its tools and its documents (F-46.11 / AC-296)', async () => {
     const readme = readFileSync(join(ROOT, 'mcp', 'README.md'), 'utf-8');
     const { WEB_TOOL_NAMES } = await import('../mcp/src/webServer.ts');

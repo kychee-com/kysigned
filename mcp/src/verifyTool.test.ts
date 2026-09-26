@@ -114,6 +114,25 @@ describe('verify_bundle: registration (AC-300)', () => {
     assert.match(d, /offline/);
     assert.ok(!DASHES.test(d), 'no em or en dash');
   });
+
+  // Spec 0.75.1 (AC-303, F-47.5; BT-36.2): offline, the Bitcoin anchor is pending and the key
+  // archive is pending unless the bundle carries the archive's signed statement (F-32.9), which
+  // confirms it with no network request. What an agent reads about `offline` says the same.
+  it("the description and the offline input say what offline leaves pending: the Bitcoin anchor, and the key archive unless the bundle carries the archive's signed statement", async () => {
+    const { tools } = await client.listTools();
+    const t = tools.find((x) => x.name === 'verify_bundle')!;
+    const offline = (t.inputSchema as { properties: Record<string, { description?: string }> }).properties['offline']!;
+    for (const [name, text] of [
+      ['description', String(t.description)],
+      ['offline input', String(offline.description)],
+    ] as const) {
+      assert.match(text, /key archive reports pending unless the bundle carries the archive's signed statement/, `${name}: the statement exception`);
+      assert.doesNotMatch(text, /\b(?:they|both)\s+(?:report|stay)s?\s+pending\b/i, `${name}: never "both pending"`);
+      assert.match(text, /Bitcoin[^.]*pending/, `${name}: the Bitcoin anchor reports pending`);
+      assert.match(text, /no network request/, `${name}: offline makes no network request`);
+      assert.ok(!DASHES.test(text), `${name}: no em or en dash`);
+    }
+  });
 });
 
 describe('verify_bundle: the verdict, with nothing configured (AC-300)', () => {

@@ -19,8 +19,10 @@ export const USAGE = `usage: kysigned verify [--offline] [--json] <bundle.pdf>
 Verifies a kysigned evidence bundle on this machine, with math and public keys.
 The bundle is never uploaded, and kysigned is not in the trust set.
 
-  --offline  skip the two online indicators (the Bitcoin timestamp anchor and the
-             public key archive); they report pending, and the verdict still holds
+  --offline  make no network request: the Bitcoin timestamp anchor reports
+             pending, and the key archive reports pending unless the bundle
+             carries the archive's signed statement, which confirms the key
+             offline; the verdict still holds
   --json     print the verdict as one JSON document (schema kysigned.verdict.v1)
 
 exit codes: 0 = verified at a satisfied assurance tier, 1 = FAILED, 2 = usage or read error`;

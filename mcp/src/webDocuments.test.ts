@@ -149,6 +149,17 @@ describe('agent skills index (AC-289)', () => {
     assert.ok(!t.includes('/v1/'), 'no API route: there is no hosted check (F-46.3)');
   });
 
+  // Spec 0.75.1 (AC-303, F-47.5; BT-36.2): offline, the Bitcoin anchor is pending and the key
+  // archive is pending unless the bundle carries the archive's signed statement (F-32.9).
+  it("the verify skill says what --offline leaves pending: the Bitcoin anchor, and the key archive unless the bundle carries the archive's signed statement", async () => {
+    const t = await skillText('kysigned-verify-bundle');
+    assert.match(t, /key archive reports pending unless the bundle carries the archive's signed statement/, 'the statement exception');
+    assert.doesNotMatch(t, /\b(?:they|both)\s+(?:report|stay)s?\s+pending\b/i, 'never "both pending"');
+    assert.match(t, /Bitcoin timestamp anchor [^.]*pending/, 'the Bitcoin anchor reports pending');
+    assert.match(t, /`--offline` makes no network request/, '--offline makes no network request');
+    assert.ok(!DASHES.test(t), 'no em or en dash');
+  });
+
   it('the track skill hands a completed bundle to the programmatic verifiers first', async () => {
     const t = await skillText('kysigned-track-envelope');
     const done = t.slice(t.indexOf('## When it completes'));

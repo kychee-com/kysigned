@@ -229,7 +229,7 @@ Verify a completed evidence bundle on this machine, with the same verifier as `n
 
 **Returns:** the `kysigned.verdict.v1` document as `structuredContent` (the bundle tier; each signer's tier, assurance dimensions, checks and reasons; and `originalDocSha256`, the SHA-256 of the document every signer signed), plus a readable report and the same document as text. The tiers, weakest first: `FAILED`, `INTEGRITY_VERIFIED`, `PROVIDER_KEY_CONFIRMED`, `PROVEN_DURABLE`. A FAILED verdict is a result, not a tool error; only bad input (both inputs, neither, an unreadable path, invalid base64) comes back with `isError: true`.
 
-**Stays on this machine:** the bundle is never sent anywhere and the kysigned operator is never contacted. Online (the default), only the verifier's two additive indicators use the network: timestamp-commitment hashes to the public OpenTimestamps calendars and a Bitcoin block source, and the signer's public domain and selector to the key archive. `offline: true` skips both; they report pending and the verdict still holds.
+**Stays on this machine:** the bundle is never sent anywhere and the kysigned operator is never contacted. Online (the default), only the verifier's two additive indicators use the network: timestamp-commitment hashes to the public OpenTimestamps calendars and a Bitcoin block source, and the signer's public domain and selector to the key archive. `offline: true` makes no network request: the Bitcoin anchor then reports pending, and the key archive reports pending unless the bundle carries the archive's signed statement, which confirms the key offline. The verdict still holds.
 
 Without an MCP host, the same check is a command: `npx kysigned verify <bundle.pdf>` (add `--json` for the document).
 

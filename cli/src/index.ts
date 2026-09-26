@@ -5,7 +5,8 @@
  * runs on the caller's machine: the bundle is never sent anywhere. Online (the
  * default), only the two additive indicators use the network: timestamp-commitment
  * hashes to the public OpenTimestamps calendars and a Bitcoin block source, and the
- * public (domain, selector) straight to the key archive. `offline` skips both.
+ * public (domain, selector) straight to the key archive. `offline` skips both and
+ * makes no network request (F-47.5).
  */
 import { runVerifyCli } from '../../src/bundle/verifyCli.js';
 import type { BundleVerdict } from '../../src/bundle/verifyTypes.js';
@@ -21,7 +22,11 @@ export const VERDICT_SCHEMA = 'kysigned.verdict.v1';
 export type VerdictJson = { schema: typeof VERDICT_SCHEMA; kysigned: string; offline: boolean } & BundleVerdict;
 
 export interface VerifyOptions {
-  /** Skip the two network indicators (Bitcoin anchor, key archive); both stay pending. */
+  /**
+   * Make no network request. The Bitcoin anchor then reports pending, and the key archive
+   * reports pending unless the bundle carries the archive's signed statement (F-32.9), which
+   * confirms the key offline (spec 0.75.1, AC-303).
+   */
   offline?: boolean;
 }
 

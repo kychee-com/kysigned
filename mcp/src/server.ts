@@ -534,7 +534,9 @@ server.registerTool(
       offline: z
         .boolean()
         .optional()
-        .describe('Skip the two online indicators (the Bitcoin timestamp anchor and the key archive); they report pending and the verdict still holds.'),
+        .describe(
+          "Make no network request: the Bitcoin timestamp anchor then reports pending, and the key archive reports pending unless the bundle carries the archive's signed statement, which confirms the key offline. The verdict still holds.",
+        ),
     },
     annotations: { title: 'Verify bundle', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
   },

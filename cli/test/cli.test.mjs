@@ -60,6 +60,21 @@ test('--version prints the package version; --help prints the usage; both exit 0
   assert.match(h.out, /kysigned verify \[--offline\] \[--json\] <bundle\.pdf>/);
 });
 
+// Spec 0.75.1 (AC-303, F-47.5; BT-36.2): offline, the Bitcoin anchor is pending and the key
+// archive is pending unless the bundle carries the archive's signed statement (F-32.9), which
+// confirms it with no network request. What a person reads about --offline says the same.
+test("--help and the README say what --offline leaves pending: the Bitcoin anchor, and the key archive unless the bundle carries the archive's signed statement", () => {
+  const help = kysigned('--help').out.replace(/\s+/g, ' ');
+  const readme = readFileSync(join(CLI_DIR, 'README.md'), 'utf8').replace(/\s+/g, ' ');
+  for (const [name, text] of [['--help', help], ['README.md', readme]]) {
+    assert.match(text, /key archive reports pending unless the bundle carries the archive's signed statement/, `${name}: the statement exception`);
+    assert.doesNotMatch(text, /\b(?:they|both)\s+(?:report|stay)s?\s+pending\b/i, `${name}: never "both pending"`);
+    assert.match(text, /Bitcoin timestamp anchor [^.]*pending/, `${name}: the Bitcoin anchor reports pending`);
+    assert.match(text, /--offline`? makes? no network request/, `${name}: --offline makes no network request`);
+    assert.doesNotMatch(text, /[–—]/, `${name}: no em or en dash`);
+  }
+});
+
 test('usage and read errors exit 2 with a message on stderr', () => {
   for (const args of [[], ['verify'], ['verify', '--offline'], ['frobnicate'], ['verify', '--bogus', 'x.pdf'], ['verify', 'a.pdf', 'b.pdf']]) {
     const r = kysigned(...args);
