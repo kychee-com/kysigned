@@ -1,6 +1,6 @@
 {
   "name": "kysigned",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Verify a kysigned evidence bundle on your own machine: npx kysigned verify <bundle.pdf>. No account, no upload, kysigned is not in the trust set.",
   "type": "module",
   "bin": {
