@@ -1,9 +1,11 @@
 // Verification stays on the holder's machine (plan 83.2, F-47.5, AC-303): the built
 // command runs under a network guard (network-guard.mjs, preloaded) that records every
-// attempt and answers none. Offline makes no attempt at all; online reaches only the
-// verifier's two additive indicators (the OpenTimestamps calendars and a Bitcoin block
-// source, and the public key archive, directly, never an operator), sends no bundle
-// bytes, and still returns the offline verdict with both indicators pending.
+// attempt and answers none. Offline makes no attempt at all and still returns the offline
+// verdict: the Bitcoin anchor pending, and the key archive pending unless the bundle
+// carries a verified archive statement (F-32.9), which confirms it with no network request
+// (spec 0.75.1, plan FC36.5). Online reaches only the verifier's two additive indicators
+// (the OpenTimestamps calendars and a Bitcoin block source, and the public key archive,
+// directly, never an operator), sends no bundle bytes, and still returns the verdict.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -20,6 +22,8 @@ const GUARD = pathToFileURL(join(HERE, 'network-guard.mjs')).href;
 const ASSETS = join(CLI_DIR, '..', 'docs', 'test-assets');
 const GENUINE = join(ASSETS, 'acme-anvil-waiver-signed-bundle.pdf');
 const TAMPERED = join(ASSETS, 'sample-bundle-tampered-doc.pdf');
+/** A genuine live bundle that embeds the archive's signed statement for its signer (F-32.9). */
+const WITH_STATEMENT = join(ASSETS, 'acme-anvil-waiver-signed-bundle-with-statement.pdf');
 
 /** The hosts the verifier's two indicators may reach (F-10.6, F-10.7, F-10.8). */
 const ALLOWED_HOST = /(^|\.)(opentimestamps\.org|eternitywall\.com|blockstream\.info|mempool\.space|archive\.prove\.email)$/;
@@ -47,7 +51,7 @@ function bundleMarkers(file) {
   return [0.25, 0.5, 0.75].map((f) => b64.slice(Math.floor(b64.length * f), Math.floor(b64.length * f) + 64));
 }
 
-test('offline: no network attempt at all, and the verdict comes back with both indicators pending', () => {
+test('offline, bundles with no archive statement: no network attempt at all, and the verdict comes back with both indicators pending', () => {
   for (const [file, exit] of [[GENUINE, 0], [TAMPERED, 1]]) {
     const r = guarded(['verify', '--offline', '--json', file]);
     assert.deepEqual(r.attempts, [], `${file}: offline made a network attempt`);
@@ -58,6 +62,25 @@ test('offline: no network attempt at all, and the verdict comes back with both i
       assert.ok(['pending', 'absent'].includes(s.bitcoinAnchor.status), `bitcoin anchor ${s.bitcoinAnchor.status}`);
     }
   }
+});
+
+test('offline, a bundle carrying a verified archive statement: no network attempt, the key archive confirmed from the statement, the Bitcoin anchor pending', () => {
+  const json = guarded(['verify', '--offline', '--json', WITH_STATEMENT]);
+  assert.deepEqual(json.attempts, [], 'offline made a network attempt');
+  assert.equal(json.code, 0, json.err);
+  const doc = JSON.parse(json.out);
+  assert.equal(doc.offline, true);
+  assert.equal(doc.tier, 'PROVIDER_KEY_CONFIRMED');
+  for (const s of doc.signers) {
+    assert.equal(s.checks.keyAuthenticity, 'archive-confirmed', 'the embedded statement confirms the key archive offline (F-32.9)');
+    assert.equal(s.assurance.keyProvenance, 'confirmed');
+    assert.equal(s.bitcoinAnchor.status, 'pending', 'only an online run can confirm a Bitcoin block');
+  }
+  const text = guarded(['verify', '--offline', WITH_STATEMENT]);
+  assert.deepEqual(text.attempts, [], 'offline made a network attempt');
+  assert.equal(text.code, 0, text.err);
+  assert.match(text.out, /Key archive: confirmed/);
+  assert.match(text.out, /Bitcoin timestamp: pending/);
 });
 
 test('online: only the indicator hosts, no bundle bytes, never an operator; the verdict still holds', () => {

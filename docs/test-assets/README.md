@@ -130,6 +130,22 @@ Expected results:
 | `acme-anvil-waiver.pdf` + the sign-request  | `/hashcheck` | MATCH (content). The document inside the sign-request is the original                       |
 | `acme-approval.pdf` + the signed bundle     | `/hashcheck` | MISMATCH. A different document is inside                                                    |
 
+**The signed bundle with an archive statement
+(`acme-anvil-waiver-signed-bundle-with-statement.pdf`).** A second genuine completed
+record from the live kysigned.com flow (2026-09-26, envelope
+`54bc8ef4-f3a5-4f78-b323-29d62bb09dbb`; creator and signer are both
+`redteam-pilot@kysigned.com`, an operator test identity; the document inside is
+`acme-anvil-waiver.pdf`, byte for byte). Unlike the older signed bundle, it embeds the
+archive's signed observation statement for the signer's key
+(`proofs/signer-1-statement.jws`, F-32.9) with the operator's two anchors over it. So
+offline, with no network request, it verifies at PROVIDER KEY CONFIRMED: the key archive
+is confirmed from the statement (registered 2026-06-29 11:42 UTC), and the Bitcoin
+timestamp stays pending until an online run. It is the regression fixture for that
+offline behavior (F-10.7, F-47.5, AC-303), pinned for the CLI and the local MCP under the
+network guard (`cli/test/local.test.mjs`, `mcp/src/verifyTool.test.ts`) and for both
+verifier engines (`src/bundle/statementFixture.test.ts`). On `/hashcheck`,
+`acme-anvil-waiver.pdf` matches it byte for byte.
+
 **Archive statement interop vectors (`archive-statement-vectors.json`).** Not a
 `/verify` asset. This is the interop reference kit for the signed DKIM-observation
 format kysigned proposed to the archive team (zkemail/archive#46): a test JWKS public

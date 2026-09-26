@@ -48,6 +48,8 @@ const MCP_DIR = join(HERE, '..');
 const ASSETS = join(MCP_DIR, '..', 'docs', 'test-assets');
 const GENUINE = join(ASSETS, 'acme-anvil-waiver-signed-bundle.pdf');
 const TAMPERED = join(ASSETS, 'sample-bundle-tampered-doc.pdf');
+/** A genuine live bundle that embeds the archive's signed statement for its signer (F-32.9). */
+const WITH_STATEMENT = join(ASSETS, 'acme-anvil-waiver-signed-bundle-with-statement.pdf');
 const GUARD = pathToFileURL(join(MCP_DIR, '..', 'cli', 'test', 'network-guard.mjs')).href;
 const KYSIGNED_BIN = join(dirname(fileURLToPath(import.meta.resolve('kysigned'))), 'kysigned.mjs');
 const SATISFIED = ['INTEGRITY_VERIFIED', 'PROVIDER_KEY_CONFIRMED', 'PROVEN_DURABLE'];
@@ -241,7 +243,7 @@ function guardedCall(args: Record<string, unknown>): { result?: Result; err: str
 }
 
 describe('verify_bundle stays on this machine (AC-303)', () => {
-  it('offline: no network attempt at all, and the verdict comes back with both indicators pending', () => {
+  it('offline, bundles with no archive statement: no network attempt at all, and the verdict comes back with both indicators pending', () => {
     for (const args of [{ path: GENUINE }, { pdf_base64: b64(TAMPERED) }]) {
       const g = guardedCall({ ...args, offline: true });
       assert.deepEqual(g.attempts, [], `offline made a network attempt: ${JSON.stringify(g.attempts)}`);
@@ -253,6 +255,22 @@ describe('verify_bundle stays on this machine (AC-303)', () => {
         assert.ok(['pending', 'absent'].includes(s.bitcoinAnchor.status), `bitcoin anchor ${s.bitcoinAnchor.status}`);
       }
     }
+  });
+
+  it('offline, a bundle carrying a verified archive statement: no network attempt, the key archive confirmed from the statement, the Bitcoin anchor pending (spec 0.75.1)', () => {
+    const g = guardedCall({ path: WITH_STATEMENT, offline: true });
+    assert.deepEqual(g.attempts, [], `offline made a network attempt: ${JSON.stringify(g.attempts)}`);
+    assert.ok(g.result, g.err);
+    assert.notEqual(g.result!.isError, true, g.result!.content[0]?.text);
+    const v = g.result!.structuredContent!;
+    assert.equal(v['offline'], true);
+    assert.equal(v['tier'], 'PROVIDER_KEY_CONFIRMED');
+    for (const s of v['signers']) {
+      assert.equal(s.checks.keyAuthenticity, 'archive-confirmed', 'the embedded statement confirms the key archive offline (F-32.9)');
+      assert.equal(s.assurance.keyProvenance, 'confirmed');
+      assert.equal(s.bitcoinAnchor.status, 'pending', 'only an online run can confirm a Bitcoin block');
+    }
+    assert.match(g.result!.content[0]!.text, /Key archive: confirmed/);
   });
 
   it('online: only the indicator hosts, no bundle bytes, never the operator; the verdict still holds', () => {
