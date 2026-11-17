@@ -102,7 +102,10 @@
             "type": "string"
           },
           "expiry_days": {
-            "type": "number"
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 36500,
+            "description": "Days until the envelope expires unsigned: a whole number from 1 to 36500 (omit for the default, 30). Anything else is a 400 validation_expiry_days."
           },
           "callback_url": {
             "type": "string",

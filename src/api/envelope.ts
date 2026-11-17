@@ -288,6 +288,14 @@ export function deliveryStatus(
   return 'pending';
 }
 
+/** #172 — the longest envelope expiry the API accepts, in days (100 years). */
+export const MAX_EXPIRY_DAYS = 36500;
+
+/** #172 — a whole number of days from 1 to MAX_EXPIRY_DAYS (a JSON number, not a string). */
+export function isValidExpiryDays(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= MAX_EXPIRY_DAYS;
+}
+
 export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeRequest) {
   // Validate PDF input
   if (!req.pdf_base64 && !req.pdf_url) {
@@ -317,6 +325,18 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
           `Hebrew, and Arabic names; Chinese, Japanese, and Korean aren't supported yet. ` +
           `See our FAQ on supported languages, or rename the document.`,
         code: 'validation_document_name',
+      },
+    };
+  }
+  // #172 — `expiry_days`, when given, is a whole number of days from 1 to
+  // MAX_EXPIRY_DAYS. Unvalidated, a negative value created an already-expired
+  // envelope and a huge or non-numeric one produced an invalid date (a 500).
+  if (req.expiry_days !== undefined && !isValidExpiryDays(req.expiry_days)) {
+    return {
+      status: 400,
+      body: {
+        error: `expiry_days must be a whole number of days from 1 to ${MAX_EXPIRY_DAYS}.`,
+        code: 'validation_expiry_days',
       },
     };
   }

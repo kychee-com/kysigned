@@ -280,6 +280,51 @@ describe('Envelope API — from spec acceptance criteria', () => {
 
   // F1: "Sender creates an envelope with a PDF and 1-5 signers; receives envelope_id, status_url, verify_url, and individual signing links per signer"
   describe('POST /v1/envelope', () => {
+    // #172: `expiry_days` is a whole number of days from 1 to 36500. Anything else is a
+    // clean 400 naming the field, before anything is created, stored, sent or charged
+    // (a negative value used to create an already-expired envelope; a huge or
+    // non-numeric one produced an invalid date and a 500).
+    describe('#172: expiry_days is validated', () => {
+      const create = (expiry_days: unknown) =>
+        handleCreateEnvelope(
+          { pool: db.pool, emailProvider: email, baseUrl: 'https://kysigned.com', senderIdentity: '0xSender' },
+          {
+            document_name: 'NDA',
+            pdf_base64: TEST_FIXTURE_PDF_B64,
+            expiry_days,
+            signers: [{ email: 'alice@example.com', name: 'Alice' }],
+          } as never,
+        );
+
+      for (const bad of [0, -1, -30, 1.5, '30', 36501, 1e12, null, Number.NaN, Number.POSITIVE_INFINITY]) {
+        it(`refuses ${String(bad)} (${typeof bad}) with 400 validation_expiry_days and creates nothing`, async () => {
+          const before = db.envelopes.length;
+          const result = await create(bad);
+          assert.equal(result.status, 400);
+          assert.equal((result.body as { code?: string }).code, 'validation_expiry_days');
+          assert.match(String((result.body as { error?: string }).error), /expiry_days/);
+          assert.equal(db.envelopes.length, before, 'no envelope stored');
+          assert.equal(email.sent.length, 0, 'no email sent');
+        });
+      }
+
+      for (const good of [1, 30, 36500]) {
+        it(`accepts ${good} and expires the envelope ${good} days after creation`, async () => {
+          const t0 = Date.now();
+          const result = await create(good);
+          assert.equal(result.status, 201);
+          const env = db.envelopes.find((e: any) => e.id === result.body.envelope_id)!;
+          const days = (new Date(env.expiry_at).getTime() - t0) / 86_400_000;
+          assert.ok(Math.abs(days - good) < 0.01, `expiry ${days} days, expected ${good}`);
+        });
+      }
+
+      it('absent keeps the default expiry', async () => {
+        const result = await create(undefined);
+        assert.equal(result.status, 201);
+      });
+    });
+
     it('should create envelope and return envelope_id, status_url, verify_url, signing_links', async () => {
       const result = await handleCreateEnvelope(
         { pool: db.pool, emailProvider: email, baseUrl: 'https://kysigned.com', senderIdentity: '0xSender' },
@@ -1374,7 +1419,6 @@ describe('Envelope API — from spec acceptance criteria', () => {
         {
           document_name: 'NDA',
           pdf_base64: TEST_FIXTURE_PDF_B64,
-          expiry_days: -1, // already past deadline
           signers: [
             { email: 'alice@t.com', name: 'Alice' },
             { email: 'bob@t.com', name: 'Bob' },
@@ -1384,7 +1428,12 @@ describe('Envelope API — from spec acceptance criteria', () => {
       );
       const envelopeId = createResult.body.envelope_id;
       for (const env of db.envelopes) {
-        if (env.id === envelopeId) env.pdf_storage_key = `envelopes/${env.document_hash}/original.pdf`;
+        if (env.id === envelopeId) {
+          env.pdf_storage_key = `envelopes/${env.document_hash}/original.pdf`;
+          // Already past its deadline. (This used to be `expiry_days: -1` on create,
+          // which #172 now refuses as the invalid input it is.)
+          env.expiry_at = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        }
       }
       const envSigners = db.signers.filter((s: any) => s.envelope_id === envelopeId);
       envSigners[0]!.status = 'signed';
