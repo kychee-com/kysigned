@@ -31,7 +31,14 @@
  * success (AC-33). The payment-provider TOP-UP that funds the ledger (checkout +
  * webhook keys) is the private `[service]` activation — not in this forkable wiring.
  */
-import { createSignerDomainChecker, createNodeResolver, type SignerDomainChecker } from '../api/signerDomainCheck.js';
+import {
+  createSignerDomainChecker,
+  createNodeResolver,
+  checkOneDomain,
+  type SignerDomainChecker,
+  type SignerDomainWarning,
+} from '../api/signerDomainCheck.js';
+import type { TelemetryLimiter } from '../api/telemetry.js';
 import type { DbPool } from '../db/pool.js';
 import type { EmailProvider } from '../email/types.js';
 import type { ApiContext } from '../api/envelope.js';
@@ -353,6 +360,10 @@ export interface AppDeps {
 
   /** F-3.9 (#113) — the bounded signer-domain check (preflight, add/edit signer, the live endpoint). Absent = no check. */
   signerDomainCheck?: SignerDomainChecker;
+  /** F-3.9 / DD-87 — the same check for ONE domain (`GET /v1/signer-domain-check`). Absent = `{ warnings: [] }`. */
+  checkDomain?: (domain: string) => Promise<SignerDomainWarning[]>;
+  /** F-3.9 / DD-86 — test seam for the per-source limiter (default: one per warm container, 30 a minute). */
+  domainCheckLimiter?: TelemetryLimiter;
 
   /** #146 — bounded readiness probes for GET /v1/health?deep=1 (db + signing mailbox). */
   healthChecks: () => { checkDb: () => Promise<void>; checkMailbox: () => Promise<void> };
@@ -569,7 +580,9 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
 
   // F-3.9 (#113, DD-86) — the bounded signer-domain check: a fresh resolver per
   // request (cancelled at the 2-second budget); only domains are resolved.
-  const signerDomainCheck = createSignerDomainChecker({ createResolver: createNodeResolver });
+  const domainCheckDeps = { createResolver: createNodeResolver };
+  const signerDomainCheck = createSignerDomainChecker(domainCheckDeps);
+  const checkDomain = (domain: string) => checkOneDomain(domain, domainCheckDeps);
 
   const apiContext = (creatorEmail: string): ApiContext => ({
     pool,
@@ -831,6 +844,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     ...(runtime.readPaymentContext ? { readPaymentContext: runtime.readPaymentContext } : {}),
     healthChecks,
     signerDomainCheck, // F-3.9
+    checkDomain, // F-3.9 / DD-87
     apiContext,
     authCtx,
     authMethods,

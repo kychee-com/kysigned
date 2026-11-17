@@ -17,6 +17,8 @@ import type { AppDeps } from './config.js';
 import type { DbPool } from '../db/pool.js';
 import { CSRF_HEADER, SESSION_COOKIE } from '../api/auth/session.js';
 import { createAdminAnalyticsMemoryPool } from '../db/adminAnalytics.testpool.js';
+import { createSignerDomainChecker, checkOneDomain, type DomainResolver } from '../api/signerDomainCheck.js';
+import { createTelemetryLimiter } from '../api/telemetry.js';
 
 // ── a recording fake DbPool ──────────────────────────────────────────────────
 interface RecordedQuery {
@@ -1648,5 +1650,136 @@ describe('GET /v1/key-archive — F-10.8a wiring (#102)', () => {
     } finally {
       globalThis.fetch = realFetch;
     }
+  });
+});
+
+// ── F-3.9 (#113, DD-86 / DD-87) — the live check endpoint + the per-source limit ──
+
+/** A counting fake resolver: every lookup answers "no such record" (so the
+ *  domain cannot receive), and never touches real DNS. */
+function countingDnsDeps(maxPerWindow = 30) {
+  const hosts: string[] = [];
+  const resolver: DomainResolver = {
+    resolveMx: async (h) => { hosts.push(h); throw Object.assign(new Error('x'), { code: 'ENODATA' }); },
+    resolve4: async (h) => { hosts.push(h); throw Object.assign(new Error('x'), { code: 'ENODATA' }); },
+    resolve6: async (h) => { hosts.push(h); throw Object.assign(new Error('x'), { code: 'ENODATA' }); },
+    resolveTxt: async (h) => { hosts.push(h); throw Object.assign(new Error('x'), { code: 'ENODATA' }); },
+    cancel: () => {},
+  };
+  const dns = { createResolver: () => resolver };
+  return {
+    hosts,
+    over: {
+      signerDomainCheck: createSignerDomainChecker(dns),
+      checkDomain: (d: string) => checkOneDomain(d, dns),
+      domainCheckLimiter: createTelemetryLimiter({ maxPostsPerWindow: maxPerWindow }),
+    } as Partial<RequestDeps>,
+  };
+}
+
+const PREFLIGHT_BODY = {
+  document_name: 'NDA',
+  pdf_url: 'https://example.com/doc.pdf',
+  signers: [{ email: 'someone@bare.test', name: 'S' }],
+};
+
+describe('GET /v1/signer-domain-check — F-3.9 (DD-87)', () => {
+  it('is public, answers { warnings } for one domain, and is never cached', async () => {
+    const { hosts, over } = countingDnsDeps();
+    const res = await handleRequest(req('GET', '/v1/signer-domain-check?domain=bare.test'), makeDeps(over));
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await res.json(), { warnings: ['cannot_receive'] });
+    assert.ok(hosts.length > 0 && hosts.every((h) => h === 'bare.test' || h === '_dmarc.bare.test'));
+  });
+
+  it('a value that is not a valid domain → { warnings: [] } with no lookup', async () => {
+    const { hosts, over } = countingDnsDeps();
+    for (const q of ['', '?domain=', '?domain=not%20a%20domain', '?domain=someone%40bare.test', '?domain=localhost']) {
+      const res = await handleRequest(req('GET', `/v1/signer-domain-check${q}`), makeDeps(over));
+      assert.equal(res.status, 200, q);
+      assert.deepEqual(await res.json(), { warnings: [] }, q);
+    }
+    assert.equal(hosts.length, 0);
+  });
+
+  it('F-3.9 over the per-source limit the check is skipped', async () => {
+    const { hosts, over } = countingDnsDeps(2);
+    const deps = makeDeps(over);
+    const ask = (xff: string | null) =>
+      handleRequest(
+        req('GET', '/v1/signer-domain-check?domain=bare.test', xff ? { headers: { 'x-forwarded-for': xff } } : {}),
+        deps,
+      );
+    // Two requests whose FORGED leading entries differ but whose gateway-stamped
+    // last hop is the same share one bucket.
+    assert.deepEqual(await (await ask('1.1.1.1, 203.0.113.9')).json(), { warnings: ['cannot_receive'] });
+    assert.deepEqual(await (await ask('2.2.2.2, 203.0.113.9')).json(), { warnings: ['cannot_receive'] });
+    const looked = hosts.length;
+    // Over the limit: no lookup, no warnings, the request still answered.
+    const third = await ask('3.3.3.3,203.0.113.9');
+    assert.equal(third.status, 200);
+    assert.deepEqual(await third.json(), { warnings: [] });
+    assert.equal(hosts.length, looked, 'the resolver is never called over the limit');
+    // The sessionless preflight's check shares that limit: unchanged ok, no warnings, no lookup.
+    const pf = await handleRequest(
+      req('POST', '/v1/envelope/preflight', {
+        headers: { 'x-forwarded-for': '4.4.4.4, 203.0.113.9' },
+        body: JSON.stringify(PREFLIGHT_BODY),
+      }),
+      deps,
+    );
+    assert.equal(pf.status, 200);
+    assert.deepEqual(await pf.json(), { ok: true });
+    assert.equal(hosts.length, looked);
+    // A different last hop has its own bucket.
+    assert.deepEqual(await (await ask('3.3.3.3, 198.51.100.1')).json(), { warnings: ['cannot_receive'] });
+  });
+
+  it('a missing x-forwarded-for shares one bucket', async () => {
+    const { hosts, over } = countingDnsDeps(1);
+    const deps = makeDeps(over);
+    const ask = () => handleRequest(req('GET', '/v1/signer-domain-check?domain=bare.test'), deps);
+    assert.deepEqual(await (await ask()).json(), { warnings: ['cannot_receive'] });
+    const looked = hosts.length;
+    assert.deepEqual(await (await ask()).json(), { warnings: [] });
+    assert.equal(hosts.length, looked);
+  });
+
+  it('without a configured check (a fork with it off) the endpoint answers { warnings: [] }', async () => {
+    const res = await handleRequest(req('GET', '/v1/signer-domain-check?domain=bare.test'), makeDeps());
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { warnings: [] });
+  });
+});
+
+describe('POST /v1/envelope/preflight — F-3.9 signer_warnings (AC-312)', () => {
+  it('a sessionless caller under the limit gets signer_warnings', async () => {
+    const { over } = countingDnsDeps();
+    const res = await handleRequest(
+      req('POST', '/v1/envelope/preflight', { body: JSON.stringify(PREFLIGHT_BODY) }),
+      makeDeps(over),
+    );
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), {
+      ok: true,
+      signer_warnings: [{ email: 'someone@bare.test', warnings: ['cannot_receive'] }],
+    });
+  });
+
+  it('a caller WITH a session is not limited', async () => {
+    const { over } = countingDnsDeps(1);
+    const deps = makeDeps({ ...over, pool: validSessionPool() });
+    // Spend the source's whole allowance first.
+    await handleRequest(req('GET', '/v1/signer-domain-check?domain=bare.test'), deps);
+    const res = await handleRequest(
+      req('POST', '/v1/envelope/preflight', {
+        headers: { cookie: `${SESSION_COOKIE}=${VALID_SESSION_ID}` },
+        body: JSON.stringify(PREFLIGHT_BODY),
+      }),
+      deps,
+    );
+    assert.equal(res.status, 200);
+    assert.deepEqual((await res.json()).signer_warnings, [{ email: 'someone@bare.test', warnings: ['cannot_receive'] }]);
   });
 });

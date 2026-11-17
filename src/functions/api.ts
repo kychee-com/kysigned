@@ -66,6 +66,7 @@ import {
 } from '../db/pendingSends.js';
 import { storePdfBlob } from '../db/pdfBlobs.js';
 import { createTelemetryLimiter } from '../api/telemetry.js';
+import { normalizeDomain } from '../api/signerDomainCheck.js';
 import { buildHostedSenderGate } from '../api/billingGate.js';
 import { handleHealth, handleDeepHealth } from '../api/health.js';
 import {
@@ -208,6 +209,39 @@ function passkeyCtx(deps: RequestDeps): PasskeyHandlerCtx {
  * start resets it, which the DB-backed live cap backstops.
  */
 const ceremonyLimiter = createTelemetryLimiter({ maxPostsPerWindow: 5, windowMs: 60_000 });
+
+/**
+ * F-3.9 (#113, DD-86) — the signer-domain check's per-source limit, on F-38.7's
+ * terms (its own instance, 30 a minute, per warm container). It bounds the
+ * public check endpoint for every caller and the preflight's check for callers
+ * without a session. Over the limit the CHECK is skipped and the request goes
+ * on unchanged: a Send is never refused for asking too often.
+ */
+const domainCheckLimiter = createTelemetryLimiter({ maxPostsPerWindow: 30, windowMs: 60_000 });
+
+/**
+ * The gateway-stamped client hop: the LAST entry of x-forwarded-for (a client
+ * can prefix the header with anything, never append after the gateway). Null
+ * when absent, which the limiter files under one shared bucket. Held in memory
+ * for the limit only, never stored.
+ */
+export function lastForwardedHop(header: string | null): string | null {
+  if (!header) return null;
+  const hops = header.split(',').map((h) => h.trim()).filter((h) => h !== '');
+  return hops.length > 0 ? hops[hops.length - 1]! : null;
+}
+
+function domainCheckAllowed(deps: RequestDeps, req: Request): boolean {
+  const limiter = deps.domainCheckLimiter ?? domainCheckLimiter;
+  return limiter.allow(lastForwardedHop(req.headers.get('x-forwarded-for')), Date.now());
+}
+
+/** F-3.9 — does this public-route request carry a session (cookie or bearer key)? */
+async function hasSession(deps: RequestDeps, req: Request, cookies: Record<string, string>): Promise<boolean> {
+  const authz = req.headers.get('authorization');
+  if (authz !== null && authz.trim() !== '') return (await resolveApiKey(deps.pool, authz)) !== null;
+  return (await resolveSession(deps.pool, deps.sessionConfig, cookies)) !== null;
+}
 
 function pendingSendCtx(deps: RequestDeps, sourceAddr: string | null = null): PendingSendCtx {
   const pool = deps.pool;
@@ -528,8 +562,29 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
     // The pool powers the AC-144 spending-intent replay lookup (49.8). ──
     case 'createPreflight': {
       const body = await readJsonBody(req);
-      const r = await handleCreatePreflight(body as Record<string, unknown>, deps.pool);
+      // F-3.9 (DD-86) — the signer-domain check rides along; a caller without a
+      // session is limited per source, and over the limit gets no check (the
+      // preflight's own answer is unchanged).
+      let signerDomainCheck = deps.signerDomainCheck;
+      if (signerDomainCheck && !(await hasSession(deps, req, cookies)) && !domainCheckAllowed(deps, req)) {
+        signerDomainCheck = undefined;
+      }
+      const r = await handleCreatePreflight(body as Record<string, unknown>, deps.pool, { signerDomainCheck });
       return json(r.body, r.status);
+    }
+
+    // ── F-3.9 (DD-87) — the editor's live per-domain heads-up (public) ──
+    case 'signerDomainCheck': {
+      const domain = normalizeDomain(url.searchParams.get('domain'));
+      let warnings: string[] = [];
+      // A non-domain is answered with no lookup and spends no allowance.
+      if (domain && deps.checkDomain && domainCheckAllowed(deps, req)) {
+        warnings = await deps.checkDomain(domain);
+      }
+      return new Response(JSON.stringify({ warnings }), {
+        status: 200,
+        headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+      });
     }
 
     // ── F-40 — the pending send: the draft that outlives the composing tab ──

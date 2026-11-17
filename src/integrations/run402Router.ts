@@ -142,6 +142,11 @@ export const API_ROUTES: RouteDef[] = [
   // queries the archive directly. Forwards only domain+selector, never the file.
   { method: 'GET', pattern: '/v1/key-archive', name: 'keyArchive', auth: 'public' },
 
+  // F-3.9 (#113, DD-87) — the editor's live heads-up about a signer's email
+  // DOMAIN. Public (a guest composes before signing in), limited per source,
+  // bounded to 2 seconds, never cached. Takes ONLY the domain, never an address.
+  { method: 'GET', pattern: '/v1/signer-domain-check', name: 'signerDomainCheck', auth: 'public' },
+
   // F-38 (spec 0.59.0) — pre-signin funnel telemetry. Collection is necessarily
   // public (the visitors it measures have no account); every bound lives in the
   // handler (allowlist door, caps, per-source rate limit — DD-50).
