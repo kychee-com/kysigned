@@ -128,13 +128,23 @@ export async function withCreateIdempotency(
       `UPDATE idempotency_keys
           SET response_status = $1, response_body = $2
         WHERE creator_email = $3 AND idempotency_key = $4`,
-      [result.status, JSON.stringify(result.body), creatorEmail, key],
+      [result.status, JSON.stringify(storableBody(result.body)), creatorEmail, key],
     );
   } else {
     // Failures are never cached — the retry should re-attempt for real.
     await releaseQuietly(ctx.pool, creatorEmail, key);
   }
   return result;
+}
+
+/**
+ * F-3.9 (DD-86) — `signer_warnings` is advice computed for THIS request; it is
+ * never written to the store, so a replayed create carries none.
+ */
+function storableBody(body: unknown): unknown {
+  if (!body || typeof body !== 'object' || Array.isArray(body) || !('signer_warnings' in body)) return body;
+  const { signer_warnings: _omit, ...rest } = body as Record<string, unknown>;
+  return rest;
 }
 
 async function releaseQuietly(pool: DbPool, creatorEmail: string, key: string): Promise<void> {

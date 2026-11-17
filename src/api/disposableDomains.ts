@@ -12,6 +12,7 @@
  * The JSON list is statically imported so the run402 bundle inlines it
  * (resolveJsonModule + bundler resolution); a Set gives O(1) lookup.
  */
+import { domainToASCII } from 'node:url';
 import disposableList from 'disposable-email-domains';
 
 const DISPOSABLE: ReadonlySet<string> = new Set(
@@ -24,4 +25,16 @@ export function isDisposableEmailDomain(email: string): boolean {
   if (at < 0) return false;
   const domain = email.slice(at + 1).trim().toLowerCase();
   return domain.length > 0 && DISPOSABLE.has(domain);
+}
+
+/**
+ * F-3.9 — the same list, matched on a domain's ASCII (punycode) form: the list
+ * carries a few entries in Unicode, so it is normalized once, lazily.
+ */
+let disposableAscii: ReadonlySet<string> | null = null;
+export function isDisposableDomain(asciiDomain: string): boolean {
+  if (!disposableAscii) {
+    disposableAscii = new Set([...DISPOSABLE].map((d) => domainToASCII(d) || d));
+  }
+  return disposableAscii.has(asciiDomain.trim().toLowerCase());
 }
