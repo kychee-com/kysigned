@@ -214,7 +214,17 @@ function priceLine(pr: PaymentRequired): string {
 }
 
 /** The transport's payment-required answer: the object itself, plus words for clients that cannot pay. */
-function paymentRequiredResult(pr: PaymentRequired, intentKey: string, origin: string, lead: string): CallToolResult {
+function paymentRequiredResult(
+  pr: PaymentRequired,
+  intentKey: string,
+  origin: string,
+  lead: string,
+  signerWarnings?: unknown,
+): CallToolResult {
+  // F-3.9 (#113) — the free preflight's per-signer domain warnings, so an agent
+  // sees a dead or throwaway domain BEFORE it pays. Kept out of the
+  // PaymentRequired object (x402 clients read that verbatim).
+  const warnings = Array.isArray(signerWarnings) && signerWarnings.length > 0 ? signerWarnings : null;
   const prose = [
     `${lead} Price: ${priceLine(pr)}.`,
     'This tool pays from your own wallet over x402: an x402-capable MCP client signs the payment and calls again with it attached (_meta "x402/payment").',
@@ -224,11 +234,15 @@ function paymentRequiredResult(pr: PaymentRequired, intentKey: string, origin: s
     `- call POST ${origin}${X402_CREATE_PATH} with any x402 HTTP client;`,
     `- or have a person mint a creator API key at ${origin}${WEB_FACTS.apiKeysPath} and use create_envelope on the local server.`,
     'The live price is always available from check_price.',
+    ...(warnings
+      ? ['Before you pay: the preflight found signer_warnings (see the last item): a signer address may not receive the request, or may stop working. Sending is still allowed.']
+      : []),
   ].join('\n');
   return {
     content: [
       { type: 'text', text: JSON.stringify(pr) },
       { type: 'text', text: prose },
+      ...(warnings ? [{ type: 'text' as const, text: JSON.stringify({ signer_warnings: warnings }, null, 2) }] : []),
     ],
     structuredContent: pr as unknown as Record<string, unknown>,
     isError: true,
@@ -301,7 +315,13 @@ export async function handlePaidCreate(
   if (payment === undefined) {
     try {
       const { paymentRequired } = await fetchChallenge(origin, fetchFn);
-      return paymentRequiredResult(paymentRequired, intentKey, origin, 'Payment required; nothing has been charged yet.');
+      return paymentRequiredResult(
+        paymentRequired,
+        intentKey,
+        origin,
+        'Payment required; nothing has been charged yet.',
+        preBody?.['signer_warnings'],
+      );
     } catch (err) {
       if (err instanceof X402RouteError && err.kind === 'not_priced') return x402NotEnabled(origin, err.message);
       return errorResult({ code: 'price_unavailable', message: err instanceof Error ? err.message : String(err) });

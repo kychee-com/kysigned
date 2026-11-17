@@ -20,6 +20,7 @@ export const CREATE_201_RESULT_FIELDS = [
   'callback_secret',
   'suggestion',
   'tracking',
+  'signer_warnings', // F-3.9 (#113) — per-signer domain heads-up; absent when none apply
 ] as const;
 
 export type Create201ResultField = (typeof CREATE_201_RESULT_FIELDS)[number];

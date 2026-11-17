@@ -50,7 +50,7 @@ const SETTLED_TX = '0x63ebba71057fae58dd1f569b825118851aa43196fc6567a5bb57e55f88
  * transaction reference).
  */
 function paidApi(
-  opts: { priced?: boolean; createStatus?: number; createBody?: Record<string, unknown>; paid402?: boolean; run402?: boolean; receiptTx?: boolean } = {},
+  opts: { priced?: boolean; createStatus?: number; createBody?: Record<string, unknown>; paid402?: boolean; run402?: boolean; receiptTx?: boolean; signerWarnings?: unknown[] } = {},
 ) {
   const settledHeaders = (): Record<string, string> =>
     opts.run402
@@ -72,7 +72,7 @@ function paidApi(
     }
     const key = String(body['idempotency_key'] ?? '');
     const env = created.get(key);
-    return jsonResponse(env ? { ok: true, already_created: true, envelope: env } : { ok: true });
+    return jsonResponse(env ? { ok: true, already_created: true, envelope: env } : { ok: true, ...(opts.signerWarnings ? { signer_warnings: opts.signerWarnings } : {}) });
   };
   const paidCreate: FakeRoute = (c) => {
     if (c.method !== 'POST' || c.url !== `${ORIGIN}/v1/x402/envelope` || !c.headers['payment-signature']) return undefined;
@@ -102,6 +102,7 @@ function paidApi(
       signing_links: [],
       payment: receipt,
       tracking: { token: 'ktt_tracking_for_this_envelope', poll: 'GET /v1/envelope/:id' },
+      ...(opts.signerWarnings ? { signer_warnings: opts.signerWarnings } : {}),
     };
     created.set(c.headers['idempotency-key'] ?? '', env);
     return jsonResponse(env, 201, settledHeaders());
@@ -173,6 +174,46 @@ describe('unpaid call: validate for free, then the route\'s own terms (AC-284)',
     assert.equal(r.structuredContent, undefined);
     assert.equal(JSON.parse(firstText(r).replace(/^Error: /, '')).code, 'x402_not_enabled');
     await client.close();
+  });
+});
+
+describe('F-3.9 — signer_warnings before and after paying (AC-312)', () => {
+  const WARNINGS = [{ email: 'signer@example.com', warnings: ['no_sender_protection'] }];
+
+  it('the unpaid call carries the preflight\'s signer_warnings beside the untouched payment terms', async () => {
+    const { deps } = paidApi({ signerWarnings: WARNINGS });
+    const client = await connectClient((req) => handleMcpRequest(req, deps));
+    const r = await client.callTool({ name: 'create_envelope_x402', arguments: ARGS });
+    assert.equal(r.isError, true);
+    assert.deepEqual(r.structuredContent, decodePaymentRequiredHeader(CAPTURED_PAYMENT_REQUIRED), 'the PaymentRequired is untouched');
+    const content = r.content as Array<{ type: string; text: string }>;
+    const item = content.map((c) => { try { return JSON.parse(c.text) as Record<string, unknown>; } catch { return null; } })
+      .find((o) => o && 'signer_warnings' in o);
+    assert.deepEqual(item?.['signer_warnings'], WARNINGS);
+    assert.ok(content.some((c) => /signer_warnings|before you pay/i.test(c.text) && !c.text.startsWith('{')), 'the prose points at them');
+    await client.close();
+  });
+
+  it('without warnings the unpaid result is exactly as before', async () => {
+    const { deps } = paidApi();
+    const client = await connectClient((req) => handleMcpRequest(req, deps));
+    const r = await client.callTool({ name: 'create_envelope_x402', arguments: ARGS });
+    assert.equal((r.content as unknown[]).length, 2);
+    await client.close();
+  });
+
+  it('the paid 201 carries the create\'s signer_warnings (same projection)', async () => {
+    const { deps } = paidApi({ signerWarnings: WARNINGS });
+    const { payments } = payingClient();
+    const mcp = new Client({ name: 'x402-agent', version: '0.0.0' });
+    await connectClient((req) => handleMcpRequest(req, deps), { client: mcp });
+    const agent = wrapMCPClientWithPayment(mcp, payments, { autoPayment: true });
+    const r = await agent.callTool('create_envelope_x402', ARGS);
+    assert.equal(r.paymentMade, true);
+    assert.notEqual(r.isError, true);
+    const out = JSON.parse((r.content[0] as { text: string }).text) as Record<string, unknown>;
+    assert.deepEqual(out['signer_warnings'], WARNINGS);
+    await mcp.close();
   });
 });
 

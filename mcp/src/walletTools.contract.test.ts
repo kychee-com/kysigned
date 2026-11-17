@@ -306,6 +306,15 @@ describe('create_envelope_x402 — AC-144/AC-145 over the tool surface, NO auth 
     assert.match(String(t!.description), /pays|spends/i);
   });
 
+  it('F-3.9 — the paid 201\'s signer_warnings reach the agent (AC-312)', async () => {
+    const warnings = [{ email: 'signer@mailinator.com', warnings: ['disposable'] }];
+    const flow = createFlowSeams({ paid: { status: 201, body: { ...PAID_201, signer_warnings: warnings } } });
+    setWalletSeamsForTests(flow.s);
+    const r = await call('create_envelope_x402', { ...CREATE_ARGS });
+    assert.ok(!r.isError, r.content[0]!.text);
+    assert.deepEqual((JSON.parse(r.content[0]!.text) as Record<string, unknown>)['signer_warnings'], warnings);
+  });
+
   it('happy path: preflight → readiness → paid create; result carries the projection + receipt + tracking + the generated spending-intent key', async () => {
     const flow = createFlowSeams({ paid: { status: 201, body: PAID_201 } });
     setWalletSeamsForTests(flow.s);

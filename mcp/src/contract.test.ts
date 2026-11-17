@@ -371,6 +371,19 @@ describe('void_envelope', () => {
   });
 });
 
+describe('F-3.9 — create_envelope passes signer_warnings through (AC-312)', () => {
+  it('the API\'s per-signer warnings reach the agent unchanged', async () => {
+    const warnings = [{ email: 'x@mailinator.com', warnings: ['disposable'] }];
+    queue.push({ status: 201, body: { envelope_id: 'env-w', status: 'active', signer_warnings: warnings } });
+    const text = await callTool('create_envelope', {
+      document_name: 'Contract',
+      pdf_base64: 'JVBERi0=',
+      signers: [{ email: 'x@mailinator.com', name: 'X' }],
+    });
+    assert.deepEqual((JSON.parse(text) as Record<string, unknown>)['signer_warnings'], warnings);
+  });
+});
+
 describe('#155 — envelope-result lockstep', () => {
   it('the MCP projection mirrors the API create-201 canonical field list exactly', async () => {
     // Cross-package, test-only import (excluded from both builds): if the API

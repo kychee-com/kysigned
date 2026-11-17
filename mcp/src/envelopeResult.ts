@@ -23,6 +23,7 @@ export const ENVELOPE_RESULT_FIELDS = [
   'callback_secret',
   'suggestion',
   'tracking',
+  'signer_warnings', // F-3.9 (#113) — per-signer domain heads-up; absent when none apply
 ] as const;
 
 /** Allowlist-project a create-envelope result body; absent fields stay absent. */
