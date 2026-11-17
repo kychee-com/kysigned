@@ -1978,3 +1978,69 @@ describe('credit-gate 402 discovery pointer (F-30.2 / AC-134 / AC-135)', () => {
     }
   });
 });
+
+describe('F-3.9 — the create carries signer_warnings (AC-312)', () => {
+  function setup(warn: Record<string, string[]>) {
+    const db = createMockDb();
+    const email = createMockEmailProvider();
+    const calls: string[][] = [];
+    const ctx = {
+      pool: db.pool,
+      emailProvider: email,
+      baseUrl: 'https://kysigned.com',
+      senderIdentity: 'creator@example.com',
+      signerDomainCheck: async (emails: string[]) => {
+        calls.push(emails);
+        return emails.filter((e) => warn[e]).map((e) => ({ email: e, warnings: warn[e] as never }));
+      },
+    };
+    return { db, email, calls, ctx };
+  }
+
+  it('a 201 names each affected signer (the self-sign row included) and its warnings; the status is unchanged', async () => {
+    const { ctx, calls, email } = setup({
+      'carol@mailinator.com': ['disposable'],
+      'creator@example.com': ['no_sender_protection'],
+    });
+    const r = await handleCreateEnvelope(ctx, {
+      document_name: 'NDA',
+      pdf_base64: TEST_FIXTURE_PDF_B64,
+      signers: [
+        { email: 'creator@example.com', name: 'Me' },
+        { email: 'alice@example.com', name: 'Alice' },
+        { email: 'carol@mailinator.com', name: 'Carol' },
+      ],
+    } as never);
+    assert.equal(r.status, 201);
+    assert.ok((r.body as Record<string, unknown>)['envelope_id']);
+    assert.deepEqual((r.body as Record<string, unknown>)['signer_warnings'], [
+      { email: 'creator@example.com', warnings: ['no_sender_protection'] },
+      { email: 'carol@mailinator.com', warnings: ['disposable'] },
+    ]);
+    assert.deepEqual(calls, [['creator@example.com', 'alice@example.com', 'carol@mailinator.com']]);
+    assert.equal(email.sent.filter((m) => /carol@mailinator\.com/.test(String(m.to))).length, 1, 'sent anyway');
+  });
+
+  it('no warnings → the field is absent', async () => {
+    const { ctx } = setup({});
+    const r = await handleCreateEnvelope(ctx, {
+      document_name: 'NDA',
+      pdf_base64: TEST_FIXTURE_PDF_B64,
+      signers: [{ email: 'alice@example.com', name: 'Alice' }],
+    } as never);
+    assert.equal(r.status, 201);
+    assert.equal('signer_warnings' in (r.body as object), false);
+  });
+
+  it('a refused create carries no signer_warnings and looks nothing up', async () => {
+    const { ctx, calls } = setup({ 'bob+x@mailinator.com': ['disposable'] });
+    const r = await handleCreateEnvelope(ctx, {
+      document_name: 'NDA',
+      pdf_base64: TEST_FIXTURE_PDF_B64,
+      signers: [{ email: 'bob+x@mailinator.com', name: 'Bob' }],
+    } as never);
+    assert.equal(r.status, 400);
+    assert.equal('signer_warnings' in (r.body as object), false);
+    assert.equal(calls.length, 0);
+  });
+});

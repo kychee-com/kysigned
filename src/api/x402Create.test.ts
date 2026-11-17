@@ -383,3 +383,16 @@ describe('defaultX402Seams — real creditUser + withCreateIdempotency compositi
     assert.equal((conflict.body as { code: string }).code, 'idempotency_key_reuse');
   });
 });
+
+describe('F-3.9 — the x402 create passes signer_warnings through (AC-312)', () => {
+  it('a 201 from the standard create keeps its signer_warnings beside the receipt', async () => {
+    const warnings = [{ email: 'signer@mailinator.com', warnings: ['disposable'] }];
+    const { seams } = recordingSeams({
+      runCreate: async () => ({ status: 201, body: { envelope_id: 'env-1', signer_warnings: warnings } }),
+    });
+    const r = await handleX402CreateEnvelope(CONFIG, PAYMENT, seams, { ...BODY });
+    assert.equal(r.status, 201);
+    assert.deepEqual((r.body as Record<string, unknown>)['signer_warnings'], warnings);
+    assert.ok((r.body as Record<string, unknown>)['payment']);
+  });
+});

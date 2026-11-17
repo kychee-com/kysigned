@@ -31,6 +31,7 @@
  * success (AC-33). The payment-provider TOP-UP that funds the ledger (checkout +
  * webhook keys) is the private `[service]` activation — not in this forkable wiring.
  */
+import { createSignerDomainChecker, createNodeResolver, type SignerDomainChecker } from '../api/signerDomainCheck.js';
 import type { DbPool } from '../db/pool.js';
 import type { EmailProvider } from '../email/types.js';
 import type { ApiContext } from '../api/envelope.js';
@@ -350,6 +351,9 @@ export interface AppDeps {
   /** F-36 — emit a business fact into the project's run402 event feed. The DD-43 seam: never throws, stable idempotency keys, ids-only payloads. */
   emitAppEvent: EmitAppEvent;
 
+  /** F-3.9 (#113) — the bounded signer-domain check (preflight, add/edit signer, the live endpoint). Absent = no check. */
+  signerDomainCheck?: SignerDomainChecker;
+
   /** #146 — bounded readiness probes for GET /v1/health?deep=1 (db + signing mailbox). */
   healthChecks: () => { checkDb: () => Promise<void>; checkMailbox: () => Promise<void> };
 
@@ -563,8 +567,13 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
   // disables every conversion enqueue.
   const adsUploadFunction = env.KYSIGNED_ADS_UPLOAD_FUNCTION?.trim() || undefined;
 
+  // F-3.9 (#113, DD-86) — the bounded signer-domain check: a fresh resolver per
+  // request (cancelled at the 2-second budget); only domains are resolved.
+  const signerDomainCheck = createSignerDomainChecker({ createResolver: createNodeResolver });
+
   const apiContext = (creatorEmail: string): ApiContext => ({
     pool,
+    signerDomainCheck, // F-3.9
     createRun: runtime.createRun,
     emitAppEvent: emitAppEventDep, // F-36
     internalGate, // F-36.6
@@ -821,6 +830,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     ...(x402 ? { x402 } : {}),
     ...(runtime.readPaymentContext ? { readPaymentContext: runtime.readPaymentContext } : {}),
     healthChecks,
+    signerDomainCheck, // F-3.9
     apiContext,
     authCtx,
     authMethods,

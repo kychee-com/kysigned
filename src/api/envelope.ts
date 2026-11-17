@@ -49,6 +49,7 @@ import { enqueueAdsConversion } from './adsConversions.js';
 import { setEnvelopeWebhook } from '../db/envelopeWebhooks.js';
 import type { CreateRun } from '../functions/runs.js';
 import { randomUUID, randomBytes } from 'node:crypto';
+import type { SignerDomainChecker, SignerWarning } from './signerDomainCheck.js';
 
 export interface CreateEnvelopeRequest {
   pdf_base64?: string;
@@ -110,6 +111,11 @@ export interface ApiContext {
   emitAppEvent?: EmitAppEvent;
   /** F-36.6 — the DD-49 internal-subject gate (suppresses internal emits). */
   internalGate?: InternalSubjectGate;
+  /**
+   * F-3.9 (#113, DD-86) — the bounded signer-domain check. Absent (forks, most
+   * tests, a caller over the per-source limit) = no check, no `signer_warnings`.
+   */
+  signerDomainCheck?: SignerDomainChecker;
   /**
    * F-9.9 / AC-124 — the bounded delivery-confirmation window for the undeliverable
    * backstop, as a run `delay` string (operator-config `KYSIGNED_DELIVERY_BACKSTOP_HOURS`,
@@ -186,6 +192,28 @@ export interface ApiContext {
  * bundle bounded so it stays deliverable (one embedded `.eml` per signer).
  */
 export const MAX_SIGNERS_PER_ENVELOPE = 20;
+
+/**
+ * F-3.9 — start the signer-domain check for a request that has PASSED
+ * validation. It never rejects (advice only); it settles within its own
+ * 2-second budget, so a request that awaits it waits no longer than that.
+ */
+function startSignerDomainCheck(
+  check: SignerDomainChecker | undefined,
+  emails: string[],
+): Promise<SignerWarning[]> {
+  if (!check) return Promise.resolve([]);
+  try {
+    return check(emails).catch(() => []);
+  } catch {
+    return Promise.resolve([]);
+  }
+}
+
+/** `{ signer_warnings }` when there are any, else nothing (the field is absent). */
+function signerWarningsField(warnings: SignerWarning[]): { signer_warnings?: SignerWarning[] } {
+  return warnings.length > 0 ? { signer_warnings: warnings } : {};
+}
 
 /**
  * Classify an outbound-send failure (2026-06-21 crash fix). A deliverability
@@ -436,6 +464,11 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
     }
     return { status: gate.status!, body: gateBody };
   }
+
+  // F-3.9 (DD-86) — every check above has passed: start the signer-domain
+  // check now, in parallel with the assembly and sends below, and attach its
+  // answer to the 201 only. It never fails the create.
+  const signerWarningsP = startSignerDomainCheck(ctx.signerDomainCheck, req.signers.map((s) => s.email));
 
   // Get source PDF bytes: `pdf_base64` was decoded + size-guarded above; the
   // `pdf_url` path fetches server-side here (the documented large-doc escape),
@@ -845,6 +878,7 @@ export async function handleCreateEnvelope(ctx: ApiContext, req: CreateEnvelopeR
       ...(callbackSecret ? { callback_secret: callbackSecret } : {}),
       ...(suggestion ? { suggestion } : {}),
       ...(tracking ? { tracking } : {}),
+      ...signerWarningsField(await signerWarningsP),
     },
   };
 }
@@ -1421,6 +1455,11 @@ export interface SignerEditCtx {
   storePdf?: (key: string, data: Uint8Array) => Promise<void>;
   deletePdf?: (key: string) => Promise<void>;
   getPdf?: (key: string) => Promise<Uint8Array | null>;
+  /**
+   * F-3.9 (#113, DD-86) — the bounded signer-domain check. Absent (forks, most
+   * tests, a caller over the per-source limit) = no check, no `signer_warnings`.
+   */
+  signerDomainCheck?: SignerDomainChecker;
 }
 
 /**
@@ -1636,8 +1675,12 @@ export async function handleAddSigner(
     await reactivateAwaitingSeal(ctx.pool, envelopeId);
   }
 
+  const signerWarningsP = startSignerDomainCheck(ctx.signerDomainCheck, [req.email]); // F-3.9
   const row = await addSignerCore(ctx, envelope, req);
-  return { status: 201, body: { email: row.email, name: row.name, status: row.status } };
+  return {
+    status: 201,
+    body: { email: row.email, name: row.name, status: row.status, ...signerWarningsField(await signerWarningsP) },
+  };
 }
 
 /**
@@ -1694,6 +1737,8 @@ export async function handleEditSigner(
       },
     ]);
     if (editIssue) return { status: 400, body: { code: editIssue.code, error: editIssue.message } };
+    // F-3.9 — a changed address is checked as the added signer (F-23.4).
+    const signerWarningsP = startSignerDomainCheck(ctx.signerDomainCheck, [newEmail]);
     await deleteSignerCore(ctx, envelope, current, true); // cancellation to the old address
     const added = await addSignerCore(ctx, envelope, {
       email: newEmail,
@@ -1701,7 +1746,16 @@ export async function handleEditSigner(
       on_behalf_of: (req.on_behalf_of === undefined ? current.on_behalf_of : req.on_behalf_of) ?? undefined,
       message: req.message,
     });
-    return { status: 200, body: { email: added.email, name: added.name, status: added.status, replaced: current.email } };
+    return {
+      status: 200,
+      body: {
+        email: added.email,
+        name: added.name,
+        status: added.status,
+        replaced: current.email,
+        ...signerWarningsField(await signerWarningsP),
+      },
+    };
   }
 
   // In-place edit: regenerate P_i, resend. A previously-signed signer is
@@ -1717,6 +1771,8 @@ export async function handleEditSigner(
     { email: current.email, name, on_behalf_of: on_behalf_of ?? undefined },
   ]);
   if (inPlaceIssue) return { status: 400, body: { code: inPlaceIssue.code, error: inPlaceIssue.message } };
+  // F-3.9 — an edit resends the request, so the signer's current address is checked.
+  const signerWarningsP = startSignerDomainCheck(ctx.signerDomainCheck, [current.email]);
   const { pdf, sentPdfHash } = await regenerateSignerPdf(ctx, envelope, {
     email: current.email,
     name,
@@ -1737,7 +1793,10 @@ export async function handleEditSigner(
     req.message,
     new Date(), // re-send → "(updated …)" subject marker so it doesn't thread under the original
   );
-  return { status: 200, body: { email: updated.email, name: updated.name, status: updated.status } };
+  return {
+    status: 200,
+    body: { email: updated.email, name: updated.name, status: updated.status, ...signerWarningsField(await signerWarningsP) },
+  };
 }
 
 /** F-23.3 — delete a signer from an open envelope + email them a cancellation. */

@@ -17,6 +17,7 @@ import { isUploadTooLarge, uploadTooLargeMessage } from './uploadGuard.js';
 import { decodePdfBase64 } from '../pdf/hash.js';
 import { isPdfParseable } from '../pdf/validate.js';
 import type { DbPool } from '../db/pool.js';
+import type { SignerDomainChecker } from './signerDomainCheck.js';
 
 export interface PreflightResult {
   status: number;
@@ -25,7 +26,16 @@ export interface PreflightResult {
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-export async function handleCreatePreflight(body: Record<string, unknown>, pool?: DbPool): Promise<PreflightResult> {
+export interface PreflightOpts {
+  /** F-3.9 — the signer-domain check; absent (or the caller over its limit) = no check. */
+  signerDomainCheck?: SignerDomainChecker;
+}
+
+export async function handleCreatePreflight(
+  body: Record<string, unknown>,
+  pool?: DbPool,
+  opts: PreflightOpts = {},
+): Promise<PreflightResult> {
   // creator_email is OPTIONAL here (a keyed/session create supplies none); when
   // present it must be deliverable — same shape the x402 create requires.
   const rawEmail = body['creator_email'];
@@ -101,5 +111,22 @@ export async function handleCreatePreflight(body: Record<string, unknown>, pool?
 
   // With an intent key, say explicitly that no envelope exists for it yet —
   // the caller uses this to decide "safe to pay".
-  return { status: 200, body: { ok: true, ...(intentKey ? { already_created: false } : {}) } };
+  // F-3.9 (DD-86) — the request passed validation: report each signer's
+  // domain warnings (advice, never a block; absent when none apply).
+  let signerWarnings: Awaited<ReturnType<SignerDomainChecker>> = [];
+  if (opts.signerDomainCheck) {
+    try {
+      signerWarnings = await opts.signerDomainCheck((signers as Array<{ email: string }>).map((s) => s.email));
+    } catch {
+      signerWarnings = [];
+    }
+  }
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      ...(intentKey ? { already_created: false } : {}),
+      ...(signerWarnings.length > 0 ? { signer_warnings: signerWarnings } : {}),
+    },
+  };
 }

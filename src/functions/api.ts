@@ -263,6 +263,7 @@ function signerEditCtx(deps: RequestDeps): SignerEditCtx {
     getPdf: deps.getPdf,
     storePdf: deps.storePdf,
     deletePdf: deps.deletePdf,
+    ...(deps.signerDomainCheck ? { signerDomainCheck: deps.signerDomainCheck } : {}), // F-3.9
   };
 }
 

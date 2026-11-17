@@ -455,3 +455,75 @@ describe('F-23 recipient editing — creator-scoping', () => {
     assert.equal((await handleDeleteSigner(ctx, 'env-1', 'intruder@evil.com', 'alice@x.com')).status, 403);
   });
 });
+
+describe('F-3.9 — add-signer / edit-signer carry signer_warnings (AC-312)', () => {
+  function withChecker(ctx: SignerEditCtx, warn: Record<string, string[]>) {
+    const calls: string[][] = [];
+    ctx.signerDomainCheck = async (emails: string[]) => {
+      calls.push(emails);
+      return emails.filter((e) => warn[e]).map((e) => ({ email: e, warnings: warn[e] as never }));
+    };
+    return calls;
+  }
+
+  it('an added signer with a warning: 201 as before, plus signer_warnings', async () => {
+    const { pool } = mockDb('active', [signer({ email: 'alice@x.com', name: 'Alice', status: 'pending' })]);
+    const ctx = ctxFor(pool, mockEmail(), mockStorage());
+    const calls = withChecker(ctx, { 'carol@mailinator.com': ['disposable'] });
+    const res = await handleAddSigner(ctx, 'env-1', CREATOR, { email: 'carol@mailinator.com', name: 'Carol' });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.email, 'carol@mailinator.com');
+    assert.deepEqual(res.body.signer_warnings, [{ email: 'carol@mailinator.com', warnings: ['disposable'] }]);
+    assert.deepEqual(calls, [['carol@mailinator.com']]);
+  });
+
+  it('an added signer without warnings: no field', async () => {
+    const { pool } = mockDb('active', [signer({ email: 'alice@x.com', name: 'Alice', status: 'pending' })]);
+    const ctx = ctxFor(pool, mockEmail(), mockStorage());
+    withChecker(ctx, {});
+    const res = await handleAddSigner(ctx, 'env-1', CREATOR, { email: 'carol@x.com', name: 'Carol' });
+    assert.equal(res.status, 201);
+    assert.equal('signer_warnings' in res.body, false);
+  });
+
+  it('a refused add carries no signer_warnings and looks nothing up', async () => {
+    const { pool } = mockDb('active', [signer({ email: 'alice@x.com', name: 'Alice', status: 'pending' })]);
+    const ctx = ctxFor(pool, mockEmail(), mockStorage());
+    const calls = withChecker(ctx, { 'bob+tag@x.com': ['disposable'] });
+    const res = await handleAddSigner(ctx, 'env-1', CREATOR, { email: 'bob+tag@x.com', name: 'Bob' });
+    assert.equal(res.status, 400);
+    assert.equal('signer_warnings' in res.body, false);
+    assert.equal(calls.length, 0);
+  });
+
+  it('an in-place edit checks the signer\'s current address', async () => {
+    const { pool } = mockDb('active', [signer({ email: 'alice@small.test', name: 'Alice', status: 'pending' })]);
+    const ctx = ctxFor(pool, mockEmail(), mockStorage());
+    const calls = withChecker(ctx, { 'alice@small.test': ['no_sender_protection'] });
+    const res = await handleEditSigner(ctx, 'env-1', CREATOR, 'alice@small.test', { name: 'Alice Smith' });
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.signer_warnings, [{ email: 'alice@small.test', warnings: ['no_sender_protection'] }]);
+    assert.deepEqual(calls, [['alice@small.test']]);
+  });
+
+  it('an email change checks the NEW address (the added signer)', async () => {
+    const { pool } = mockDb('active', [signer({ email: 'alice@x.com', name: 'Alice', status: 'pending' })]);
+    const ctx = ctxFor(pool, mockEmail(), mockStorage());
+    const calls = withChecker(ctx, { 'alice@x.com': ['disposable'], 'alice2@mailinator.com': ['disposable'] });
+    const res = await handleEditSigner(ctx, 'env-1', CREATOR, 'alice@x.com', { new_email: 'alice2@mailinator.com' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.replaced, 'alice@x.com');
+    assert.deepEqual(res.body.signer_warnings, [{ email: 'alice2@mailinator.com', warnings: ['disposable'] }]);
+    assert.deepEqual(calls, [['alice2@mailinator.com']]);
+  });
+
+  it('a refused email change carries no signer_warnings', async () => {
+    const { pool } = mockDb('active', [signer({ email: 'alice@x.com', name: 'Alice', status: 'pending' })]);
+    const ctx = ctxFor(pool, mockEmail(), mockStorage());
+    const calls = withChecker(ctx, { 'alice+x@x.com': ['disposable'] });
+    const res = await handleEditSigner(ctx, 'env-1', CREATOR, 'alice@x.com', { new_email: 'alice+x@x.com' });
+    assert.equal(res.status, 400);
+    assert.equal('signer_warnings' in res.body, false);
+    assert.equal(calls.length, 0);
+  });
+});

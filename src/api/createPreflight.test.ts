@@ -214,3 +214,59 @@ describe('preflight ↔ create parity (AC-142)', () => {
     });
   }
 });
+
+describe('F-3.9 — the preflight carries signer_warnings (AC-312)', () => {
+  function recordingChecker(warn: Record<string, string[]>) {
+    const calls: string[][] = [];
+    const check = async (emails: string[]) => {
+      calls.push(emails);
+      return emails.filter((e) => warn[e]).map((e) => ({ email: e, warnings: warn[e] as never }));
+    };
+    return { calls, check };
+  }
+
+  it('an ok preflight names each affected signer and its warnings', async () => {
+    const { calls, check } = recordingChecker({ 'x@mailinator.com': ['disposable'] });
+    const r = await handleCreatePreflight(
+      { ...OK, signers: [{ email: 'signer@example.com', name: 'S' }, { email: 'x@mailinator.com', name: 'X' }] },
+      undefined,
+      { signerDomainCheck: check },
+    );
+    assert.equal(r.status, 200);
+    assert.equal((r.body as { ok: boolean }).ok, true);
+    assert.deepEqual((r.body as Record<string, unknown>)['signer_warnings'], [
+      { email: 'x@mailinator.com', warnings: ['disposable'] },
+    ]);
+    assert.deepEqual(calls, [['signer@example.com', 'x@mailinator.com']]);
+  });
+
+  it('a cannot-receive signer is still ok (advice, never a block)', async () => {
+    const { check } = recordingChecker({ 'a@nullmx.test': ['cannot_receive'] });
+    const r = await handleCreatePreflight({ ...OK, signers: [{ email: 'a@nullmx.test', name: 'A' }] }, undefined, {
+      signerDomainCheck: check,
+    });
+    assert.equal(r.status, 200);
+    assert.deepEqual((r.body as Record<string, unknown>)['signer_warnings'], [
+      { email: 'a@nullmx.test', warnings: ['cannot_receive'] },
+    ]);
+  });
+
+  it('no warnings → the field is absent', async () => {
+    const { check } = recordingChecker({});
+    const r = await handleCreatePreflight({ ...OK }, undefined, { signerDomainCheck: check });
+    assert.equal(r.status, 200);
+    assert.equal('signer_warnings' in (r.body as object), false);
+  });
+
+  it('a refused preflight carries no signer_warnings and looks nothing up', async () => {
+    const { calls, check } = recordingChecker({ 'agent-smoke+signer@kychee.com': ['disposable'] });
+    const r = await handleCreatePreflight(
+      { ...OK, signers: [{ email: 'agent-smoke+signer@kychee.com', name: 'S' }] },
+      undefined,
+      { signerDomainCheck: check },
+    );
+    assert.equal(r.status, 400);
+    assert.equal('signer_warnings' in (r.body as object), false);
+    assert.equal(calls.length, 0);
+  });
+});
