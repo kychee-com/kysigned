@@ -417,3 +417,121 @@ describe('the ceremony gate write is rate-limited per source (F-031, AC-243)', (
     assert.equal((await handleCreateCeremonyPendingSend(c, VALID_BODY)).status, 200);
   });
 });
+
+describe('F-3.8 (#163) — the message to signers and the expiry through the door (DD-82, DD-83)', () => {
+  const callsOf = (fn: unknown) => (fn as ReturnType<typeof mock.fn>).mock.calls;
+
+  it('a gate write stores the message and a preset expiry', async () => {
+    const c = ctx();
+    const res = await handleCreatePendingSend(c, { ...VALID_BODY, message: 'Please sign by Friday.', expiry_days: 14 });
+    assert.equal(res.status, 200);
+    const stored = callsOf(c.store.create)[0]!.arguments[1] as Record<string, unknown>;
+    assert.equal(stored.message, 'Please sign by Friday.');
+    assert.equal(stored.expiryDays, 14);
+  });
+
+  it('the ceremony gate write stores them the same way', async () => {
+    const c = ctx();
+    (c.store as unknown as Record<string, unknown>).createCeremony = mock.fn(async () => 'ps_c');
+    const res = await handleCreateCeremonyPendingSend(c, { ...VALID_BODY, message: 'Hi', expiry_days: 60 });
+    assert.equal(res.status, 200);
+    const stored = callsOf(c.store.createCeremony)[0]!.arguments[0] as Record<string, unknown>;
+    assert.equal(stored.message, 'Hi');
+    assert.equal(stored.expiryDays, 60);
+  });
+
+  it('a draft without them stores neither (the create then applies its 30-day default)', async () => {
+    const c = ctx();
+    await handleCreatePendingSend(c, VALID_BODY);
+    const stored = callsOf(c.store.create)[0]!.arguments[1] as Record<string, unknown>;
+    assert.equal('message' in stored, false);
+    assert.equal('expiryDays' in stored, false);
+  });
+
+  it('a whitespace-only message is stored as no message', async () => {
+    const c = ctx();
+    await handleCreatePendingSend(c, { ...VALID_BODY, message: '   \n ' });
+    const stored = callsOf(c.store.create)[0]!.arguments[1] as Record<string, unknown>;
+    assert.equal('message' in stored, false);
+  });
+
+  for (const bad of [0, 45, -7, 7.5, '14', 365, null]) {
+    it(`an expiry of ${JSON.stringify(bad)} is refused with validation_draft and nothing stored`, async () => {
+      const c = ctx();
+      const res = await handleCreatePendingSend(c, { ...VALID_BODY, expiry_days: bad });
+      assert.equal(res.status, 400);
+      assert.equal((res.body as { code?: string }).code, 'validation_draft');
+      assert.equal(callsOf(c.store.create).length, 0);
+      assert.equal(callsOf(c.store.putBlob).length, 0);
+    });
+  }
+
+  it('a non-string message is refused with validation_draft and nothing stored', async () => {
+    const c = ctx();
+    const res = await handleCreatePendingSend(c, { ...VALID_BODY, message: 42 });
+    assert.equal(res.status, 400);
+    assert.equal((res.body as { code?: string }).code, 'validation_draft');
+    assert.equal(callsOf(c.store.create).length, 0);
+  });
+
+  it('every preset is accepted', async () => {
+    for (const days of [7, 14, 30, 60, 90]) {
+      const c = ctx();
+      const res = await handleCreatePendingSend(c, { ...VALID_BODY, expiry_days: days });
+      assert.equal(res.status, 200, `${days} days`);
+    }
+  });
+
+  it('the restore view returns both, and omits them when the draft has none', async () => {
+    const withBoth = ctx();
+    (withBoth.store.get as ReturnType<typeof mock.fn>).mock.mockImplementation(async () => record({ message: 'Hi', expiryDays: 90 }));
+    const res = await handleGetPendingSend(withBoth, HANDLE);
+    assert.equal((res.body as Record<string, unknown>).message, 'Hi');
+    assert.equal((res.body as Record<string, unknown>).expiry_days, 90);
+
+    const none = await handleGetPendingSend(ctx(), HANDLE);
+    assert.equal('message' in none.body, false);
+    assert.equal('expiry_days' in none.body, false);
+  });
+
+  it('an edit sets either; an empty or whitespace message CLEARS it; a bad expiry is refused', async () => {
+    const c = ctx();
+    let res = await handlePatchPendingSend(c, HANDLE, { message: 'Changed', expiry_days: 7 });
+    assert.equal(res.status, 200);
+    assert.deepEqual(
+      { message: (callsOf(c.store.update)[0]!.arguments[1] as Record<string, unknown>).message, expiryDays: (callsOf(c.store.update)[0]!.arguments[1] as Record<string, unknown>).expiryDays },
+      { message: 'Changed', expiryDays: 7 },
+    );
+
+    res = await handlePatchPendingSend(c, HANDLE, { message: '  ' });
+    assert.equal(res.status, 200);
+    assert.equal((callsOf(c.store.update)[1]!.arguments[1] as Record<string, unknown>).message, null, 'cleared, not left as stored');
+
+    res = await handlePatchPendingSend(c, HANDLE, { auto_close: false });
+    assert.equal('message' in (callsOf(c.store.update)[2]!.arguments[1] as Record<string, unknown>), false, 'an edit that does not mention the message leaves it');
+
+    res = await handlePatchPendingSend(c, HANDLE, { expiry_days: 45 });
+    assert.equal(res.status, 400);
+    assert.equal((res.body as { code?: string }).code, 'validation_draft');
+    assert.equal(callsOf(c.store.update).length, 3, 'a refused edit writes nothing');
+  });
+
+  it('the claim hands the create EXACTLY the draft: message and expiry_days included', async () => {
+    const c = ctx();
+    (c.store.claim as ReturnType<typeof mock.fn>).mock.mockImplementation(
+      async () => ({ outcome: 'claimed', record: record({ message: 'Please sign', expiryDays: 14 }) }),
+    );
+    await handleClaimPendingSend(c, HANDLE, 'creator@example.com');
+    const body = callsOf(c.createEnvelope)[0]!.arguments[1] as Record<string, unknown>;
+    assert.equal(body.message, 'Please sign');
+    assert.equal(body.expiry_days, 14);
+  });
+
+  it('a claimed draft without them sends a create body with neither key', async () => {
+    const c = ctx();
+    await handleClaimPendingSend(c, HANDLE, 'creator@example.com');
+    const body = callsOf(c.createEnvelope)[0]!.arguments[1] as Record<string, unknown>;
+    assert.equal('message' in body, false);
+    assert.equal('expiry_days' in body, false);
+  });
+});

@@ -122,9 +122,61 @@ function readSigners(value: unknown): PendingSigner[] | null {
   return out;
 }
 
+/**
+ * F-3.8 (#163, DD-83) — the editor's whole expiry choice set. The door stores only
+ * what the editor can produce; API and MCP callers keep the free `expiry_days`.
+ */
+export const EDITOR_EXPIRY_PRESETS: readonly number[] = [7, 14, 30, 60, 90];
+
+/** The two optional envelope settings a draft may carry (F-3.8). */
+interface DraftSettings {
+  message?: string;
+  expiryDays?: number;
+}
+
+/**
+ * Read `message` / `expiry_days` from a request body. `message` comes back as
+ * `undefined` (not mentioned), `null` (mentioned but blank — clears on an edit,
+ * absent on a create) or the text. `null` overall means the body is invalid.
+ */
+function readSettings(body: Record<string, unknown>): { message: string | null | undefined; expiryDays: number | undefined } | null {
+  let message: string | null | undefined;
+  if (body.message !== undefined) {
+    if (typeof body.message !== 'string') return null;
+    message = body.message.trim() === '' ? null : body.message;
+  }
+  let expiryDays: number | undefined;
+  if (body.expiry_days !== undefined) {
+    if (typeof body.expiry_days !== 'number' || !EDITOR_EXPIRY_PRESETS.includes(body.expiry_days)) return null;
+    expiryDays = body.expiry_days;
+  }
+  return { message, expiryDays };
+}
+
+const INVALID_SETTINGS: PendingSendResult = {
+  status: 400,
+  body: {
+    error: `The message must be text and the expiry one of ${EDITOR_EXPIRY_PRESETS.join(', ')} days`,
+    code: 'validation_draft',
+  },
+};
+
 /** The create body a draft becomes. One shape, used by preflight AND by the claim. */
-function toCreateBody(documentName: string, signers: PendingSigner[], autoClose: boolean, pdfBase64: string) {
-  return { document_name: documentName, pdf_base64: pdfBase64, signers, auto_close: autoClose };
+function toCreateBody(
+  documentName: string,
+  signers: PendingSigner[],
+  autoClose: boolean,
+  pdfBase64: string,
+  settings: DraftSettings = {},
+) {
+  return {
+    document_name: documentName,
+    pdf_base64: pdfBase64,
+    signers,
+    auto_close: autoClose,
+    ...(settings.message !== undefined ? { message: settings.message } : {}),
+    ...(settings.expiryDays !== undefined ? { expiry_days: settings.expiryDays } : {}),
+  };
 }
 
 /** The shared door: shape + preflight validation, nothing stored on failure. */
@@ -133,7 +185,7 @@ async function validateDraftBody(
   body: Record<string, unknown>,
 ): Promise<
   | { ok: false; result: PendingSendResult }
-  | { ok: true; documentName: string; signers: PendingSigner[]; autoClose: boolean; bytes: Uint8Array }
+  | { ok: true; documentName: string; signers: PendingSigner[]; autoClose: boolean; settings: DraftSettings; bytes: Uint8Array }
 > {
   const documentName = typeof body.document_name === 'string' ? body.document_name.trim() : '';
   const pdfBase64 = typeof body.pdf_base64 === 'string' ? body.pdf_base64 : '';
@@ -142,6 +194,12 @@ async function validateDraftBody(
   if (!documentName || !pdfBase64 || !signers || signers.length === 0) {
     return { ok: false, result: { status: 400, body: { error: 'A document, a name and at least one signer are required', code: 'validation_draft' } } };
   }
+  const read = readSettings(body);
+  if (!read) return { ok: false, result: INVALID_SETTINGS };
+  const settings: DraftSettings = {
+    ...(typeof read.message === 'string' ? { message: read.message } : {}),
+    ...(read.expiryDays !== undefined ? { expiryDays: read.expiryDays } : {}),
+  };
 
   let bytes: Uint8Array;
   try {
@@ -156,12 +214,12 @@ async function validateDraftBody(
   // The same deterministic validation a guest Send already runs. Nothing is
   // stored until it passes, so an invalid draft never becomes a record.
   const preflight = await handleCreatePreflight(
-    toCreateBody(documentName, signers, autoClose, pdfBase64),
+    toCreateBody(documentName, signers, autoClose, pdfBase64, settings),
     ctx.pool,
   );
   if (preflight.status !== 200) return { ok: false, result: { status: preflight.status, body: preflight.body as Record<string, unknown> } };
 
-  return { ok: true, documentName, signers, autoClose, bytes };
+  return { ok: true, documentName, signers, autoClose, settings, bytes };
 }
 
 const TOO_MANY_PENDING: PendingSendResult = {
@@ -197,6 +255,7 @@ export async function handleCreatePendingSend(
     byteCount: draft.bytes.byteLength,
     signers: draft.signers,
     autoClose: draft.autoClose,
+    ...draft.settings,
   });
   return { status: 200, body: { draft_id: id } };
 }
@@ -229,6 +288,7 @@ export async function handleCreateCeremonyPendingSend(
     byteCount: draft.bytes.byteLength,
     signers: draft.signers,
     autoClose: draft.autoClose,
+    ...draft.settings,
   });
   return { status: 200, body: { draft_id: id } };
 }
@@ -260,6 +320,8 @@ export async function handleGetPendingSend(ctx: PendingSendCtx, handle: string):
       byte_count: found.byteCount,
       signers: found.signers,
       auto_close: found.autoClose,
+      ...(found.message !== undefined ? { message: found.message } : {}),
+      ...(found.expiryDays !== undefined ? { expiry_days: found.expiryDays } : {}),
       claimed: found.claimedAt !== null,
       ...(found.claimedEnvelopeId ? { envelope_id: found.claimedEnvelopeId } : {}),
       expires_at: found.expiresAt.toISOString(),
@@ -286,6 +348,8 @@ export async function handlePatchPendingSend(
   if (documentName === '' ) {
     return { status: 400, body: { error: 'Please enter a document name', code: 'validation_document_name' } };
   }
+  const settings = readSettings(body);
+  if (!settings) return INVALID_SETTINGS;
 
   // An edit is a draft too: run it through the same validation, so a correction
   // cannot smuggle an address past the rules the original had to satisfy. The
@@ -308,6 +372,9 @@ export async function handlePatchPendingSend(
     ...(documentName !== undefined ? { documentName } : {}),
     ...(signers ? { signers } : {}),
     ...(autoClose !== undefined ? { autoClose } : {}),
+    // F-3.8: a blank message CLEARS it (null); an unmentioned one is left alone.
+    ...(settings.message !== undefined ? { message: settings.message } : {}),
+    ...(settings.expiryDays !== undefined ? { expiryDays: settings.expiryDays } : {}),
   };
   const updated = await ctx.store.update(parts.id, patch, parts.secret);
   if (!updated) {
@@ -377,7 +444,10 @@ async function finishClaim(
     if (!bytes) throw new Error(`pending send ${id} lost its document`);
     result = await ctx.createEnvelope(
       record.boundEmail,
-      toCreateBody(record.documentName, record.signers, record.autoClose, Buffer.from(bytes).toString('base64')),
+      toCreateBody(record.documentName, record.signers, record.autoClose, Buffer.from(bytes).toString('base64'), {
+        ...(record.message !== undefined ? { message: record.message } : {}),
+        ...(record.expiryDays !== undefined ? { expiryDays: record.expiryDays } : {}),
+      }),
     );
   } catch (err) {
     // The claim is only worth holding if it produced an envelope. It did not, so

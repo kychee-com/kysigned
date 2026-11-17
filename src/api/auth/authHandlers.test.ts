@@ -562,7 +562,9 @@ describe('handleAuthTokenExchange — new-account trial credit (F-13.4 / F-18.4)
 // ── F-37 / AC-206 — attribution rider + bind-at-establishment (65.3) ─────────
 describe('attribution — magic-link rider persists a pending capture', () => {
   const okSend = fetchImpl({ status: 200, body: {} });
-  const FRESH_AT = '2026-07-18T09:30:00.000Z';
+  // Relative to now: a fixed date ages out of the click window and the rider is
+  // (correctly) dropped as stale. The fixed 2026-07-18 failed from mid-October.
+  const FRESH_AT = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
   function attributionPool() {
     const inserts: unknown[][] = [];

@@ -83,6 +83,20 @@ export interface PendingSendDraft {
   byteCount: number;
   signers: PendingSigner[];
   autoClose: boolean;
+  /** F-3.8 (#163) — the envelope-wide message to signers; absent = none. */
+  message?: string;
+  /** F-3.8 (#163) — the chosen expiry in days; absent = the create's default. */
+  expiryDays?: number;
+}
+
+/** The one shape of the `draft` JSONB column (DD-82). Absent settings stay absent. */
+function draftJson(draft: PendingSendDraft): Record<string, unknown> {
+  return {
+    signers: draft.signers,
+    auto_close: draft.autoClose,
+    ...(draft.message !== undefined ? { message: draft.message } : {}),
+    ...(draft.expiryDays !== undefined ? { expiry_days: draft.expiryDays } : {}),
+  };
 }
 
 export interface PendingSendRecord extends PendingSendDraft {
@@ -124,8 +138,12 @@ function toRecord(row: Row): PendingSendRecord {
   const draft = (typeof row.draft === 'string' ? JSON.parse(row.draft) : row.draft) as {
     signers?: PendingSigner[];
     auto_close?: boolean;
+    message?: string | null;
+    expiry_days?: number | null;
   } | null;
   return {
+    ...(typeof draft?.message === 'string' ? { message: draft.message } : {}),
+    ...(typeof draft?.expiry_days === 'number' ? { expiryDays: draft.expiry_days } : {}),
     id: row.id,
     boundEmail: row.bound_email,
     documentName: row.document_name,
@@ -161,7 +179,7 @@ export async function createPendingSend(
       draft.documentName,
       draft.storageKey,
       draft.byteCount,
-      JSON.stringify({ signers: draft.signers, auto_close: draft.autoClose }),
+      JSON.stringify(draftJson(draft)),
       expiresAt.toISOString(),
       hashRestoreSecret(secret),
     ],
@@ -198,7 +216,7 @@ export async function createCeremonyPendingSend(
       draft.documentName,
       draft.storageKey,
       draft.byteCount,
-      JSON.stringify({ signers: draft.signers, auto_close: draft.autoClose }),
+      JSON.stringify(draftJson(draft)),
       expiresAt.toISOString(),
       hashRestoreSecret(secret),
     ],
@@ -252,6 +270,9 @@ export interface PendingSendPatch {
   documentName?: string;
   signers?: PendingSigner[];
   autoClose?: boolean;
+  /** A string sets the message; `null` clears it; absent leaves it as stored. */
+  message?: string | null;
+  expiryDays?: number;
 }
 
 /**
@@ -272,7 +293,11 @@ export async function updatePendingSendDraft(
         SET document_name = COALESCE($2, document_name),
             draft = jsonb_build_object(
               'signers', COALESCE($3::jsonb, draft->'signers'),
-              'auto_close', COALESCE($4::boolean, (draft->>'auto_close')::boolean)
+              'auto_close', COALESCE($4::boolean, (draft->>'auto_close')::boolean),
+              -- F-3.8 (DD-82): the rebuild must CARRY these, or any edit drops them.
+              'message', CASE WHEN $7::boolean THEN NULL
+                              ELSE COALESCE($8::text, draft->>'message') END,
+              'expiry_days', COALESCE($9::int, (draft->>'expiry_days')::int)
             )
       WHERE id = $1
         AND claimed_at IS NULL
@@ -285,6 +310,9 @@ export async function updatePendingSendDraft(
       patch.autoClose ?? null,
       now.toISOString(),
       hashRestoreSecret(secret),
+      patch.message === null,
+      typeof patch.message === 'string' ? patch.message : null,
+      patch.expiryDays ?? null,
     ],
   );
   return (result.rowCount ?? 0) > 0;

@@ -366,3 +366,88 @@ describe('ceremony-bound pending sends (F-41.6 / DD-59) — bound at CLAIM, not 
     assert.equal(result.outcome, 'expired');
   });
 });
+
+describe('F-3.8 (#163) — the message to signers and the expiry ride the draft JSON (DD-82)', () => {
+  const WITH_SETTINGS = { ...DRAFT, message: 'Please sign by Friday.', expiryDays: 14 };
+
+  it('createPendingSend stores both in the draft JSON, beside auto_close', async () => {
+    const { pool, queries } = capturePool(() => ({ rows: [row()], rowCount: 1 }));
+    await createPendingSend(pool, 'creator@example.com', WITH_SETTINGS);
+    const insert = queries.find((q) => q.text.includes('INSERT INTO pending_sends'))!;
+    const draft = JSON.parse(insert.values[5] as string) as Record<string, unknown>;
+    assert.equal(draft.message, 'Please sign by Friday.');
+    assert.equal(draft.expiry_days, 14);
+    assert.equal(draft.auto_close, true);
+  });
+
+  it('createCeremonyPendingSend stores both too (the Google gate holds the same draft)', async () => {
+    const { pool, queries } = capturePool(() => ({ rows: [row()], rowCount: 1 }));
+    await createCeremonyPendingSend(pool, WITH_SETTINGS);
+    const insert = queries.find((q) => q.text.includes('INSERT INTO pending_sends'))!;
+    const draft = JSON.parse(insert.values[5] as string) as Record<string, unknown>;
+    assert.equal(draft.message, 'Please sign by Friday.');
+    assert.equal(draft.expiry_days, 14);
+  });
+
+  it('a draft without them stores neither key', async () => {
+    const { pool, queries } = capturePool(() => ({ rows: [row()], rowCount: 1 }));
+    await createPendingSend(pool, 'creator@example.com', DRAFT);
+    const insert = queries.find((q) => q.text.includes('INSERT INTO pending_sends'))!;
+    const draft = JSON.parse(insert.values[5] as string) as Record<string, unknown>;
+    assert.equal('message' in draft, false);
+    assert.equal('expiry_days' in draft, false);
+  });
+
+  it('getPendingSend reads both back; a stored null or a missing key reads as absent', async () => {
+    const withBoth = capturePool(() => ({
+      rows: [row({ draft: { signers: DRAFT.signers, auto_close: true, message: 'Hi', expiry_days: 60 } })],
+      rowCount: 1,
+    }));
+    const found = await getPendingSend(withBoth.pool, 'ps_1', SECRET);
+    assert.equal(found?.message, 'Hi');
+    assert.equal(found?.expiryDays, 60);
+
+    const cleared = capturePool(() => ({
+      rows: [row({ draft: JSON.stringify({ signers: DRAFT.signers, auto_close: true, message: null, expiry_days: null }) })],
+      rowCount: 1,
+    }));
+    const none = await getPendingSend(cleared.pool, 'ps_1', SECRET);
+    assert.equal(none?.message, undefined);
+    assert.equal(none?.expiryDays, undefined);
+
+    const old = capturePool(() => ({ rows: [row()], rowCount: 1 }));
+    const legacy = await getPendingSend(old.pool, 'ps_1', SECRET);
+    assert.equal(legacy?.message, undefined, 'a draft stored before #163 has no message');
+    assert.equal(legacy?.expiryDays, undefined, 'and the default expiry');
+  });
+
+  it('an edit REBUILDS the draft with both keys carried, so a signer fix never drops them', async () => {
+    const { pool, queries } = capturePool(() => ({ rows: [row()], rowCount: 1 }));
+    await updatePendingSendDraft(pool, 'ps_1', { signers: [{ email: 'b@example.com', name: 'B' }] }, SECRET);
+    const update = queries.find((q) => q.text.includes('UPDATE pending_sends'))!;
+    const setClause = update.text.split('WHERE')[0]!;
+    assert.match(setClause, /'message'/, 'the rebuilt draft keeps the message key');
+    assert.match(setClause, /'expiry_days'/, 'the rebuilt draft keeps the expiry key');
+    assert.match(setClause, /draft->>'message'/, 'an untouched message is carried from the stored draft');
+    assert.match(setClause, /draft->>'expiry_days'/, 'an untouched expiry is carried from the stored draft');
+  });
+
+  it('an edit can set both, and can CLEAR the message (null), as values not SQL text', async () => {
+    const set = capturePool(() => ({ rows: [row()], rowCount: 1 }));
+    await updatePendingSendDraft(set.pool, 'ps_1', { message: 'New note', expiryDays: 90 }, SECRET);
+    const u1 = set.queries.find((q) => q.text.includes('UPDATE pending_sends'))!;
+    assert.ok(u1.values.includes('New note'));
+    assert.ok(u1.values.includes(90));
+    assert.ok(!u1.text.includes('New note'), 'the message is a bound parameter, never spliced into SQL');
+
+    const clear = capturePool(() => ({ rows: [row()], rowCount: 1 }));
+    await updatePendingSendDraft(clear.pool, 'ps_1', { message: null }, SECRET);
+    const u2 = clear.queries.find((q) => q.text.includes('UPDATE pending_sends'))!;
+    assert.ok(u2.values.includes(true), 'a clear-message flag is passed when the patch says null');
+
+    const keep = capturePool(() => ({ rows: [row()], rowCount: 1 }));
+    await updatePendingSendDraft(keep.pool, 'ps_1', { documentName: 'x' }, SECRET);
+    const u3 = keep.queries.find((q) => q.text.includes('UPDATE pending_sends'))!;
+    assert.ok(!u3.values.includes(true), 'no clear flag when the patch does not mention the message');
+  });
+});
