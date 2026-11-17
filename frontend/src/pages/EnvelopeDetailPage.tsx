@@ -3,6 +3,8 @@ import { useParams, useLocation, useNavigate, Link } from 'react-router-dom'
 import { apiGet, apiPost, apiPatch, apiDelete, type EnvelopeStatus } from '../lib/api'
 import { trackEventOnce, GA_EVENTS } from '../lib/analytics'
 import { rejectionGuidance } from '../lib/rejectionCopy'
+import { useSignerDomainWarnings } from '../lib/signerDomainWarnings'
+import { SignerDomainWarning } from '../components/SignerDomainWarning'
 
 // FC32.1 (UX-039/UX-040/UX-041): the ONE tap-target token every control on this page
 // carries, in every state (open, add form, edit form, manual seal, finalizing). 44x44
@@ -39,6 +41,8 @@ export function EnvelopeDetailPage() {
   const [addForm, setAddForm] = useState({ email: '', name: '', onBehalf: false, onBehalfOf: '' })
   const [editEmail, setEditEmail] = useState<string | null>(null)
   const [editForm, setEditForm] = useState({ name: '', onBehalf: false, onBehalfOf: '', newEmail: '' })
+  // F-3.9 (#113, DD-87) — the add-signer / edit-signer heads-up about an address's domain.
+  const domainWarnings = useSignerDomainWarnings()
 
   useEffect(() => {
     apiGet<EnvelopeStatus>(`/v1/envelope/${id}`).then((envelope) => {
@@ -134,6 +138,7 @@ export function EnvelopeDetailPage() {
   // F-23.1/2 — start editing a signer (prefill from the current row).
   const startEdit = (s: EnvelopeStatus['signers'][number]) => {
     setEditEmail(s.email)
+    domainWarnings.check(s.email) // F-3.9 — an edit resends to the current address
     setEditForm({ name: s.name, onBehalf: !!s.on_behalf_of, onBehalfOf: s.on_behalf_of ?? '', newEmail: s.email })
   }
 
@@ -285,8 +290,10 @@ export function EnvelopeDetailPage() {
                      className={`${TAP_TARGET} w-full border border-gray-300 rounded-lg px-3 py-2 text-sm`} />
               <input type="email" placeholder="email@example.com" value={addForm.email}
                      onChange={(e) => setAddForm({ ...addForm, email: e.target.value })}
+                     onBlur={(e) => domainWarnings.check(e.target.value)}
                      className={`${TAP_TARGET} w-full border border-gray-300 rounded-lg px-3 py-2 text-sm`} />
             </div>
+            <SignerDomainWarning address={addForm.email} name={addForm.name} warnings={domainWarnings.warningsFor(addForm.email)} />
             <label className={`${TAP_TARGET} flex items-center gap-2 text-xs text-gray-600`}>
               <input type="checkbox" checked={addForm.onBehalf}
                      onChange={(e) => setAddForm({ ...addForm, onBehalf: e.target.checked })}
@@ -391,9 +398,11 @@ export function EnvelopeDetailPage() {
                         <label htmlFor={`${fieldIdBase}-signer-${i}-email`} className="block text-xs text-gray-500 mb-1">Email <span className="text-gray-600">(changing re-sends to the new address)</span></label>
                         <input id={`${fieldIdBase}-signer-${i}-email`} type="email" value={editForm.newEmail}
                                onChange={(e) => setEditForm({ ...editForm, newEmail: e.target.value })}
+                               onBlur={(e) => domainWarnings.check(e.target.value)}
                                className={`${TAP_TARGET} w-full border border-gray-300 rounded-lg px-3 py-2 text-sm`} />
                       </div>
                     </div>
+                    <SignerDomainWarning address={editForm.newEmail} name={editForm.name} warnings={domainWarnings.warningsFor(editForm.newEmail)} />
                     <label className={`${TAP_TARGET} flex items-center gap-2 text-xs text-gray-600`}>
                       <input type="checkbox" checked={editForm.onBehalf}
                              onChange={(e) => setEditForm({ ...editForm, onBehalf: e.target.checked })}

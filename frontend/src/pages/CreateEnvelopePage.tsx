@@ -10,6 +10,8 @@ import { telemetryEvent, telemetryEventOnce } from '../lib/telemetry'
 import { getOperatorConfig } from '../config/operator'
 import { hasUnsentDraft, DRAFT_LEAVE_WARNING } from './createEnvelopeDraft'
 import { peekGoogleDraftStash, takeGoogleDraftStash } from '../auth/google'
+import { useSignerDomainWarnings } from '../lib/signerDomainWarnings'
+import { SignerDomainWarning } from '../components/SignerDomainWarning'
 
 interface SignerInput {
   email: string
@@ -125,6 +127,11 @@ export function CreateEnvelopePage() {
   const [file, setFile] = useState<File | null>(null)
   const [signers, setSigners] = useState<SignerInput[]>([emptySigner()])
   const [isSenderSigner, setIsSenderSigner] = useState(false)
+  // F-3.9 (#113, DD-87) — the per-signer heads-up about an address's domain.
+  const domainWarnings = useSignerDomainWarnings()
+  // `check` is stable for the page's life; held in a ref so the restore effect
+  // below can call it without re-running.
+  const checkSignerDomainRef = useRef(domainWarnings.check)
   // F-24 — auto-close (default on). Off = the envelope waits in "awaiting seal"
   // for the creator's manual "Seal & send" once everyone has signed.
   const [autoClose, setAutoClose] = useState(true)
@@ -412,6 +419,7 @@ export function CreateEnvelopePage() {
     setIsSenderSigner(checked)
     if (creatorEmail === '') return
     if (checked) {
+      domainWarnings.check(creatorEmail) // F-3.9 — the self-sign row is a signer like any other
       setSigners((prev) =>
         prev.some((s) => s.isCreator)
           ? prev
@@ -439,6 +447,7 @@ export function CreateEnvelopePage() {
     setAutoClose(d.auto_close)
     setMessage(d.message ?? '')
     setExpiryDays(d.expiry_days ?? DEFAULT_EXPIRY_DAYS)
+    for (const s of d.signers) checkSignerDomainRef.current(s.email) // F-3.9 — every restored signer
     setSigners(
       d.signers.length > 0
         ? d.signers.map((s) => ({
@@ -1218,12 +1227,14 @@ export function CreateEnvelopePage() {
                     type="text" inputMode="email" autoComplete="off" data-1p-ignore="true" data-lpignore="true" data-form-type="other"
                     placeholder="jane.smith@example.com" value={s.email}
                     onChange={(e) => { patchSigner(i, { email: e.target.value }); if (firstError === 'signers') setFirstError(null) }}
+                    onBlur={(e) => domainWarnings.check(e.target.value)}
                     readOnly={isCreatorRow(s)}
                     title={isCreatorRow(s) ? 'Your account email: you’re signing as yourself. To sign from another address, add it as a separate signer.' : undefined}
                     className={`w-full min-h-[44px] border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900${isCreatorRow(s) ? ' bg-gray-50 text-gray-500 cursor-not-allowed' : ''} ${firstError === 'signers' && !s.email ? 'border-red-400 ring-1 ring-red-400' : 'border-gray-300'}`}
                   />
                 </div>
               </div>
+              <SignerDomainWarning address={s.email} name={s.name} warnings={domainWarnings.warningsFor(s.email)} />
               <p className="text-xs text-gray-500">
                 Full name appears in the signing email greeting and audit trail. Email is the identity used for signing.
               </p>

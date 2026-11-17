@@ -11,7 +11,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
-const { apiGetMock, apiPostMock, apiPatchMock, apiDeleteMock } = vi.hoisted(() => ({
+const { apiGetMock, apiPostMock, apiPatchMock, apiDeleteMock, apiGetPublicMock } = vi.hoisted(() => ({
+  apiGetPublicMock: vi.fn(),
   apiGetMock: vi.fn(),
   apiPostMock: vi.fn(),
   apiPatchMock: vi.fn(),
@@ -20,7 +21,7 @@ const { apiGetMock, apiPostMock, apiPatchMock, apiDeleteMock } = vi.hoisted(() =
 
 vi.mock('../lib/api', async (importActual) => {
   const actual = await importActual<typeof import('../lib/api')>();
-  return { ...actual, apiGet: apiGetMock, apiPost: apiPostMock, apiPatch: apiPatchMock, apiDelete: apiDeleteMock };
+  return { ...actual, apiGet: apiGetMock, apiPost: apiPostMock, apiPatch: apiPatchMock, apiDelete: apiDeleteMock, apiGetPublic: apiGetPublicMock };
 });
 vi.mock('../lib/analytics', () => ({
   trackEventOnce: vi.fn(),
@@ -70,6 +71,11 @@ beforeEach(() => {
   apiPostMock.mockReset().mockResolvedValue({});
   apiPatchMock.mockReset().mockResolvedValue({});
   apiDeleteMock.mockReset().mockResolvedValue(null);
+  apiGetPublicMock.mockReset().mockImplementation(async (path: string) => {
+    const domain = decodeURIComponent(String(path).split('domain=')[1] ?? '');
+    const facts: Record<string, string[]> = { 'mailinator.com': ['disposable'], 'small.test': ['no_sender_protection'], 'gmial.com': ['cannot_receive'] };
+    return { warnings: facts[domain] ?? [] };
+  });
   vi.spyOn(window, 'confirm').mockReturnValue(true);
 });
 
@@ -593,5 +599,48 @@ describe('EnvelopeDetailPage — every control reaches 44x44 on a phone, in ever
     expect(secondName.value).toBe('Plain Signer');
     expect(secondEmail.value).toBe('plain@x.com');
     expect(new Set([firstName.id, firstEmail.id, secondName.id, secondEmail.id]).size).toBe(4);
+  });
+});
+
+describe('F-3.9 — the add-signer and edit-signer forms show the same per-signer warnings (AC-312)', () => {
+  it('the add-signer form checks the address on blur (only its domain)', async () => {
+    mockEnvelope(envelope());
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /\+ add signer/i }));
+    fireEvent.change(screen.getByPlaceholderText('Full name'), { target: { value: 'Carol' } });
+    fireEvent.change(screen.getByPlaceholderText('email@example.com'), { target: { value: 'carol@gmial.com' } });
+    fireEvent.blur(screen.getByPlaceholderText('email@example.com'));
+    expect(await screen.findByText('gmial.com can’t receive email. Check the spelling of this address.')).toBeInTheDocument();
+    expect(apiGetPublicMock).toHaveBeenCalledWith('/v1/signer-domain-check?domain=gmial.com');
+    // Advice, never a block: the add still goes through.
+    expect(screen.getByRole('button', { name: /add & send request/i })).not.toBeDisabled();
+  });
+
+  it('opening the edit form checks the signer’s current address', async () => {
+    mockEnvelope(envelope({ signers: [signer({ email: 'alice@small.test', name: 'Alice' })] }));
+    renderPage();
+    await screen.findByText('Signers');
+    expect(apiGetPublicMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getAllByText('Edit')[0]!);
+    expect(
+      await screen.findByText(
+        'small.test doesn’t publish email security settings. If Alice’s signature is refused, they may need their email administrator’s help.',
+      ),
+    ).toBeInTheDocument();
+    expect(apiGetPublicMock).toHaveBeenCalledWith('/v1/signer-domain-check?domain=small.test');
+  });
+
+  it('the edit form’s new-address field is checked on blur', async () => {
+    mockEnvelope(envelope());
+    renderPage();
+    await screen.findByText('Signers');
+    fireEvent.click(screen.getAllByText('Edit')[0]!);
+    const field = screen.getByDisplayValue('a@x.com');
+    fireEvent.change(field, { target: { value: 'alice@mailinator.com' } });
+    fireEvent.blur(field);
+    expect(
+      await screen.findByText('This looks like a temporary email address. It may stop working before Alice signs.'),
+    ).toBeInTheDocument();
+    for (const [p] of apiGetPublicMock.mock.calls) expect(String(p)).not.toMatch(/alice|@/);
   });
 });
