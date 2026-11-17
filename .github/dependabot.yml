@@ -19,9 +19,12 @@
 #
 # Suppressed majors (2026-07-21, from the review of PRs #2/#3/#7/#8/#12/#13/#14):
 # - typescript: taken as ONE deliberate repo-wide migration (root + mcp + frontend
-#   on the same TS line), never per-directory drift. Currently hard-blocked at
-#   root: pkijs's ICryptoEngine lags TS 6/7's WebCrypto lib types (PR #3). Remove
-#   these rules when issue #21 lands the coordinated upgrade.
+#   on the same TS line), never per-directory drift. Issue #21 moved all three to
+#   TypeScript 6 (2026-11-18, with pkijs 4 / asn1js 4, which fixed the WebCrypto
+#   type lag). TypeScript 7 stays suppressed: it is the native compiler and ships
+#   no JavaScript compiler API, which typescript-eslint (peer <6.1.0) and
+#   src/outboundDashes.test.ts (ts.createSourceFile) need. Remove these rules when
+#   both support TypeScript 7.
 # - "@types/node": types track the Node that actually RUNS the code (root: Lambda
 #   nodejs22.x; mcp: engines >=20 npx floor; frontend: Node 24 CI toolchain). The
 #   pin moves manually, together with the runtime, never ahead of it.
