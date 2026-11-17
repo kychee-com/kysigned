@@ -39,10 +39,17 @@ interface PendingSendView {
   byte_count: number
   signers: Array<{ email: string; name: string; on_behalf_of?: string }>
   auto_close: boolean
+  /** F-3.8 (#163) — absent when the draft has no message / the default expiry. */
+  message?: string
+  expiry_days?: number
   claimed: boolean
   envelope_id?: string
   expires_at: string
 }
+
+/** F-3.8 (#163) — the editor's expiry choices, in days; 30 is preselected. */
+const EXPIRY_PRESETS = [7, 14, 30, 60, 90] as const
+const DEFAULT_EXPIRY_DAYS = 30
 
 /**
  * F-40/F-41.6 — the comparable shape of a draft's editable content, used to
@@ -50,10 +57,12 @@ interface PendingSendView {
  * it" (a real unsaved change). The document FILE is excluded on purpose: it is
  * immutable for the life of a pending send.
  */
-function currentSnapshot(v: { docName: string; signers: SignerInput[]; autoClose: boolean }) {
+function currentSnapshot(v: { docName: string; signers: SignerInput[]; autoClose: boolean; message: string; expiryDays: number }) {
   return {
     docName: v.docName.trim(),
     autoClose: v.autoClose,
+    message: v.message.trim(),
+    expiryDays: v.expiryDays,
     signers: v.signers.map((s) => ({
       email: s.email.trim(),
       name: s.name.trim(),
@@ -67,6 +76,8 @@ function restoredSnapshot(d: PendingSendView) {
   return {
     docName: d.document_name.trim(),
     autoClose: d.auto_close,
+    message: (d.message ?? '').trim(),
+    expiryDays: d.expiry_days ?? DEFAULT_EXPIRY_DAYS,
     signers: d.signers.map((s) => ({
       email: s.email.trim(),
       name: s.name.trim(),
@@ -117,6 +128,11 @@ export function CreateEnvelopePage() {
   // F-24 — auto-close (default on). Off = the envelope waits in "awaiting seal"
   // for the creator's manual "Seal & send" once everyone has signed.
   const [autoClose, setAutoClose] = useState(true)
+  // F-3.8 (#163) — one envelope-wide message to signers (optional) and the
+  // expiry preset. Both ride every path the draft takes (create, pending send,
+  // restore, edit).
+  const [message, setMessage] = useState('')
+  const [expiryDays, setExpiryDays] = useState<number>(DEFAULT_EXPIRY_DAYS)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   // F-39.3 — the sign-in gate at Send. 'form' = drafting; 'gate' = a validated
@@ -227,7 +243,7 @@ export function CreateEnvelopePage() {
   const committedAndClean =
     draftHandle !== null &&
     JSON.stringify(committedSnapshot) ===
-      JSON.stringify(currentSnapshot({ docName, signers, autoClose }))
+      JSON.stringify(currentSnapshot({ docName, signers, autoClose, message, expiryDays }))
   const guardArmed = draftDirty && !committedAndClean
   useEffect(() => {
     if (!guardArmed) return
@@ -421,6 +437,8 @@ export function CreateEnvelopePage() {
     setRestoredFile({ name: `${d.document_name}.pdf`, size: d.byte_count })
     setRestoredEmail(d.email)
     setAutoClose(d.auto_close)
+    setMessage(d.message ?? '')
+    setExpiryDays(d.expiry_days ?? DEFAULT_EXPIRY_DAYS)
     setSigners(
       d.signers.length > 0
         ? d.signers.map((s) => ({
@@ -633,6 +651,9 @@ export function CreateEnvelopePage() {
       pdf_base64: base64,
       signers: signerList,
       auto_close: autoClose,
+      // F-3.8 — a blank message is no message (the email then has no message block).
+      ...(message.trim() ? { message: message.trim() } : {}),
+      expiry_days: expiryDays,
     }
   }
 
@@ -732,7 +753,7 @@ export function CreateEnvelopePage() {
     const payload = heldPayloadRef.current ?? (await buildPayload())
     const { draft_id } = await apiPost<{ draft_id: string }>('/v1/pending-send', { email, ...payload })
     setDraftHandle(draft_id)
-    setCommittedSnapshot(currentSnapshot({ docName, signers, autoClose }))
+    setCommittedSnapshot(currentSnapshot({ docName, signers, autoClose, message, expiryDays }))
     return draft_id
   }
 
@@ -758,7 +779,7 @@ export function CreateEnvelopePage() {
     const payload = heldPayloadRef.current ?? (await buildPayload())
     const { draft_id } = await apiPost<{ draft_id: string }>('/v1/pending-send', { ceremony: true, ...payload })
     setDraftHandle(draft_id)
-    setCommittedSnapshot(currentSnapshot({ docName, signers, autoClose }))
+    setCommittedSnapshot(currentSnapshot({ docName, signers, autoClose, message, expiryDays }))
     allowNavRef.current = true
     return draft_id
   }
@@ -774,8 +795,12 @@ export function CreateEnvelopePage() {
         on_behalf_of: s.onBehalf && s.onBehalfOf.trim() ? s.onBehalfOf.trim() : undefined,
       })),
       auto_close: autoClose,
+      // F-3.8 — always sent, so clearing the box clears it on the service too
+      // (the door treats a blank message as "clear").
+      message: message.trim(),
+      expiry_days: expiryDays,
     })
-    setCommittedSnapshot(currentSnapshot({ docName, signers, autoClose }))
+    setCommittedSnapshot(currentSnapshot({ docName, signers, autoClose, message, expiryDays }))
   }
 
   /** Claim + send a restored draft (the signed-in path onto an existing draft). */
@@ -1229,6 +1254,42 @@ export function CreateEnvelopePage() {
               )}
             </div>
           ))}
+        </div>
+
+        {/* F-3.8 (#163) — the envelope-wide message to signers and the expiry. */}
+        <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-4">
+          <div>
+            <label htmlFor="signer-message" className="block text-sm font-medium text-gray-900 mb-1">
+              Message to signers (optional)
+            </label>
+            <textarea
+              id="signer-message"
+              rows={3}
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder="e.g., Please sign by Friday. Thanks!"
+              className="w-full min-h-[44px] border border-gray-300 rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-gray-900"
+            />
+            <p className="text-xs text-gray-500 mt-1">Included in every signer&rsquo;s signing email.</p>
+          </div>
+          <div>
+            <label htmlFor="expiry-days" className="block text-sm font-medium text-gray-900 mb-1">
+              Signers have
+            </label>
+            <select
+              id="expiry-days"
+              value={String(expiryDays)}
+              onChange={(e) => setExpiryDays(Number(e.target.value))}
+              className="w-full sm:w-auto min-h-[44px] border border-gray-300 rounded-lg px-3 py-2 text-base bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
+            >
+              {EXPIRY_PRESETS.map((d) => (
+                <option key={d} value={String(d)}>{d} days</option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500 mt-1">
+              to sign before the document expires unsigned.
+            </p>
+          </div>
         </div>
 
         {/* F-24 — auto-close vs manual seal */}
