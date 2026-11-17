@@ -91,6 +91,35 @@ describe('email templates', () => {
     assert.ok(!without.html.includes('border-left:3px solid'), 'no empty quote block when no message was given');
   });
 
+  // F-3.8 (#163, AC-305): the web editor (guests included) now sets this field,
+  // so it must reach the signer as the EXACT text typed: escaped in HTML (no
+  // creator markup inside an email sent from the operator's domain), line breaks
+  // kept, and present in the plain-text part too.
+  it('signingRequest delivers the message as exact text: escaped, line breaks kept, in both parts', () => {
+    const base = {
+      signerName: 'Alice',
+      signerEmail: 'alice@example.com',
+      senderName: 'Bob',
+      documentName: 'NDA',
+      envelopeId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+      reviewLink: 'https://kysigned.com/review/env-001/token123',
+      howItWorksLink: 'https://kysigned.com/how-it-works',
+      operatorDomain: 'kysigned.com',
+    };
+    const message = 'Hi <b>Alice</b> & team,\n<a href="https://evil.example/login">verify here</a>';
+    const r = templates.signingRequest({ ...base, message });
+    assert.ok(!r.html.includes('<a href="https://evil.example/login">'), 'no creator-supplied link reaches the HTML');
+    assert.ok(!r.html.includes('<b>Alice</b>'), 'no creator-supplied markup reaches the HTML');
+    assert.ok(
+      r.html.includes('Hi &lt;b&gt;Alice&lt;/b&gt; &amp; team,'),
+      'the typed characters render literally',
+    );
+    assert.match(r.html, /white-space:pre-line[^>]*>Hi &lt;b&gt;/, 'the quote block keeps the line breaks the creator typed');
+    assert.ok(r.text.includes(message), 'the plain-text part carries the exact message');
+    const without = templates.signingRequest(base);
+    assert.ok(!without.text.includes('evil.example'), 'and nothing when there is no message');
+  });
+
   it('signingRequest uses an explicit generated signing mailbox address when provided', () => {
     const result = templates.signingRequest({
       signerName: 'Alice',

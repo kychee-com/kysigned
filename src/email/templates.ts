@@ -138,8 +138,11 @@ export const templates = {
     pdfDownloadLink?: string;
     senderEmail?: string;
   }) {
+    // F-3.8 (#163): the creator's message is exact TEXT, never markup: escaped so
+    // no creator-supplied link or tag rides an email sent from the operator's
+    // domain, and `pre-line` keeps the line breaks they typed.
     const msgBlock = vars.message
-      ? `<p style="margin:15px 0;padding:15px;background:#f8f8f8;border-left:3px solid #1a1a2e;font-style:italic;">${vars.message}</p>`
+      ? `<p style="margin:15px 0;padding:15px;background:#f8f8f8;border-left:3px solid #1a1a2e;font-style:italic;white-space:pre-line;">${escapeHtml(vars.message)}</p>`
       : '';
     // F-5.2 — routing token in the subject that survives Forward (clients
     // prepend "Fwd:"/"Fw:" but keep the rest). The fixed signing mailbox parses
@@ -195,6 +198,7 @@ export const templates = {
       // first line, so our body size is unconstrained (no quoted-reply budget).
       text: textWrap(
         `Hi ${vars.signerName},\n\n${vars.senderName} has requested your signature on "${vars.documentName}". The document is attached to this email.\n\n` +
+        (vars.message ? `Message from ${vars.senderName}:\n${vars.message}\n\n` : '') +
         `TO SIGN: forward this whole email (keep the attached PDF) to ${signMailbox}, and type this as the very first line of your forward:\n\n    I sign this document\n\n` +
         `(Your email provider's built-in signature on that forward is your signature.)\n\n` +
         `Read it in your browser: ${vars.reviewLink}\nHow it works: ${vars.howItWorksLink}`
