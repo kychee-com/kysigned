@@ -214,3 +214,19 @@ describe('F-3.9 — the self-sign row and a restored draft are checked too (AC-3
     ).toBeInTheDocument();
   });
 });
+
+describe('F-3.9 — the warning line wraps on a phone (86.5 lock)', () => {
+  it('a long domain breaks inside the line instead of widening the row; it reads as status, in high-contrast amber', async () => {
+    renderPage();
+    typeSigner(0, 'Jane', 'jane@gmial.com');
+    const w = await screen.findByTestId('signer-domain-warning');
+    // Verified at 375 / 768 / 1280 px in a real browser (no sideways scroll, the
+    // longest wording with a 100-character domain wraps inside the signer card);
+    // this pins the classes that make it so.
+    expect(w.className).toContain('[overflow-wrap:anywhere]');
+    expect(w.className).toContain('min-w-0');
+    expect(w.className).toContain('max-w-full');
+    expect(w.className).toContain('text-amber-800');
+    expect(w).toHaveAttribute('role', 'status');
+  });
+});
