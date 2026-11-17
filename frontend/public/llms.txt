@@ -172,6 +172,7 @@ The full surface is also machine-readable as OpenAPI 3.1 at `/openapi.json`.
    → `{ "envelope_id", "status", "document_hash", "status_url", "verify_url", "signing_links": [...], "callback_secret"?, "tracking" }`
    (`callback_secret` appears only when you sent `callback_url`, and only this once. Store it to
    verify webhook deliveries.)
+   `signer_warnings` (on the preflight, create, add-signer and edit-signer responses, absent when none apply) names each signer address whose domain `cannot_receive` email, is `disposable`, or has `no_sender_protection` (no SPF, no DMARC): advice only, nothing is refused for it.
    `tracking.token` (`ktt_…`) is the envelope-observer handle, returned on EVERY create: send it as
    the `Authorization` header on `GET /v1/envelope/:id` to poll status (the full signer roster with
    per-signer signing and delivery state) with no account, API key, or session. It is read-only and
@@ -293,6 +294,7 @@ The verifier needs no key and no wallet:
 | `POST /v1/api-keys` | session only | Mint a creator API key (`ksk_…`, returned exactly once). |
 | `GET /v1/api-keys` | session only | List your API keys (metadata only, never the value). |
 | `DELETE /v1/api-keys/:id` | session only | Revoke a key (effective on its next use). |
+| `GET /v1/signer-domain-check` | none | Heads-up on ONE email domain (`?domain=`) → `{ warnings }` (`cannot_receive`, `disposable`, `no_sender_protection`); only the domain, rate-limited, advice only. |
 | `GET /v1/sign/:id/:token/info` | signer token | Signer review-page data (name, document, hash). |
 | `GET /v1/envelope/:id/:token/pdf` | signer token | Signer downloads their copy of the document. |
 

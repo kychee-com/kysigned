@@ -59,6 +59,9 @@ const PUBLIC_ENDPOINTS = [
   // #129 — free deterministic pre-validation of a create body (no charge/create);
   // agents validate inputs before paying the x402 create.
   'POST /v1/envelope/preflight',
+  // F-3.9 (#113) — the per-domain heads-up the editor asks for live (public,
+  // rate-limited per source; takes only a domain, never an address).
+  'GET /v1/signer-domain-check',
 ];
 
 /**
@@ -215,6 +218,34 @@ describe('API Documentation Alignment', () => {
     }
     const brief = spec.paths?.['/v1/documents']?.get?.responses?.['200']?.content?.['application/json']?.schema?.items?.properties?.envelopes?.items?.properties;
     assert.equal(brief?.needs_attention?.type, 'boolean', 'the documents envelope brief documents needs_attention');
+  });
+
+  it('F-3.9 — openapi documents signer_warnings on the preflight, create, add-signer and edit-signer responses, and the domain check', { skip: !openapiExists ? 'openapi.json does not exist yet' : undefined }, () => {
+    const spec = JSON.parse(readFileSync(OPENAPI, 'utf-8')) as any;
+    const resolve = (s: any) => (s?.$ref ? spec.components.schemas[s.$ref.split('/').pop()] : s);
+    const okSchema = (op: any, code: string) => resolve(op?.responses?.[code]?.content?.['application/json']?.schema);
+    const warn = spec.components?.schemas?.SignerWarnings;
+    assert.equal(warn?.type, 'array', 'a SignerWarnings schema exists');
+    const item = warn.items?.properties;
+    assert.ok(item?.email, 'each entry names the signer address');
+    assert.deepEqual([...(item?.warnings?.items?.enum ?? [])].sort(), ['cannot_receive', 'disposable', 'no_sender_protection']);
+    const isWarnRef = (p: any) => p?.$ref === '#/components/schemas/SignerWarnings';
+    assert.ok(isWarnRef(okSchema(spec.paths['/v1/envelope/preflight'].post, '200')?.properties?.signer_warnings), 'preflight 200');
+    assert.ok(isWarnRef(spec.components.schemas.CreateEnvelopeResponse.properties.signer_warnings), 'create 201 (session, key and x402)');
+    assert.ok(isWarnRef(okSchema(spec.paths['/v1/envelope/{id}/signers'].post, '200')?.properties?.signer_warnings), 'add-signer');
+    assert.ok(isWarnRef(okSchema(spec.paths['/v1/envelope/{id}/signers'].patch, '200')?.properties?.signer_warnings), 'edit-signer');
+    const check = spec.paths['/v1/signer-domain-check']?.get;
+    assert.ok(check, 'the domain check is described');
+    assert.ok((check.parameters ?? []).some((p: any) => p.name === 'domain' && p.in === 'query'), 'it takes ?domain=');
+    assert.deepEqual(check.security, [], 'public');
+    const w = okSchema(check, '200')?.properties?.warnings;
+    assert.deepEqual([...(w?.items?.enum ?? [])].sort(), ['cannot_receive', 'disposable', 'no_sender_protection']);
+  });
+
+  it('F-3.9 — llms.txt names signer_warnings and the domain check (F-12.4: one vocabulary)', { skip: !llmsExists ? 'llms.txt missing' : undefined }, () => {
+    const t = readFileSync(LLMS_TXT, 'utf-8');
+    assert.match(t, /signer_warnings/);
+    for (const w of ['cannot_receive', 'disposable', 'no_sender_protection']) assert.match(t, new RegExp(w));
   });
 
   it('llms.txt documents ONLY honored auth (bearer keys), never the session-as-Authorization lie', { skip: !llmsExists ? 'llms.txt missing' : undefined }, () => {
