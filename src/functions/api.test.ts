@@ -1613,3 +1613,40 @@ describe('handleRequest — F-33.5 metadata-only operator surface (AC-197)', () 
     assert.ok(!body.includes('%PDF-'), 'no document bytes in the refusal');
   });
 });
+
+describe('GET /v1/key-archive — F-10.8a wiring (#102)', () => {
+  it('reads the proxy memory from the database, and fresh=1 skips it', async () => {
+    const seen: string[] = [];
+    const pool = {
+      async query(text: string) {
+        seen.push(text.replace(/\s+/g, ' ').trim());
+        // A remembered answer fetched just now: a non-fresh lookup is served from it.
+        if (/UPDATE key_archive_cache/.test(text)) {
+          return {
+            rows: [{ records: '[{"domain":"gmail.com","selector":"s1","value":"p=MEM"}]', fetched_at: new Date().toISOString() }],
+            rowCount: 1,
+          } as never;
+        }
+        return { rows: [], rowCount: 0 } as never;
+      },
+      async end() {},
+    };
+    const res = await handleRequest(req('GET', '/v1/key-archive?domain=gmail.com&selector=s1'), makeDeps({ pool: pool as never }));
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), [{ domain: 'gmail.com', selector: 's1', value: 'p=MEM' }]);
+    assert.ok(seen.some((q) => /^UPDATE key_archive_cache SET last_hit_at/.test(q)), 'the store is wired to the pool');
+
+    // fresh=1 never reads the memory (it goes to the archive; here the archive is
+    // unreachable from the test, so the answer is the 502 and the memory is untouched).
+    seen.length = 0;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => { throw new Error('no network in tests'); }) as typeof fetch;
+    try {
+      const fresh = await handleRequest(req('GET', '/v1/key-archive?domain=gmail.com&selector=s1&fresh=1'), makeDeps({ pool: pool as never }));
+      assert.equal(fresh.status, 502);
+      assert.ok(!seen.some((q) => /UPDATE key_archive_cache/.test(q)), 'fresh=1 skips the remembered answer');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});

@@ -49,6 +49,7 @@ import type { TimestampProvider } from '../timestamp/contract.js';
 import type { CreateRun } from './runs.js';
 import type { X402Config } from '../api/x402Create.js';
 import type { RoutedHttpPaymentContextV1 } from '@run402/functions';
+import { resolveKeyArchiveCacheMax } from '../db/keyArchiveCache.js';
 
 import { Buffer } from 'node:buffer';
 import { createHttpDbPool, type Run402AdminDb } from '../integrations/run402Db.js';
@@ -274,6 +275,8 @@ export interface AppEnv {
    * identity (fail-closed) even with the secret set. e.g. `^redteam.*@kysigned\.com$`.
    */
   KYSIGNED_TEST_RESET_PATTERN?: string;
+  /** F-10.8a `[both]` (#102) — the most `(domain, selector)` answers the key-archive proxy remembers; a positive whole number, anything else (or unset) = 10000. */
+  KYSIGNED_KEY_ARCHIVE_CACHE_MAX?: string;
 }
 
 function csv(v: string | undefined): string[] | undefined {
@@ -329,6 +332,8 @@ export interface AppDeps {
   testResetSecret?: string;
   /** F-28 `[service]` — identity pattern the reset may purge; undefined refuses all (fail-closed). */
   testResetPattern?: RegExp;
+  /** F-10.8a — the key-archive proxy memory maximum (resolveKeyArchiveCacheMax). */
+  keyArchiveCacheMax?: number;
   projectId: string;
   /** Fetch a stored canonical/bundle PDF blob (envelopes/<hash>/original.pdf). */
   getPdf: (key: string) => Promise<Uint8Array | null>;
@@ -812,6 +817,7 @@ export function buildAppDeps(env: AppEnv, runtime: Run402Runtime): AppDeps {
     deliveryBackstop,
     ...(testResetSecret ? { testResetSecret } : {}),
     ...(testResetPattern ? { testResetPattern } : {}),
+    keyArchiveCacheMax: resolveKeyArchiveCacheMax(env.KYSIGNED_KEY_ARCHIVE_CACHE_MAX),
     ...(x402 ? { x402 } : {}),
     ...(runtime.readPaymentContext ? { readPaymentContext: runtime.readPaymentContext } : {}),
     healthChecks,

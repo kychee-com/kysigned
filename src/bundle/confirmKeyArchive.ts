@@ -27,6 +27,14 @@ import type { DimensionState } from './assuranceTier.js';
 export type ConfirmKeyArchiveDeps = DkimArchiveDeps & {
   /** F-32.9 test override; unset = the pinned production statement JWKS. */
   statementJwks?: import('./archiveStatement.js').ArchiveJwks;
+  /**
+   * F-10.8a (#102, DD-85) — set ONLY by the web verifier, whose lookups go through
+   * the operator's proxy, which may answer from memory. When that answer has records
+   * for the pair but none with the bundle's exact key, ask once more with `fresh`,
+   * so a key rotated under a remembered selector is confirmed, never FAILED. The CLI
+   * asks the archive directly and never sets it (a repeat could not differ).
+   */
+  retryFresh?: boolean;
 };
 
 export interface KeyArchiveConfirmation {
@@ -76,7 +84,12 @@ export async function confirmKeyArchive(
   const want = extractPublicKey(expectedKey);
   if (!want) return PENDING; // no embedded key to compare against → cannot confirm
   try {
-    const { found, records } = await lookupArchivedKey(domain, selector, deps);
+    let { found, records } = await lookupArchivedKey(domain, selector, deps);
+    if (found && deps.retryFresh && !records.some((r) => extractPublicKey(r.value) === want)) {
+      // F-10.8a: a remembered answer lacking the exact key is asked again, fresh.
+      // A failure here throws to the catch below: pending, never FAILED.
+      ({ found, records } = await lookupArchivedKey(domain, selector, { ...deps, fresh: true }));
+    }
     if (!found) return PENDING; // nothing archived for this (domain, selector) yet
     // Require the EXACT key (the archive may hold an older/rotated key at the same
     // selector); comparing the `p=` public key never yields a false confirm.

@@ -13,10 +13,25 @@
  * Additive: this corroborates the offline math; it never gates the PROVEN verdict.
  */
 import { lookupArchivedKey, type DkimArchiveDeps, type ArchiveKeyRecord } from './signing/dkimArchive.js';
+import {
+  KEY_ARCHIVE_FRESH_MS,
+  DEFAULT_KEY_ARCHIVE_CACHE_MAX,
+  type KeyArchiveStore,
+} from '../db/keyArchiveCache.js';
 
 export interface KeyArchiveProxyDeps {
   /** Archive client deps (default: real archive.prove.email via global fetch). */
   archive?: DkimArchiveDeps;
+  /**
+   * F-10.8a (#102, DD-84) — the proxy's memory. Absent (a fork that wires none, or
+   * a test) = the pre-F-10.8a behavior: every lookup asks the archive.
+   */
+  cache?: { store: KeyArchiveStore; now?: () => Date; max?: number };
+}
+
+export interface KeyArchiveLookupOptions {
+  /** DD-85 — skip the remembered answer, ask the archive, and store what it says. */
+  fresh?: boolean;
 }
 
 export interface KeyArchiveProxyResult {
@@ -32,6 +47,7 @@ export async function handleKeyArchiveLookup(
   deps: KeyArchiveProxyDeps,
   domain: string | null,
   selector: string | null,
+  opts: KeyArchiveLookupOptions = {},
 ): Promise<KeyArchiveProxyResult> {
   const d = (domain ?? '').trim().toLowerCase();
   const s = (selector ?? '').trim();
@@ -39,10 +55,41 @@ export async function handleKeyArchiveLookup(
   if (!DOMAIN_RE.test(d) || !SELECTOR_RE.test(s)) {
     return { status: 400, body: { error: 'invalid domain or selector', code: 'validation_domain_selector' } };
   }
+  // F-10.8a: a found answer fetched under 24 hours ago is served from memory, with
+  // no archive call (so during an outage too). A fresh lookup skips this. Every
+  // store failure falls through to the archive: the memory never fails a lookup.
+  const store = deps.cache?.store;
+  const now = deps.cache?.now?.() ?? new Date();
+  if (store && !opts.fresh) {
+    try {
+      const remembered = await store.hit(d, s, now);
+      if (remembered && now.getTime() - remembered.fetchedAt.getTime() < KEY_ARCHIVE_FRESH_MS) {
+        return { status: 200, body: JSON.parse(remembered.records) as ArchiveKeyRecord[] };
+      }
+    } catch {
+      /* unreadable or unreachable memory: ask the archive */
+    }
+  }
   try {
     const { records } = await lookupArchivedKey(d, s, deps.archive);
+    if (store) {
+      try {
+        if (records.length > 0) {
+          // Only found answers are remembered; prune only after a put, never on a hit.
+          await store.put(d, s, JSON.stringify(records), now);
+          await store.prune(now, deps.cache?.max ?? DEFAULT_KEY_ARCHIVE_CACHE_MAX);
+        } else {
+          // The archive's current answer is "no record": forget anything remembered.
+          await store.remove(d, s);
+        }
+      } catch {
+        /* a failed write never fails the lookup: the archive's answer stands */
+      }
+    }
     return { status: 200, body: records };
   } catch {
+    // An answer older than 24 hours is never served, and a fresh lookup never
+    // falls back to memory: the failure goes out (the verifier shows pending).
     // Archive unreachable / errored → 502; the web verifier degrades to `pending`.
     return { status: 502, body: { error: 'archive lookup failed', code: 'internal_upstream' } };
   }

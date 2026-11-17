@@ -78,3 +78,69 @@ describe('confirmKeyArchive — online key-archive presence (F-10.7 / AC-101 / A
     assert.equal(r.keyAuthenticity, 'pending-online');
   });
 });
+
+// F-10.8a (spec 0.77.0, #102, DD-85): the proxy may answer from memory. When that
+// answer has records for the pair but none with the bundle's exact key (a provider
+// rotated the key under a selector the proxy already remembers), the web verifier
+// asks again with fresh=1, so the result is the one the archive itself would give.
+describe('F-10.8a — the web verifier asks again fresh (AC-309)', () => {
+  const PROXY = { baseUrl: '', path: '/v1/key-archive' };
+  const OLD = record({ value: 'p=OLDROTATEDKEYvalueAAAB==' });
+
+  it('F-10.8a a remembered answer without the exact key is asked again fresh and confirms', async () => {
+    const urls: string[] = [];
+    const r = await confirmKeyArchive('kysigned.com', 'sel', EMBEDDED, {
+      ...PROXY,
+      retryFresh: true,
+      fetchFn: fakeFetch((url) => {
+        urls.push(url);
+        // The remembered answer holds only the old key; the archive now lists both.
+        return /fresh=1/.test(url)
+          ? { status: 200, body: [OLD, record()] }
+          : { status: 200, body: [OLD] };
+      }),
+    });
+    assert.equal(urls.length, 2, 'exactly one retry');
+    assert.doesNotMatch(urls[0]!, /fresh=1/);
+    assert.match(urls[1]!, /^\/v1\/key-archive\?domain=kysigned\.com&selector=sel&fresh=1$/);
+    assert.equal(r.keyProvenance, 'confirmed', 'confirmed, never FAILED');
+    assert.equal(r.keyAuthenticity, 'archive-confirmed');
+  });
+
+  it('a fresh retry that still lacks the key is FAILED, as the archive itself says', async () => {
+    const r = await confirmKeyArchive('kysigned.com', 'sel', EMBEDDED, {
+      ...PROXY,
+      retryFresh: true,
+      fetchFn: fakeFetch(() => ({ status: 200, body: [OLD] })),
+    });
+    assert.equal(r.keyProvenance, 'failed');
+  });
+
+  it('a fresh retry that fails (archive outage) is pending, never FAILED', async () => {
+    const r = await confirmKeyArchive('kysigned.com', 'sel', EMBEDDED, {
+      ...PROXY,
+      retryFresh: true,
+      fetchFn: fakeFetch((url) => (/fresh=1/.test(url) ? { status: 502 } : { status: 200, body: [OLD] })),
+    });
+    assert.equal(r.keyProvenance, 'pending');
+  });
+
+  it('without retryFresh (the CLI, direct to the archive) there is no retry', async () => {
+    let calls = 0;
+    const r = await confirmKeyArchive('kysigned.com', 'sel', EMBEDDED, {
+      fetchFn: fakeFetch(() => { calls++; return { status: 200, body: [OLD] }; }),
+    });
+    assert.equal(calls, 1);
+    assert.equal(r.keyProvenance, 'failed');
+  });
+
+  it('a matching first answer makes no retry', async () => {
+    let calls = 0;
+    await confirmKeyArchive('kysigned.com', 'sel', EMBEDDED, {
+      ...PROXY,
+      retryFresh: true,
+      fetchFn: fakeFetch(() => { calls++; return { status: 200, body: [record()] }; }),
+    });
+    assert.equal(calls, 1);
+  });
+});

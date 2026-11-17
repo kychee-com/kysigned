@@ -202,7 +202,10 @@ export function VerifyPage({
   // The key-archive lookup goes through the operator's SAME-ORIGIN proxy (F-10.8):
   // archive.prove.email serves no CORS headers, so the browser can't call it directly.
   // (The CLI uses the direct archive default; the verdict stays client-side either way.)
-  confirmKey = (bytes: Uint8Array) => confirmKeyArchiveWeb(bytes, { baseUrl: '', path: '/v1/key-archive' }),
+  // F-10.8a (#102): the proxy may answer from memory, so a remembered answer that
+  // lacks the bundle's exact key is asked again fresh (`retryFresh`), never FAILED.
+  confirmKey = (bytes: Uint8Array) =>
+    confirmKeyArchiveWeb(bytes, { baseUrl: '', path: '/v1/key-archive', retryFresh: true }),
 }: { verify?: Verify; confirm?: Confirm; confirmKey?: ConfirmKey }) {
   const [status, setStatus] = useState<Status>('idle')
   const [verdict, setVerdict] = useState<BundleVerdict | null>(null)

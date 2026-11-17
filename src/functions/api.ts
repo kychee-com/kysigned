@@ -108,6 +108,7 @@ import { handleSealEnvelope } from '../api/sealEnvelope.js';
 import { handleSignerInfo, handleSignerPdf } from '../api/signerApi.js';
 import { handleGetEnvelopePdfForOwner } from '../api/ownerPdf.js';
 import { handleKeyArchiveLookup } from '../api/keyArchiveProxy.js';
+import { createSqlKeyArchiveStore } from '../db/keyArchiveCache.js';
 import { handleTestResetUser } from '../api/testReset.js';
 import { getPdfBlob } from '../db/pdfBlobs.js';
 import { getEnvelope } from '../db/envelopes.js';
@@ -709,7 +710,14 @@ async function dispatchRequest(req: Request, deps: RequestDeps): Promise<Respons
     // archive.prove.email server-side (the archive has no CORS, so the browser
     // can't call it directly). Additive — never gates the client-side verdict.
     case 'keyArchive': {
-      const r = await handleKeyArchiveLookup({}, url.searchParams.get('domain'), url.searchParams.get('selector'));
+      // F-10.8a (#102): the proxy remembers found answers (DD-84); `fresh=1` is the
+      // web verifier's ask-again when a remembered answer lacks the bundle's key (DD-85).
+      const r = await handleKeyArchiveLookup(
+        { cache: { store: createSqlKeyArchiveStore(deps.pool), max: deps.keyArchiveCacheMax } },
+        url.searchParams.get('domain'),
+        url.searchParams.get('selector'),
+        { fresh: url.searchParams.get('fresh') === '1' },
+      );
       return json(r.body, r.status);
     }
 

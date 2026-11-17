@@ -22,6 +22,7 @@
     "019_pending_send_restore_token.sql": "sha256:d93f8a97c10aae287662778dbebb7cc8429fd1fc330218642c7eda6f38506605",
     "020_google_ceremonies.sql": "sha256:dd6c207345c5d72f66a57f2dc16007872e059d85caa2c5b2242e20e1d9694e82",
     "021_archive_statement.sql": "sha256:3d649a87e848382d12c7ed4a56c547f7f4b1afebacfc84e0eb65652895682d40",
-    "022_signer_rejections.sql": "sha256:7cd0e315350376bbe9eee112a0405d3cd3675bd233fd9659ad4919b8f8dec4f0"
+    "022_signer_rejections.sql": "sha256:7cd0e315350376bbe9eee112a0405d3cd3675bd233fd9659ad4919b8f8dec4f0",
+    "023_key_archive_cache.sql": "sha256:2d4c8569adf921e659a4eaa6aa6679e852633b65fad344af71844ec43696a6dc"
   }
 }

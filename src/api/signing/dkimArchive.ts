@@ -42,6 +42,11 @@ export interface DkimArchiveDeps {
    * (the archive serves no CORS headers); the CLI uses the direct default (F-10.8).
    */
   path?: string;
+  /**
+   * F-10.8a (#102, DD-85) — ask the operator's proxy to skip its memory (`&fresh=1`).
+   * Meaningful only on the proxy path; the archive itself ignores the parameter.
+   */
+  fresh?: boolean;
 }
 
 /** One per-channel observation window (the archive's 2026-08 shape; camelCase). */
@@ -173,7 +178,9 @@ export async function lookupArchivedKey(
 ): Promise<ArchiveLookupResult> {
   const base = deps?.baseUrl ?? DEFAULT_BASE_URL;
   const path = deps?.path ?? '/api/key/domain';
-  const url = `${base}${path}?domain=${encodeURIComponent(domain)}&selector=${encodeURIComponent(selector)}`;
+  const url =
+    `${base}${path}?domain=${encodeURIComponent(domain)}&selector=${encodeURIComponent(selector)}` +
+    (deps?.fresh ? '&fresh=1' : '');
   const res = await resolveFetch(deps)(url);
   if (!res.ok) {
     // 404 = definitively absent; other non-2xx = surface as an error (→ outage upstream).
