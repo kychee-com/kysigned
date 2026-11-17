@@ -667,3 +667,73 @@ describe('F-7.4 removed — no instant receipt acknowledgment (spec v0.28.0)', (
     assert.equal((templates as Record<string, unknown>).receiptAcknowledgment, undefined);
   });
 });
+
+// #171: every creator- or signer-supplied value (a name, a document name, an email,
+// the expired-envelope name lists) is TEXT in the HTML part of every template: no
+// markup or link a creator types can ride an email sent from the operator's domain,
+// and `<`, `&` and quotes show as typed. The plain-text parts stay literal.
+describe('#171: creator- and signer-supplied values are escaped in every template HTML', () => {
+  const EVIL = 'Eve <b>x</b> & <a href="https://evil.example/login">verify</a>';
+  const LINK = 'https://kysigned.com/x';
+  const common = {
+    signerName: EVIL,
+    senderName: EVIL,
+    documentName: EVIL,
+    recipientName: EVIL,
+    signerEmail: 'eve@example.com',
+    operatorDomain: 'kysigned.com',
+    envelopeId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+    reviewLink: LINK,
+    pdfDownloadLink: LINK,
+    howItWorksLink: LINK,
+    faqHowToSignLink: LINK,
+    faqWrongEmailLink: LINK,
+    dashboardLink: LINK,
+    statusLink: LINK,
+    statusPageLink: LINK,
+    verifyUrl: LINK,
+    bundleFingerprint: 'abcd-1234',
+    signerCount: 2,
+    signedCount: 1,
+    totalCount: 2,
+    signedNames: [EVIL],
+    pendingNames: [EVIL],
+    deletionDate: '2026-12-01',
+    signerDomain: 'example.com',
+    signers: [{ name: EVIL, email: 'eve@example.com', status: 'pending' }],
+  };
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ['signingRequest', {}],
+    ['reminder', {}],
+    ['acceptanceAck', {}],
+    ['rejectionBounce', { reason: 'wrong_phrase' }],
+    ['completion', { role: 'creator' }],
+    ['voidNotification', {}],
+    ['signingRequestCancelled', {}],
+    ['reviewAndSeal', {}],
+    ['finalizingWait', {}],
+    ['expiryNotification', {}],
+    ['retentionWarning', {}],
+    ['envelopeExpired', { role: 'sender' }],
+    ['envelopeExpired', { role: 'signer' }],
+    ['envelopeCreated', {}],
+    ['creatorProgress', {}],
+    ['signingRequestUndeliverable', {}],
+    ['providerNoDkimBounce', { reason: 'google_workspace_no_dkim' }],
+    ['signerBlockedCreatorNotice', { reason: 'microsoft_365_no_dkim' }],
+    ['signerRejectedCreatorNotice', { reason: 'wrong_phrase' }],
+  ];
+  for (const [name, extra] of cases) {
+    it(`${name}${extra.role ? ` (${String(extra.role)})` : ''}: no creator markup or link in the HTML`, () => {
+      const t = (templates as unknown as Record<string, (v: unknown) => { html: string; text: string }>)[name]!;
+      const r = t({ ...common, ...extra });
+      assert.ok(!r.html.includes('<a href="https://evil.example/login">'), 'no creator-supplied link reaches the HTML');
+      assert.ok(!r.html.includes('<b>x</b>'), 'no creator-supplied tag reaches the HTML');
+    });
+  }
+  it('the escaped value still reads exactly as typed (and the text part stays literal)', () => {
+    const r = templates.signingRequest({ ...common } as never);
+    assert.ok(r.html.includes('Eve &lt;b&gt;x&lt;/b&gt; &amp; &lt;a href=&quot;https://evil.example/login&quot;&gt;verify&lt;/a&gt;'));
+    assert.ok(r.text.includes(EVIL), 'the plain-text part carries the exact value');
+  });
+});

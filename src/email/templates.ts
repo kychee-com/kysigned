@@ -176,8 +176,8 @@ export const templates = {
       // that survives Forward (F-5.2).
       subject: `Signature requested: "${vars.documentName}"${revisedTag} [ksgn-${envHex}]`,
       html: wrap(`Signature Request`, `
-        <p style="margin:0 0 15px;">Hi ${vars.signerName},</p>
-        <p style="margin:0 0 8px;"><strong>${vars.senderName}</strong> has requested your signature on <strong>&ldquo;${vars.documentName}&rdquo;</strong>. <strong>The document is attached to this email.</strong></p>
+        <p style="margin:0 0 15px;">Hi ${escapeHtml(vars.signerName)},</p>
+        <p style="margin:0 0 8px;"><strong>${escapeHtml(vars.senderName)}</strong> has requested your signature on <strong>&ldquo;${escapeHtml(vars.documentName)}&rdquo;</strong>. <strong>The document is attached to this email.</strong></p>
         ${msgBlock}
 
         ${stepHeader('1', 'Read the attached document')}
@@ -227,14 +227,14 @@ export const templates = {
       // (which has both). So the subject stays clean — no [ksgn-] hash (Barry QA).
       subject: `Reminder: your signature on "${vars.documentName}"`,
       html: wrap(`Signature Reminder`, `
-        <p style="margin:0 0 15px;">Hi ${vars.signerName},</p>
-        <p style="margin:0 0 15px;">A friendly reminder that <strong>${vars.senderName}</strong> is still waiting for your signature on <strong>&ldquo;${vars.documentName}&rdquo;</strong>.</p>
-        <p style="margin:0 0 12px;font-size:14px;color:#444;"><strong>This reminder isn&rsquo;t the signing email.</strong> There&rsquo;s nothing to forward here. To sign, open the <strong>original signature-request email</strong> we sent you (subject: <em>Signature requested: &ldquo;${vars.documentName}&rdquo;</em>) and follow the instructions in it.</p>
+        <p style="margin:0 0 15px;">Hi ${escapeHtml(vars.signerName)},</p>
+        <p style="margin:0 0 15px;">A friendly reminder that <strong>${escapeHtml(vars.senderName)}</strong> is still waiting for your signature on <strong>&ldquo;${escapeHtml(vars.documentName)}&rdquo;</strong>.</p>
+        <p style="margin:0 0 12px;font-size:14px;color:#444;"><strong>This reminder isn&rsquo;t the signing email.</strong> There&rsquo;s nothing to forward here. To sign, open the <strong>original signature-request email</strong> we sent you (subject: <em>Signature requested: &ldquo;${escapeHtml(vars.documentName)}&rdquo;</em>) and follow the instructions in it.</p>
         <div style="margin:0 0 14px;padding:12px 16px;background:#f8f8f8;border-left:3px solid #1a1a2e;font-size:13px;color:#444;">
           <strong>Can&rsquo;t find it?</strong>
           <ul style="margin:8px 0 0;padding-left:18px;">
             <li>Check your <strong>spam</strong> or <strong>junk</strong> folder.</li>
-            <li>Still can&rsquo;t find it? Email the sender, <a href="mailto:${vars.senderName}" style="color:#1a1a2e;">${vars.senderName}</a>, and ask them to resend it.</li>
+            <li>Still can&rsquo;t find it? Email the sender, <a href="mailto:${escapeHtml(vars.senderName)}" style="color:#1a1a2e;">${escapeHtml(vars.senderName)}</a>, and ask them to resend it.</li>
           </ul>
         </div>
         <div style="margin:8px 0;border-top:1px solid #e5e7eb;padding-top:12px;font-size:12px;color:#666;">
@@ -274,9 +274,9 @@ export const templates = {
     return {
       subject: `We received your signature on "${vars.documentName}"`,
       html: wrap(`Signature Recorded`, `
-        <p style="margin:0 0 15px;">Hi ${vars.signerName},</p>
+        <p style="margin:0 0 15px;">Hi ${escapeHtml(vars.signerName)},</p>
         <p style="margin:0 0 15px;font-size:15px;color:#15803d;"><strong>&#10003; Your signature is recorded.</strong></p>
-        <p style="margin:0 0 15px;">Thanks, your signature on <strong>&ldquo;${vars.documentName}&rdquo;</strong> is recorded. Once everyone has signed, we&rsquo;ll email you the complete signing record (a PDF) to keep. Nothing more for you to do right now.</p>
+        <p style="margin:0 0 15px;">Thanks, your signature on <strong>&ldquo;${escapeHtml(vars.documentName)}&rdquo;</strong> is recorded. Once everyone has signed, we&rsquo;ll email you the complete signing record (a PDF) to keep. Nothing more for you to do right now.</p>
         ${statusRow}
         <p style="margin:0;font-size:13px;color:#666;">The signing record will be your permanent proof, and anyone can verify it.</p>
       `),
@@ -371,7 +371,7 @@ export const templates = {
     return {
       subject: `Action needed: your signature on "${vars.documentName}" wasn’t accepted`,
       html: wrap(`Action Needed`, `
-        <p style="margin:0 0 15px;">Hi ${vars.signerName},</p>
+        <p style="margin:0 0 15px;">Hi ${escapeHtml(vars.signerName)},</p>
         <p style="margin:0 0 8px;font-size:16px;font-weight:600;color:#1a1a2e;">${c.headline}</p>
         <p style="margin:0 0 15px;">${c.what}</p>
         <div style="margin:18px 0 8px;border-top:1px solid #e5e7eb;padding-top:16px;">
@@ -424,8 +424,8 @@ export const templates = {
     return {
       subject: `"${vars.documentName}" is signed and complete`,
       html: wrap(`Signed and complete`, `
-        <p style="margin:0 0 15px;">Hi ${vars.recipientName},</p>
-        <p style="margin:0 0 15px;">All <strong>${vars.signerCount} signer${vars.signerCount === 1 ? '' : 's'}</strong> have signed <strong>"${vars.documentName}"</strong>.</p>
+        <p style="margin:0 0 15px;">Hi ${escapeHtml(vars.recipientName)},</p>
+        <p style="margin:0 0 15px;">All <strong>${vars.signerCount} signer${vars.signerCount === 1 ? '' : 's'}</strong> have signed <strong>"${escapeHtml(vars.documentName)}"</strong>.</p>
         <p style="margin:0 0 15px;"><strong>The PDF attached to this email is your signing record.</strong> Keep it: it is your permanent proof.</p>
         <p style="margin:0 0 15px;font-size:13px;color:#444;">Inside it: the document everyone signed, plus a signature page listing each signer, their email, and the exact time they signed. The signatures are recorded by email rather than stamped onto the document, and anyone can verify them, even offline, with no account. It opens like any normal PDF (no certificate, no warning).</p>
         <table cellpadding="0" cellspacing="0" style="margin:18px 0;">
@@ -456,8 +456,8 @@ export const templates = {
     return {
       subject: `"${vars.documentName}" has been voided`,
       html: wrap(`Signing Cancelled`, `
-        <p style="margin:0 0 15px;">Hi ${vars.signerName},</p>
-        <p style="margin:0 0 15px;"><strong>${vars.senderName}</strong> has voided the signing request for <strong>"${vars.documentName}"</strong>. No further action is needed.</p>
+        <p style="margin:0 0 15px;">Hi ${escapeHtml(vars.signerName)},</p>
+        <p style="margin:0 0 15px;"><strong>${escapeHtml(vars.senderName)}</strong> has voided the signing request for <strong>"${escapeHtml(vars.documentName)}"</strong>. No further action is needed.</p>
       `),
       text: textWrap(
         `Hi ${vars.signerName},\n\n${vars.senderName} has voided the signing request for "${vars.documentName}". No further action is needed.`
@@ -478,8 +478,8 @@ export const templates = {
     return {
       subject: `Your signing request for "${vars.documentName}" was cancelled`,
       html: wrap(`Signing Request Cancelled`, `
-        <p style="margin:0 0 15px;">Hi ${vars.signerName},</p>
-        <p style="margin:0 0 15px;"><strong>${vars.senderName}</strong> has cancelled your signing request for <strong>"${vars.documentName}"</strong>. No action is needed, you can disregard the document you received.</p>
+        <p style="margin:0 0 15px;">Hi ${escapeHtml(vars.signerName)},</p>
+        <p style="margin:0 0 15px;"><strong>${escapeHtml(vars.senderName)}</strong> has cancelled your signing request for <strong>"${escapeHtml(vars.documentName)}"</strong>. No action is needed, you can disregard the document you received.</p>
       `),
       text: textWrap(
         `Hi ${vars.signerName},\n\n${vars.senderName} has cancelled your signing request for "${vars.documentName}". No action is needed, you can disregard the document you received.`
@@ -500,8 +500,8 @@ export const templates = {
     return {
       subject: `All signers have signed "${vars.documentName}": review & seal`,
       html: wrap(`Ready to Seal`, `
-        <p style="margin:0 0 15px;">Hi ${vars.recipientName},</p>
-        <p style="margin:0 0 15px;">All <strong>${vars.signerCount}</strong> ${signedVerb} signed <strong>"${vars.documentName}"</strong>. Nothing has been sent yet. This document is waiting for you to seal it.</p>
+        <p style="margin:0 0 15px;">Hi ${escapeHtml(vars.recipientName)},</p>
+        <p style="margin:0 0 15px;">All <strong>${vars.signerCount}</strong> ${signedVerb} signed <strong>"${escapeHtml(vars.documentName)}"</strong>. Nothing has been sent yet. This document is waiting for you to seal it.</p>
         <p style="margin:0 0 20px;">Review the signers and, when you're ready, click <strong>Seal &amp; send signed document</strong> to finalise and deliver everyone's signing record.</p>
         <p style="margin:0 0 10px;"><a href="${vars.dashboardLink}" style="display:inline-block;padding:12px 24px;background:#1a1a2e;color:#ffffff;text-decoration:none;border-radius:6px;">Seal &amp; send signed document</a></p>
       `),
@@ -524,8 +524,8 @@ export const templates = {
     return {
       subject: `Everyone has signed "${vars.documentName}": finalizing the signed record`,
       html: wrap(`Finalizing`, `
-        <p style="margin:0 0 15px;">Hi ${vars.recipientName},</p>
-        <p style="margin:0 0 15px;">All <strong>${vars.signerCount}</strong> ${signedVerb} signed <strong>"${vars.documentName}"</strong>.</p>
+        <p style="margin:0 0 15px;">Hi ${escapeHtml(vars.recipientName)},</p>
+        <p style="margin:0 0 15px;">All <strong>${vars.signerCount}</strong> ${signedVerb} signed <strong>"${escapeHtml(vars.documentName)}"</strong>.</p>
         <p style="margin:0 0 15px;">We are finalizing the signed record. This can take a little while when we are completing the independent evidence that backs each signature. Everyone receives the signed record by email the moment it is ready. Nothing is needed from you.</p>
       `),
       text: textWrap(
@@ -540,8 +540,8 @@ export const templates = {
     return {
       subject: `"${vars.documentName}" has expired`,
       html: wrap(`Signing Expired`, `
-        <p style="margin:0 0 15px;">Hi ${vars.recipientName},</p>
-        <p style="margin:0 0 15px;">The signing request for <strong>"${vars.documentName}"</strong> has expired. Not all signatures were collected before the deadline.</p>
+        <p style="margin:0 0 15px;">Hi ${escapeHtml(vars.recipientName)},</p>
+        <p style="margin:0 0 15px;">The signing request for <strong>"${escapeHtml(vars.documentName)}"</strong> has expired. Not all signatures were collected before the deadline.</p>
       `),
       text: textWrap(
         `Hi ${vars.recipientName},\n\nThe signing request for "${vars.documentName}" has expired. Not all signatures were collected before the deadline.`
@@ -555,8 +555,8 @@ export const templates = {
     return {
       subject: `"${vars.documentName}" will be deleted on ${vars.deletionDate}`,
       html: wrap(`Document Retention Notice`, `
-        <p style="margin:0 0 15px;">Hi ${vars.recipientName},</p>
-        <p style="margin:0 0 15px;">The PDF for <strong>"${vars.documentName}"</strong> will be permanently deleted on <strong>${vars.deletionDate}</strong>. Please download your copy before then.</p>
+        <p style="margin:0 0 15px;">Hi ${escapeHtml(vars.recipientName)},</p>
+        <p style="margin:0 0 15px;">The PDF for <strong>"${escapeHtml(vars.documentName)}"</strong> will be permanently deleted on <strong>${vars.deletionDate}</strong>. Please download your copy before then.</p>
         <p style="margin:0;font-size:13px;color:#666;">Your signing record (emailed to every party at completion) is the permanent record. This only removes kysigned&rsquo;s temporary copy.</p>
       `),
       text: textWrap(
@@ -585,8 +585,8 @@ export const templates = {
   }) {
     const openingHtml =
       vars.role === 'sender'
-        ? `Your document <strong>"${vars.documentName}"</strong> has expired without collecting all signatures.`
-        : `The signing request for <strong>"${vars.documentName}"</strong> sent by ${vars.senderName} has expired.`;
+        ? `Your document <strong>"${escapeHtml(vars.documentName)}"</strong> has expired without collecting all signatures.`
+        : `The signing request for <strong>"${escapeHtml(vars.documentName)}"</strong> sent by ${escapeHtml(vars.senderName)} has expired.`;
 
     const openingText =
       vars.role === 'sender'
@@ -596,10 +596,10 @@ export const templates = {
     const statusLine = `${vars.signedCount} of ${vars.totalCount} signer${vars.totalCount === 1 ? '' : 's'} completed.`;
 
     const signedBlockHtml = vars.signedNames.length
-      ? `<p style="margin:0 0 10px;"><strong>Signed:</strong> ${vars.signedNames.join(', ')}</p>`
+      ? `<p style="margin:0 0 10px;"><strong>Signed:</strong> ${vars.signedNames.map(escapeHtml).join(', ')}</p>`
       : '';
     const pendingBlockHtml = vars.pendingNames.length
-      ? `<p style="margin:0 0 15px;"><strong>Did not sign:</strong> ${vars.pendingNames.join(', ')}</p>`
+      ? `<p style="margin:0 0 15px;"><strong>Did not sign:</strong> ${vars.pendingNames.map(escapeHtml).join(', ')}</p>`
       : '';
 
     const closingHtml =
@@ -618,7 +618,7 @@ export const templates = {
     return {
       subject: `"${vars.documentName}" signing request has expired`,
       html: wrap(`Signing Expired`, `
-        <p style="margin:0 0 15px;">Hi ${vars.recipientName},</p>
+        <p style="margin:0 0 15px;">Hi ${escapeHtml(vars.recipientName)},</p>
         <p style="margin:0 0 15px;">${openingHtml}</p>
         <p style="margin:0 0 15px;">${statusLine}</p>
         ${signedBlockHtml}${pendingBlockHtml}${closingHtml}
@@ -651,7 +651,7 @@ export const templates = {
     return {
       subject: `Document sent for signing: "${vars.documentName}"`,
       html: wrap(`Document Sent`, `
-        <p style="margin:0 0 15px;">Your document <strong>&ldquo;${vars.documentName}&rdquo;</strong> has been sent and the signing requests are on their way to <strong>${signerCount}</strong>.</p>
+        <p style="margin:0 0 15px;">Your document <strong>&ldquo;${escapeHtml(vars.documentName)}&rdquo;</strong> has been sent and the signing requests are on their way to <strong>${signerCount}</strong>.</p>
         <table cellpadding="0" cellspacing="0" style="margin:0 0 20px;">
         <tr><td style="background:#1a1a2e;border-radius:6px;padding:12px 28px;">
         <a href="${vars.dashboardLink}" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;">View this document&rsquo;s status</a>
@@ -698,7 +698,7 @@ export const templates = {
     return {
       subject: `${vars.signerName} signed "${vars.documentName}"`,
       html: wrap(`Signature Received`, `
-        <p style="margin:0 0 15px;"><strong>${vars.signerName}</strong> just signed <strong>&ldquo;${vars.documentName}&rdquo;</strong>.</p>
+        <p style="margin:0 0 15px;"><strong>${escapeHtml(vars.signerName)}</strong> just signed <strong>&ldquo;${escapeHtml(vars.documentName)}&rdquo;</strong>.</p>
         <p style="margin:0 0 ${isComplete ? '12' : '18'}px;font-size:14px;color:#15803d;"><strong>${vars.signedCount} of ${vars.totalCount}</strong> signers complete.</p>
         ${completionHtml}
         <table cellpadding="0" cellspacing="0" style="margin:0 0 8px;">
@@ -729,8 +729,8 @@ export const templates = {
     return {
       subject: `Couldn't deliver your signing request for "${vars.documentName}"`,
       html: wrap(`Delivery Problem`, `
-        <p style="margin:0 0 15px;">Hi ${vars.senderName},</p>
-        <p style="margin:0 0 15px;">We couldn&rsquo;t deliver the signing request for <strong>&ldquo;${vars.documentName}&rdquo;</strong> to <strong>${vars.signerEmail}</strong>. The address bounced.</p>
+        <p style="margin:0 0 15px;">Hi ${escapeHtml(vars.senderName)},</p>
+        <p style="margin:0 0 15px;">We couldn&rsquo;t deliver the signing request for <strong>&ldquo;${escapeHtml(vars.documentName)}&rdquo;</strong> to <strong>${escapeHtml(vars.signerEmail)}</strong>. The address bounced.</p>
         <p style="margin:0 0 18px;font-size:13px;color:#444;">Double-check the address. On the document&rsquo;s page you can fix it: remove this signer and add them back at the corrected address, or remove them if they&rsquo;re no longer needed.</p>
         <table cellpadding="0" cellspacing="0" style="margin:0 0 8px;">
         <tr><td style="border:1px solid #1a1a2e;border-radius:6px;padding:10px 22px;">
