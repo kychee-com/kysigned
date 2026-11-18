@@ -1783,3 +1783,26 @@ describe('POST /v1/envelope/preflight — F-3.9 signer_warnings (AC-312)', () =>
     assert.deepEqual((await res.json()).signer_warnings, [{ email: 'someone@bare.test', warnings: ['cannot_receive'] }]);
   });
 });
+
+describe('F-3.9 — an overall cap the forwarded header cannot get around', () => {
+  // run402's gateway trusts the client's leftmost X-Forwarded-For (`trust proxy`),
+  // so the per-source key can be forged. The overall cap bounds the DNS work a
+  // single warm instance does per minute whatever the claimed sources.
+  it('distinct (forged) sources still hit the overall cap; over it nothing is looked up', async () => {
+    const { hosts, over } = countingDnsDeps(1000);
+    const deps = makeDeps({ ...over, domainCheckOverallLimiter: createTelemetryLimiter({ maxPostsPerWindow: 3 }) } as Partial<RequestDeps>);
+    const answered: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const res = await handleRequest(
+        req('GET', '/v1/signer-domain-check?domain=bare.test', { headers: { 'x-forwarded-for': `10.0.0.${i}` } }),
+        deps,
+      );
+      const body = (await res.json()) as { warnings: string[] };
+      answered.push(body.warnings.length);
+    }
+    assert.deepEqual(answered.slice(3), [0, 0, 0], 'past the overall cap: no warnings, whatever the source');
+    const hostsAfterCap = hosts.length;
+    await handleRequest(req('GET', '/v1/signer-domain-check?domain=bare.test', { headers: { 'x-forwarded-for': '10.9.9.9' } }), deps);
+    assert.equal(hosts.length, hostsAfterCap, 'over the cap the resolver is never called');
+  });
+});

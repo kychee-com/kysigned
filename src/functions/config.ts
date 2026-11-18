@@ -364,6 +364,8 @@ export interface AppDeps {
   checkDomain?: (domain: string) => Promise<SignerDomainWarning[]>;
   /** F-3.9 / DD-86 — test seam for the per-source limiter (default: one per warm container, 30 a minute). */
   domainCheckLimiter?: TelemetryLimiter;
+  /** F-3.9 — the overall per-instance cap across all sources (tests inject a small one). */
+  domainCheckOverallLimiter?: TelemetryLimiter;
 
   /** #146 — bounded readiness probes for GET /v1/health?deep=1 (db + signing mailbox). */
   healthChecks: () => { checkDb: () => Promise<void>; checkMailbox: () => Promise<void> };

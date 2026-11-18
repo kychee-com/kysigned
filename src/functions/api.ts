@@ -220,6 +220,14 @@ const ceremonyLimiter = createTelemetryLimiter({ maxPostsPerWindow: 5, windowMs:
 const domainCheckLimiter = createTelemetryLimiter({ maxPostsPerWindow: 30, windowMs: 60_000 });
 
 /**
+ * F-3.9 — an overall cap per warm instance across ALL sources (300 a minute).
+ * run402's gateway trusts the client's leftmost X-Forwarded-For (`trust proxy`),
+ * so the per-source key above can be forged; this cap bounds the DNS work an
+ * instance does whatever sources a caller claims. Same skip-not-refuse terms.
+ */
+const domainCheckOverallLimiter = createTelemetryLimiter({ maxPostsPerWindow: 300, windowMs: 60_000 });
+
+/**
  * The gateway-stamped client hop: the LAST entry of x-forwarded-for (a client
  * can prefix the header with anything, never append after the gateway). Null
  * when absent, which the limiter files under one shared bucket. Held in memory
@@ -233,7 +241,11 @@ export function lastForwardedHop(header: string | null): string | null {
 
 function domainCheckAllowed(deps: RequestDeps, req: Request): boolean {
   const limiter = deps.domainCheckLimiter ?? domainCheckLimiter;
-  return limiter.allow(lastForwardedHop(req.headers.get('x-forwarded-for')), Date.now());
+  const overall = deps.domainCheckOverallLimiter ?? domainCheckOverallLimiter;
+  const now = Date.now();
+  // The per-source bucket first: a source already over its own limit does not
+  // also spend the shared allowance.
+  return limiter.allow(lastForwardedHop(req.headers.get('x-forwarded-for')), now) && overall.allow('*', now);
 }
 
 /** F-3.9 — does this public-route request carry a session (cookie or bearer key)? */
