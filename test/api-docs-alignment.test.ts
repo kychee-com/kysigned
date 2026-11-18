@@ -237,6 +237,11 @@ describe('API Documentation Alignment', () => {
     const check = spec.paths['/v1/signer-domain-check']?.get;
     assert.ok(check, 'the domain check is described');
     assert.ok((check.parameters ?? []).some((p: any) => p.name === 'domain' && p.in === 'query'), 'it takes ?domain=');
+    // #175: the endpoint is fail-open (DD-87), so the contract must not call `domain` required,
+    // and it must say what a missing or invalid domain gets.
+    const dp = (check.parameters ?? []).find((p: any) => p.name === 'domain');
+    assert.notEqual(dp?.required, true, 'domain is not required: a missing value answers { warnings: [] }');
+    assert.match(String(dp?.description ?? ''), /missing or (is )?not a valid domain/i, 'the parameter says what a missing or invalid value gets');
     assert.deepEqual(check.security, [], 'public');
     const w = okSchema(check, '200')?.properties?.warnings;
     assert.deepEqual([...(w?.items?.enum ?? [])].sort(), ['cannot_receive', 'disposable', 'no_sender_protection']);

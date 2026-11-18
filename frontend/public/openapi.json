@@ -581,11 +581,11 @@
           {
             "name": "domain",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string"
             },
-            "description": "The domain to check, e.g. example.com (a non-ASCII domain is checked in its ASCII form)"
+            "description": "The domain to check, e.g. example.com (a non-ASCII domain is checked in its ASCII form). Fail-open: when it is missing or is not a valid domain, the answer is { \"warnings\": [] } with no lookup."
           }
         ],
         "responses": {
